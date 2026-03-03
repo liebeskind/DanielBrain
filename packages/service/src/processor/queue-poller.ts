@@ -1,5 +1,7 @@
 import type pg from 'pg';
 import { processThought } from './pipeline.js';
+import { notifySlack } from './slack-notifier.js';
+import { notifyTelegram } from './telegram-notifier.js';
 
 interface QueueConfig {
   ollamaBaseUrl: string;
@@ -7,6 +9,8 @@ interface QueueConfig {
   extractionModel: string;
   batchSize: number;
   maxRetries: number;
+  slackBotToken?: string;
+  telegramBotToken?: string;
 }
 
 export async function pollQueue(pool: pg.Pool, config: QueueConfig): Promise<void> {
@@ -59,6 +63,23 @@ export async function pollQueue(pool: pg.Pool, config: QueueConfig): Promise<voi
          WHERE id = $2`,
         [result.id, item.id]
       );
+
+      // Best-effort notification back to source
+      if (item.source === 'telegram' && config.telegramBotToken && sourceMeta) {
+        await notifyTelegram({
+          chatId: sourceMeta.chat_id,
+          replyToMessageId: sourceMeta.message_id,
+          metadata: result.metadata,
+          botToken: config.telegramBotToken,
+        });
+      } else if (item.source === 'slack' && config.slackBotToken && sourceMeta) {
+        await notifySlack({
+          channel: sourceMeta.channel,
+          threadTs: sourceMeta.ts,
+          metadata: result.metadata,
+          slackBotToken: config.slackBotToken,
+        });
+      }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       await pool.query(
