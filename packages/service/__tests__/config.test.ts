@@ -42,6 +42,34 @@ describe('config', () => {
     expect(config.extractionModel).toBe('llama3.1:8b');
   });
 
+  it('loads optional Telegram config when present', async () => {
+    vi.stubEnv('DATABASE_URL', 'postgresql://user:pass@localhost:5432/db');
+    vi.stubEnv('BRAIN_ACCESS_KEY', 'a'.repeat(64));
+    vi.stubEnv('SLACK_BOT_TOKEN', 'xoxb-test');
+    vi.stubEnv('SLACK_SIGNING_SECRET', 'test-secret');
+    vi.stubEnv('TELEGRAM_BOT_TOKEN', '123456:ABC-DEF');
+    vi.stubEnv('TELEGRAM_WEBHOOK_SECRET', 'my-webhook-secret');
+
+    const { loadConfig } = await import('../src/config.js');
+    const config = loadConfig();
+
+    expect(config.telegramBotToken).toBe('123456:ABC-DEF');
+    expect(config.telegramWebhookSecret).toBe('my-webhook-secret');
+  });
+
+  it('loads config without Telegram fields', async () => {
+    vi.stubEnv('DATABASE_URL', 'postgresql://user:pass@localhost:5432/db');
+    vi.stubEnv('BRAIN_ACCESS_KEY', 'a'.repeat(64));
+    vi.stubEnv('SLACK_BOT_TOKEN', 'xoxb-test');
+    vi.stubEnv('SLACK_SIGNING_SECRET', 'test-secret');
+
+    const { loadConfig } = await import('../src/config.js');
+    const config = loadConfig();
+
+    expect(config.telegramBotToken).toBeUndefined();
+    expect(config.telegramWebhookSecret).toBeUndefined();
+  });
+
   it('throws on missing required env vars', async () => {
     // Clear all env vars
     vi.stubEnv('DATABASE_URL', '');

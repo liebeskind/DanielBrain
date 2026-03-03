@@ -7,6 +7,8 @@ import { createMcpServer } from './mcp/server.js';
 import { verifyAccessKey } from './auth.js';
 import { verifySlackSignature } from './slack/verify.js';
 import { handleSlackEvent } from './slack/webhook.js';
+import { verifyTelegramSecret } from './telegram/verify.js';
+import { handleTelegramUpdate } from './telegram/webhook.js';
 import { pollQueue } from './processor/queue-poller.js';
 
 const config = loadConfig();
@@ -55,6 +57,28 @@ app.post('/slack/events', express.raw({ type: '*/*' }), async (req, res) => {
     }
   }
 });
+
+// --- Telegram webhook (optional — only if configured) ---
+if (config.telegramBotToken && config.telegramWebhookSecret) {
+  app.post('/telegram/updates', express.json(), async (req, res) => {
+    const secretHeader = req.headers['x-telegram-bot-api-secret-token'] as string | undefined;
+
+    if (!verifyTelegramSecret(secretHeader, config.telegramWebhookSecret!)) {
+      res.status(401).json({ error: 'Invalid secret token' });
+      return;
+    }
+
+    try {
+      res.json({ ok: true });
+      await handleTelegramUpdate(req.body, pool);
+    } catch (err) {
+      console.error('Telegram webhook error:', err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Internal error' });
+      }
+    }
+  });
+}
 
 // --- API key auth middleware for MCP routes ---
 app.use('/mcp', (req, res, next) => {
@@ -126,6 +150,9 @@ app.listen(config.mcpPort, () => {
   console.log(`DanielBrain running on port ${config.mcpPort}`);
   console.log(`  MCP SSE: http://localhost:${config.mcpPort}/mcp/sse`);
   console.log(`  Slack webhook: http://localhost:${config.mcpPort}/slack/events`);
+  if (config.telegramBotToken) {
+    console.log(`  Telegram webhook: http://localhost:${config.mcpPort}/telegram/updates`);
+  }
   console.log(`  Health: http://localhost:${config.mcpPort}/health`);
   startPoller();
   console.log(`  Queue poller: every ${config.pollIntervalMs}ms`);
