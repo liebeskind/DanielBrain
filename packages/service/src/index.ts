@@ -21,42 +21,44 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// --- Slack webhook (verified by HMAC, not by API key) ---
-app.post('/slack/events', express.raw({ type: '*/*' }), async (req, res) => {
-  const body = req.body.toString();
+// --- Slack webhook (optional — only if configured) ---
+if (config.slackBotToken && config.slackSigningSecret) {
+  app.post('/slack/events', express.raw({ type: '*/*' }), async (req, res) => {
+    const body = req.body.toString();
 
-  const valid = verifySlackSignature({
-    signature: req.headers['x-slack-signature'] as string,
-    timestamp: req.headers['x-slack-request-timestamp'] as string,
-    body,
-    signingSecret: config.slackSigningSecret,
-  });
+    const valid = verifySlackSignature({
+      signature: req.headers['x-slack-signature'] as string,
+      timestamp: req.headers['x-slack-request-timestamp'] as string,
+      body,
+      signingSecret: config.slackSigningSecret!,
+    });
 
-  if (!valid) {
-    res.status(401).json({ error: 'Invalid signature' });
-    return;
-  }
-
-  try {
-    const payload = JSON.parse(body);
-
-    // Respond immediately for URL verification
-    if (payload.type === 'url_verification') {
-      res.json({ challenge: payload.challenge });
+    if (!valid) {
+      res.status(401).json({ error: 'Invalid signature' });
       return;
     }
 
-    // Respond 200 immediately, process async
-    res.json({ ok: true });
+    try {
+      const payload = JSON.parse(body);
 
-    await handleSlackEvent(payload, pool);
-  } catch (err) {
-    console.error('Slack webhook error:', err);
-    if (!res.headersSent) {
-      res.status(500).json({ error: 'Internal error' });
+      // Respond immediately for URL verification
+      if (payload.type === 'url_verification') {
+        res.json({ challenge: payload.challenge });
+        return;
+      }
+
+      // Respond 200 immediately, process async
+      res.json({ ok: true });
+
+      await handleSlackEvent(payload, pool);
+    } catch (err) {
+      console.error('Slack webhook error:', err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Internal error' });
+      }
     }
-  }
-});
+  });
+}
 
 // --- Telegram webhook (optional — only if configured) ---
 if (config.telegramBotToken && config.telegramWebhookSecret) {
@@ -149,7 +151,9 @@ process.on('SIGTERM', shutdown);
 app.listen(config.mcpPort, () => {
   console.log(`DanielBrain running on port ${config.mcpPort}`);
   console.log(`  MCP SSE: http://localhost:${config.mcpPort}/mcp/sse`);
-  console.log(`  Slack webhook: http://localhost:${config.mcpPort}/slack/events`);
+  if (config.slackBotToken) {
+    console.log(`  Slack webhook: http://localhost:${config.mcpPort}/slack/events`);
+  }
   if (config.telegramBotToken) {
     console.log(`  Telegram webhook: http://localhost:${config.mcpPort}/telegram/updates`);
   }

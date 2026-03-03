@@ -70,6 +70,17 @@ describe('config', () => {
     expect(config.telegramWebhookSecret).toBeUndefined();
   });
 
+  it('loads config without Slack fields', async () => {
+    vi.stubEnv('DATABASE_URL', 'postgresql://user:pass@localhost:5432/db');
+    vi.stubEnv('BRAIN_ACCESS_KEY', 'a'.repeat(64));
+
+    const { loadConfig } = await import('../src/config.js');
+    const config = loadConfig();
+
+    expect(config.slackBotToken).toBeUndefined();
+    expect(config.slackSigningSecret).toBeUndefined();
+  });
+
   it('throws on missing required env vars', async () => {
     // Clear all env vars
     vi.stubEnv('DATABASE_URL', '');
