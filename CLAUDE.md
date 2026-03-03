@@ -8,19 +8,21 @@ A database-backed, AI-accessible personal knowledge system. Single brain that ev
 - **Ollama** on DGX Spark for embeddings (nomic-embed-text) and metadata extraction (llama3.1:8b)
 - **MCP server** (HTTP/SSE transport) with 4 tools: semantic_search, list_recent, stats, save_thought
 - **Slack webhook** capture through Cloudflare Tunnel
+- **Telegram webhook** as second input channel (opt-in via config)
 - **Cloudflare Tunnel + Zero Trust** for remote access (no open ports)
 
 ## Project Structure
 
 ```
 packages/shared/     # Types, Zod schemas, DB client, constants
-packages/service/    # MCP server, processing pipeline, Slack integration
-  src/processor/     # chunker, embedder, extractor, summarizer, pipeline, queue-poller, slack-notifier
+packages/service/    # MCP server, processing pipeline, Slack + Telegram integration
+  src/processor/     # chunker, embedder, extractor, summarizer, pipeline, queue-poller, slack-notifier, telegram-notifier
   src/mcp/           # MCP server + 4 tool handlers
   src/slack/          # Webhook handler + signature verification
+  src/telegram/       # Webhook handler + secret token verification
   src/auth.ts        # API key verification (timing-safe)
   src/config.ts      # Zod-validated config from env vars
-  src/index.ts       # Entry point: Express + MCP SSE + Slack webhook + queue poller
+  src/index.ts       # Entry point: Express + MCP SSE + Slack/Telegram webhooks + queue poller
 migrations/          # 6 SQL migration files (pgvector, thoughts, queue, access_keys, indexes, match_thoughts)
 scripts/migrate.ts   # Migration runner
 docker/              # docker-compose.yml (prod) + docker-compose.test.yml (test)
@@ -40,16 +42,18 @@ npm run migrate                # Run SQL migrations against DATABASE_URL
 - Full TDD: every module has tests written before implementation
 - Unit tests mock Ollama calls (fast, no GPU needed)
 - Integration tests use real Postgres via docker-compose.test.yml (port 5433)
-- Run: `npx vitest run` (82 tests across 17 files)
+- Run: `npx vitest run` (97 tests across 20 files)
 
 ## Key Design Decisions
 
 - **Embedding prefixes**: nomic-embed-text requires `search_document: ` for storage, `search_query: ` for search
 - **Chunking threshold**: 6000 tokens (~4500 words). Chunks are ~2000 tokens with 200-token overlap
 - **Long content**: parent thought gets summary embedding; child chunks get individual embeddings
-- **Queue**: Slack messages go to queue table, processed async by poller (FOR UPDATE SKIP LOCKED)
+- **Queue**: Slack/Telegram messages go to queue table, processed async by poller (FOR UPDATE SKIP LOCKED)
 - **Auth**: `x-brain-key` header with 64-char hex key, timing-safe comparison
 - **Slack verification**: HMAC-SHA256 signature + 5-minute timestamp expiry
+- **Telegram verification**: `X-Telegram-Bot-Api-Secret-Token` header, timing-safe string comparison
+- **Telegram is opt-in**: route only registered when `TELEGRAM_BOT_TOKEN` + `TELEGRAM_WEBHOOK_SECRET` are set
 
 ## Environment Variables
 
@@ -57,6 +61,7 @@ See `.env.example` for all required/optional vars. Key ones:
 - `DATABASE_URL` — PostgreSQL connection string
 - `BRAIN_ACCESS_KEY` — 64-char hex API key
 - `SLACK_BOT_TOKEN` / `SLACK_SIGNING_SECRET` — Slack app credentials
+- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_WEBHOOK_SECRET` — Telegram bot credentials (optional)
 - `OLLAMA_BASE_URL` — defaults to http://localhost:11434
 
 ## Build Phases
@@ -65,6 +70,7 @@ See `.env.example` for all required/optional vars. Key ones:
 - [x] Phase 2: Processing Pipeline (chunker, embedder, extractor, summarizer, pipeline, config)
 - [x] Phase 3: MCP Server (4 tools, auth, HTTP/SSE transport)
 - [x] Phase 4: Queue Processor + Slack Webhook
+- [x] Phase 4b: Telegram Webhook Integration
 - [ ] Phase 5: Cloudflare Tunnel + Zero Trust (infrastructure setup)
 - [ ] Phase 6: Polish (retry backoff, health checks, structured logging, backup)
 - [ ] Phase 7: Permissions enforcement (access_keys scoping)
