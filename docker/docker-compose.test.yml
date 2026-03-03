@@ -1,0 +1,11 @@
+services:
+  postgres-test:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: danielbrain_test
+      POSTGRES_USER: danielbrain_test
+      POSTGRES_PASSWORD: test_password
+    ports:
+      - "127.0.0.1:5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data

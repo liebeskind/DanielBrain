@@ -1,0 +1,74 @@
+import type pg from 'pg';
+import { embedQuery } from '../../processor/embedder.js';
+import type { SearchResult } from '@danielbrain/shared';
+
+interface SemanticSearchInput {
+  query: string;
+  limit: number;
+  threshold: number;
+  thought_type?: string;
+  person?: string;
+  topic?: string;
+  days_back?: number;
+}
+
+interface EmbedConfig {
+  ollamaBaseUrl: string;
+  embeddingModel: string;
+}
+
+interface SearchResultWithParent extends SearchResult {
+  parent_context?: {
+    summary: string | null;
+    thought_type: string | null;
+    people: string[];
+    topics: string[];
+  };
+}
+
+export async function handleSemanticSearch(
+  input: SemanticSearchInput,
+  pool: pg.Pool,
+  config: EmbedConfig
+): Promise<SearchResultWithParent[]> {
+  const queryEmbedding = await embedQuery(input.query, config);
+  const vectorStr = `[${queryEmbedding.join(',')}]`;
+
+  const { rows } = await pool.query(
+    `SELECT * FROM match_thoughts($1::vector, $2, $3, $4, $5, $6, $7)`,
+    [
+      vectorStr,
+      input.threshold,
+      input.limit,
+      input.thought_type ?? null,
+      input.person ?? null,
+      input.topic ?? null,
+      input.days_back ?? null,
+    ]
+  );
+
+  // For chunks, fetch parent context
+  const results: SearchResultWithParent[] = [];
+  for (const row of rows) {
+    const result: SearchResultWithParent = { ...row };
+
+    if (row.parent_id) {
+      const { rows: parentRows } = await pool.query(
+        `SELECT id, summary, thought_type, people, topics FROM thoughts WHERE id = $1`,
+        [row.parent_id]
+      );
+      if (parentRows.length > 0) {
+        result.parent_context = {
+          summary: parentRows[0].summary,
+          thought_type: parentRows[0].thought_type,
+          people: parentRows[0].people,
+          topics: parentRows[0].topics,
+        };
+      }
+    }
+
+    results.push(result);
+  }
+
+  return results;
+}

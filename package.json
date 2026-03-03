@@ -1,0 +1,23 @@
+{
+  "name": "danielbrain",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/shared",
+    "packages/service"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "migrate": "tsx scripts/migrate.ts",
+    "build": "npm run build --workspaces",
+    "dev": "tsx packages/service/src/index.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "tsx": "^4.7.0",
+    "vitest": "^2.0.0",
+    "dotenv": "^16.4.0"
+  }
+}
