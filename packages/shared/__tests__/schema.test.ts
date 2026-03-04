@@ -5,6 +5,10 @@ import {
   listRecentInputSchema,
   statsInputSchema,
   saveThoughtInputSchema,
+  getEntityInputSchema,
+  listEntitiesInputSchema,
+  getContextInputSchema,
+  getTimelineInputSchema,
 } from '../src/schema.js';
 
 describe('metadataSchema', () => {
@@ -34,6 +38,9 @@ describe('metadataSchema', () => {
       expect(result.data.thought_type).toBeNull();
       expect(result.data.sentiment).toBeNull();
       expect(result.data.summary).toBeNull();
+      expect(result.data.companies).toEqual([]);
+      expect(result.data.products).toEqual([]);
+      expect(result.data.projects).toEqual([]);
     }
   });
 
@@ -43,6 +50,41 @@ describe('metadataSchema', () => {
     });
 
     expect(result.success).toBe(false);
+  });
+
+  it('accepts companies, products, and projects', () => {
+    const result = metadataSchema.safeParse({
+      companies: ['Acme Corp'],
+      products: ['Widget Pro'],
+      projects: ['Project X'],
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.companies).toEqual(['Acme Corp']);
+      expect(result.data.products).toEqual(['Widget Pro']);
+      expect(result.data.projects).toEqual(['Project X']);
+    }
+  });
+
+  it('backward compat: old metadata without new fields still parses', () => {
+    const oldMetadata = {
+      thought_type: 'idea',
+      people: ['Alice'],
+      topics: ['AI'],
+      action_items: [],
+      dates_mentioned: [],
+      sentiment: 'positive',
+      summary: 'An idea',
+    };
+
+    const result = metadataSchema.safeParse(oldMetadata);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.companies).toEqual([]);
+      expect(result.data.products).toEqual([]);
+      expect(result.data.projects).toEqual([]);
+    }
   });
 });
 
@@ -153,5 +195,125 @@ describe('saveThoughtInputSchema', () => {
     if (result.success) {
       expect(result.data.source).toBe('mcp');
     }
+  });
+});
+
+describe('getEntityInputSchema', () => {
+  it('accepts entity_id', () => {
+    const result = getEntityInputSchema.safeParse({
+      entity_id: '550e8400-e29b-41d4-a716-446655440000',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts name', () => {
+    const result = getEntityInputSchema.safeParse({ name: 'Alice' });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts name with entity_type', () => {
+    const result = getEntityInputSchema.safeParse({
+      name: 'Alice',
+      entity_type: 'person',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects when neither entity_id nor name provided', () => {
+    const result = getEntityInputSchema.safeParse({});
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects invalid entity_type', () => {
+    const result = getEntityInputSchema.safeParse({
+      name: 'Alice',
+      entity_type: 'invalid',
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('listEntitiesInputSchema', () => {
+  it('provides defaults', () => {
+    const result = listEntitiesInputSchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.sort_by).toBe('mention_count');
+      expect(result.data.limit).toBe(20);
+    }
+  });
+
+  it('accepts entity_type filter', () => {
+    const result = listEntitiesInputSchema.safeParse({ entity_type: 'person' });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts query prefix filter', () => {
+    const result = listEntitiesInputSchema.safeParse({ query: 'Ali' });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts all sort options', () => {
+    for (const sort_by of ['mention_count', 'last_seen_at', 'name']) {
+      const result = listEntitiesInputSchema.safeParse({ sort_by });
+      expect(result.success).toBe(true);
+    }
+  });
+});
+
+describe('getContextInputSchema', () => {
+  it('requires at least one entity', () => {
+    const result = getContextInputSchema.safeParse({ entities: [] });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts valid input', () => {
+    const result = getContextInputSchema.safeParse({
+      entities: ['Alice', 'Project X'],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.days_back).toBe(30);
+      expect(result.data.include_action_items).toBe(true);
+      expect(result.data.max_thoughts).toBe(20);
+    }
+  });
+
+  it('rejects more than 5 entities', () => {
+    const result = getContextInputSchema.safeParse({
+      entities: ['a', 'b', 'c', 'd', 'e', 'f'],
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('getTimelineInputSchema', () => {
+  it('accepts entity_id', () => {
+    const result = getTimelineInputSchema.safeParse({
+      entity_id: '550e8400-e29b-41d4-a716-446655440000',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts entity_name', () => {
+    const result = getTimelineInputSchema.safeParse({ entity_name: 'Alice' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.days_back).toBe(30);
+      expect(result.data.limit).toBe(50);
+    }
+  });
+
+  it('rejects when neither entity_id nor entity_name provided', () => {
+    const result = getTimelineInputSchema.safeParse({});
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts sources filter', () => {
+    const result = getTimelineInputSchema.safeParse({
+      entity_name: 'Alice',
+      sources: ['slack', 'telegram'],
+    });
+    expect(result.success).toBe(true);
   });
 });

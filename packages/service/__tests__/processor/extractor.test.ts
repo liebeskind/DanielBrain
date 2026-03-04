@@ -20,6 +20,9 @@ describe('extractMetadata', () => {
           dates_mentioned: ['2026-04-01'],
           sentiment: 'positive',
           summary: 'Met with Alice and Bob about Q1',
+          companies: ['Acme Corp'],
+          products: ['Widget Pro'],
+          projects: ['Project Alpha'],
         }),
       },
     };
@@ -40,6 +43,9 @@ describe('extractMetadata', () => {
     expect(result.action_items).toEqual(['Draft proposal']);
     expect(result.sentiment).toBe('positive');
     expect(result.summary).toBe('Met with Alice and Bob about Q1');
+    expect(result.companies).toEqual(['Acme Corp']);
+    expect(result.products).toEqual(['Widget Pro']);
+    expect(result.projects).toEqual(['Project Alpha']);
   });
 
   it('sends correct JSON schema for constrained decoding', async () => {
@@ -95,6 +101,42 @@ describe('extractMetadata', () => {
     expect(result.people).toEqual([]);
     expect(result.topics).toEqual([]);
     expect(result.action_items).toEqual([]);
+    expect(result.companies).toEqual([]);
+    expect(result.products).toEqual([]);
+    expect(result.projects).toEqual([]);
+  });
+
+  it('includes companies/products/projects in schema sent to Ollama', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          message: {
+            content: JSON.stringify({
+              thought_type: null,
+              people: [],
+              topics: [],
+              action_items: [],
+              dates_mentioned: [],
+              sentiment: null,
+              summary: null,
+              companies: [],
+              products: [],
+              projects: [],
+            }),
+          },
+        }),
+    });
+
+    await extractMetadata('Some text', {
+      ollamaBaseUrl: 'http://localhost:11434',
+      extractionModel: 'llama3.1:8b',
+    });
+
+    const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(callBody.format.properties.companies).toBeDefined();
+    expect(callBody.format.properties.products).toBeDefined();
+    expect(callBody.format.properties.projects).toBeDefined();
   });
 
   it('throws on Ollama error', async () => {

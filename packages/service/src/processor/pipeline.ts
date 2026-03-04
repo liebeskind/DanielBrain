@@ -4,6 +4,7 @@ import { embed } from './embedder.js';
 import { extractMetadata } from './extractor.js';
 import { chunkText, needsChunking } from './chunker.js';
 import { summarize } from './summarizer.js';
+import { resolveEntities } from './entity-resolver.js';
 
 interface PipelineConfig {
   ollamaBaseUrl: string;
@@ -70,6 +71,13 @@ async function processShort(
     ]
   );
 
+  // Non-blocking entity resolution
+  try {
+    await resolveEntities(rows[0].id, metadata, content, pool, config, sourceMeta);
+  } catch (err) {
+    console.error('Entity resolution failed (non-fatal):', err);
+  }
+
   return { id: rows[0].id, metadata };
 }
 
@@ -131,6 +139,13 @@ async function processLong(
       );
     })
   );
+
+  // Non-blocking entity resolution
+  try {
+    await resolveEntities(parentId, metadata, content, pool, config, sourceMeta);
+  } catch (err) {
+    console.error('Entity resolution failed (non-fatal):', err);
+  }
 
   return { id: parentId, metadata, chunks: chunks.length };
 }

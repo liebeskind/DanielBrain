@@ -1,0 +1,124 @@
+import type pg from 'pg';
+
+interface GetContextInput {
+  entities: string[];
+  days_back: number;
+  include_action_items: boolean;
+  max_thoughts: number;
+}
+
+interface ResolvedEntity {
+  id: string;
+  name: string;
+  entity_type: string;
+}
+
+interface ContextThought {
+  id: string;
+  content: string;
+  summary: string | null;
+  thought_type: string | null;
+  source: string;
+  created_at: Date;
+  entity_overlap: number;
+  matched_entities: string[];
+}
+
+interface GetContextResult {
+  resolved_entities: ResolvedEntity[];
+  shared_thoughts: ContextThought[];
+  action_items: string[];
+  key_topics: string[];
+}
+
+export async function handleGetContext(
+  input: GetContextInput,
+  pool: pg.Pool,
+): Promise<GetContextResult> {
+  // Step 1: Resolve entity names to IDs
+  const resolvedEntities: ResolvedEntity[] = [];
+
+  for (const name of input.entities) {
+    const canonical = name.toLowerCase().trim();
+    const { rows } = await pool.query(
+      `SELECT id, name, entity_type FROM entities
+       WHERE canonical_name = $1 OR $1 = ANY(aliases)
+       LIMIT 1`,
+      [canonical]
+    );
+
+    if (rows.length > 0) {
+      resolvedEntities.push(rows[0]);
+    }
+  }
+
+  if (resolvedEntities.length === 0) {
+    return {
+      resolved_entities: [],
+      shared_thoughts: [],
+      action_items: [],
+      key_topics: [],
+    };
+  }
+
+  const entityIds = resolvedEntities.map(e => e.id);
+
+  // Step 2: Find thoughts linked to the resolved entities, ranked by overlap then recency
+  const { rows: thoughtRows } = await pool.query(
+    `SELECT t.id, t.content, t.summary, t.thought_type, t.source, t.created_at,
+            t.action_items, t.topics,
+            COUNT(DISTINCT te.entity_id) as entity_overlap,
+            ARRAY_AGG(DISTINCT e.name) as matched_entities
+     FROM thought_entities te
+     JOIN thoughts t ON t.id = te.thought_id
+     JOIN entities e ON e.id = te.entity_id
+     WHERE te.entity_id = ANY($1)
+       AND t.created_at >= NOW() - ($2 || ' days')::interval
+       AND t.parent_id IS NULL
+     GROUP BY t.id, t.content, t.summary, t.thought_type, t.source, t.created_at,
+              t.action_items, t.topics
+     ORDER BY entity_overlap DESC, t.created_at DESC
+     LIMIT $3`,
+    [entityIds, input.days_back, input.max_thoughts]
+  );
+
+  // Step 3: Collect action items if requested
+  let actionItems: string[] = [];
+  if (input.include_action_items) {
+    for (const row of thoughtRows) {
+      if (row.action_items && row.action_items.length > 0) {
+        actionItems = actionItems.concat(row.action_items);
+      }
+    }
+  }
+
+  // Step 4: Collect key topics across all shared thoughts
+  const topicCounts = new Map<string, number>();
+  for (const row of thoughtRows) {
+    if (row.topics) {
+      for (const topic of row.topics) {
+        topicCounts.set(topic, (topicCounts.get(topic) || 0) + 1);
+      }
+    }
+  }
+  const keyTopics = [...topicCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([topic]) => topic);
+
+  return {
+    resolved_entities: resolvedEntities,
+    shared_thoughts: thoughtRows.map(r => ({
+      id: r.id,
+      content: r.content,
+      summary: r.summary,
+      thought_type: r.thought_type,
+      source: r.source,
+      created_at: r.created_at,
+      entity_overlap: parseInt(r.entity_overlap, 10),
+      matched_entities: r.matched_entities,
+    })),
+    action_items: actionItems,
+    key_topics: keyTopics,
+  };
+}

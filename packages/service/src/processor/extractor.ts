@@ -40,8 +40,23 @@ const EXTRACTION_SCHEMA = {
       type: 'string',
       description: 'A 1-2 sentence summary of the content',
     },
+    companies: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Companies or organizations mentioned',
+    },
+    products: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Products or tools mentioned',
+    },
+    projects: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Named projects mentioned',
+    },
   },
-  required: ['thought_type', 'people', 'topics', 'action_items', 'dates_mentioned', 'sentiment', 'summary'],
+  required: ['thought_type', 'people', 'topics', 'action_items', 'dates_mentioned', 'sentiment', 'summary', 'companies', 'products', 'projects'],
 };
 
 export async function extractMetadata(
@@ -59,7 +74,7 @@ export async function extractMetadata(
         {
           role: 'system',
           content:
-            'You are a metadata extraction assistant. Extract structured metadata from the given text. Return valid JSON matching the schema.',
+            'You are a metadata extraction assistant. Extract structured metadata from the given text. Identify people, companies/organizations, products/tools, and named projects. Return valid JSON matching the schema.',
         },
         {
           role: 'user',

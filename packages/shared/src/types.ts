@@ -61,6 +61,37 @@ export interface ThoughtMetadata {
   dates_mentioned: string[];
   sentiment: string | null;
   summary: string | null;
+  companies: string[];
+  products: string[];
+  projects: string[];
+}
+
+export type EntityType = 'person' | 'company' | 'topic' | 'product' | 'project' | 'place';
+export type EntityRelationshipType = 'mentions' | 'about' | 'from' | 'assigned_to' | 'created_by';
+
+export interface Entity {
+  id: string;
+  name: string;
+  entity_type: EntityType;
+  aliases: string[];
+  canonical_name: string;
+  profile_summary: string | null;
+  embedding?: number[];
+  metadata: Record<string, unknown>;
+  mention_count: number;
+  visibility: string[];
+  first_seen_at: Date;
+  last_seen_at: Date;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface ThoughtEntity {
+  thought_id: string;
+  entity_id: string;
+  relationship: EntityRelationshipType;
+  confidence: number;
+  created_at: Date;
 }
 
 export interface SearchResult {

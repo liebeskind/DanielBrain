@@ -10,6 +10,8 @@ import { handleSlackEvent } from './slack/webhook.js';
 import { verifyTelegramSecret } from './telegram/verify.js';
 import { handleTelegramUpdate } from './telegram/webhook.js';
 import { pollQueue } from './processor/queue-poller.js';
+import { refreshStaleProfiles } from './processor/profile-generator.js';
+import { PROFILE_REFRESH_INTERVAL_MS } from '@danielbrain/shared';
 
 const config = loadConfig();
 const pool = new pg.Pool({ connectionString: config.databaseUrl });
@@ -134,10 +136,27 @@ function startPoller() {
   }, config.pollIntervalMs);
 }
 
+// --- Profile refresh poller ---
+let profileInterval: ReturnType<typeof setInterval>;
+
+function startProfileRefresher() {
+  profileInterval = setInterval(async () => {
+    try {
+      const count = await refreshStaleProfiles(pool, config);
+      if (count > 0) {
+        console.log(`Refreshed ${count} entity profile(s)`);
+      }
+    } catch (err) {
+      console.error('Profile refresh error:', err);
+    }
+  }, PROFILE_REFRESH_INTERVAL_MS);
+}
+
 // --- Graceful shutdown ---
 function shutdown() {
   console.log('Shutting down...');
   clearInterval(pollInterval);
+  clearInterval(profileInterval);
   pool.end().then(() => {
     console.log('Database pool closed');
     process.exit(0);
@@ -160,6 +179,8 @@ app.listen(config.mcpPort, () => {
   console.log(`  Health: http://localhost:${config.mcpPort}/health`);
   startPoller();
   console.log(`  Queue poller: every ${config.pollIntervalMs}ms`);
+  startProfileRefresher();
+  console.log(`  Profile refresh: every ${PROFILE_REFRESH_INTERVAL_MS / 1000}s`);
 });
 
 export { app, pool };

@@ -16,6 +16,9 @@ vi.mock('../../src/processor/chunker.js', async () => {
   };
 });
 vi.mock('../../src/processor/summarizer.js');
+vi.mock('../../src/processor/entity-resolver.js', () => ({
+  resolveEntities: vi.fn().mockResolvedValue(undefined),
+}));
 
 const mockPool = {
   query: vi.fn(),
@@ -35,6 +38,9 @@ const sampleMetadata: ThoughtMetadata = {
   dates_mentioned: [],
   sentiment: 'positive',
   summary: 'An idea about AI',
+  companies: [],
+  products: [],
+  projects: [],
 };
 
 describe('processThought', () => {
