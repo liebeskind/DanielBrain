@@ -74,7 +74,7 @@ if (config.telegramBotToken && config.telegramWebhookSecret) {
 
     try {
       res.json({ ok: true });
-      await handleTelegramUpdate(req.body, pool);
+      await handleTelegramUpdate(req.body, pool, config.telegramBotToken);
     } catch (err) {
       console.error('Telegram webhook error:', err);
       if (!res.headersSent) {

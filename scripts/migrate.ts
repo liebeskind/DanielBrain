@@ -1,7 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import 'dotenv/config';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export async function runMigrations(connectionString?: string): Promise<string[]> {
   const pool = new pg.Pool({
@@ -22,7 +25,7 @@ export async function runMigrations(connectionString?: string): Promise<string[]
     const appliedSet = new Set(applied.map((r: { name: string }) => r.name));
 
     // Read migration files
-    const migrationsDir = path.resolve(import.meta.dirname, '..', 'migrations');
+    const migrationsDir = path.resolve(__dirname, '..', 'migrations');
     const files = fs.readdirSync(migrationsDir)
       .filter(f => f.endsWith('.sql'))
       .sort();
