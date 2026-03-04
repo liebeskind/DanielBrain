@@ -1,0 +1,31 @@
+display_information:
+  name: DanielBrain
+  description: Personal knowledge system — captures messages, extracts metadata, and stores thoughts for semantic search.
+  background_color: "#1a1a2e"
+
+features:
+  bot_user:
+    display_name: DanielBrain
+    always_online: true
+
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - channels:history
+      - groups:history
+      - im:history
+      - mpim:history
+
+settings:
+  event_subscriptions:
+    # Replace with your Cloudflare Tunnel URL
+    request_url: https://YOUR_TUNNEL_DOMAIN/slack/events
+    bot_events:
+      - message.channels
+      - message.groups
+      - message.im
+      - message.mpim
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false
