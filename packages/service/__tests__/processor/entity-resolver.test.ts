@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   normalizeName,
+  isJunkEntity,
   findOrCreateEntity,
   inferRelationship,
   resolveEntities,
@@ -40,6 +41,88 @@ describe('normalizeName', () => {
 
   it('handles already normalized names', () => {
     expect(normalizeName('alice')).toBe('alice');
+  });
+
+  it('strips parenthetical annotations', () => {
+    expect(normalizeName('Daniel Liebeskind (Topia)')).toBe('daniel liebeskind');
+    expect(normalizeName('Rob Fisher (provocative.earth)')).toBe('rob fisher');
+    expect(normalizeName('Chris (he/him/his)')).toBe('chris');
+    expect(normalizeName('Sarah (Founder of NEU)')).toBe('sarah');
+  });
+
+  it('strips domain suffixes', () => {
+    expect(normalizeName('Topia.io')).toBe('topia');
+    expect(normalizeName('provocative.earth')).toBe('provocative');
+    expect(normalizeName('example.com')).toBe('example');
+    expect(normalizeName('startup.ai')).toBe('startup');
+  });
+
+  it('strips pronoun suffixes outside parens', () => {
+    expect(normalizeName('Chris he/him')).toBe('chris');
+    expect(normalizeName('Alex she/her')).toBe('alex');
+    expect(normalizeName('Sam they/them')).toBe('sam');
+  });
+
+  it('strips expanded company suffixes', () => {
+    expect(normalizeName('Siemens GmbH')).toBe('siemens');
+    expect(normalizeName('BNP PLC')).toBe('bnp');
+    expect(normalizeName('Total S.A.')).toBe('total');
+  });
+
+  it('handles multiple transforms at once', () => {
+    expect(normalizeName('Dr. Alice Smith (MIT) Inc.')).toBe('alice smith');
+  });
+});
+
+describe('isJunkEntity', () => {
+  it('rejects empty or whitespace-only strings', () => {
+    expect(isJunkEntity('')).toBe(true);
+    expect(isJunkEntity('  ')).toBe(true);
+    expect(isJunkEntity(' ')).toBe(true);
+  });
+
+  it('rejects single-character names', () => {
+    expect(isJunkEntity('a')).toBe(true);
+  });
+
+  it('rejects names over 60 chars', () => {
+    expect(isJunkEntity('a'.repeat(61))).toBe(true);
+  });
+
+  it('rejects blocklisted words', () => {
+    expect(isJunkEntity('You')).toBe(true);
+    expect(isJunkEntity('the speaker')).toBe(true);
+    expect(isJunkEntity('not specified')).toBe(true);
+    expect(isJunkEntity('unknown')).toBe(true);
+    expect(isJunkEntity('N/A')).toBe(true);
+    expect(isJunkEntity('the team')).toBe(true);
+    expect(isJunkEntity('attendees')).toBe(true);
+  });
+
+  it('rejects non-alphabetic strings', () => {
+    expect(isJunkEntity('>{')).toBe(true);
+    expect(isJunkEntity('],')).toBe(true);
+    expect(isJunkEntity('123')).toBe(true);
+  });
+
+  it('rejects strings starting with articles', () => {
+    expect(isJunkEntity('the project')).toBe(true);
+    expect(isJunkEntity('a company')).toBe(true);
+    expect(isJunkEntity('an idea')).toBe(true);
+  });
+
+  it('rejects CLI commands', () => {
+    expect(isJunkEntity('curl')).toBe(true);
+    expect(isJunkEntity('wget https://example.com')).toBe(true);
+    expect(isJunkEntity('docker compose up')).toBe(true);
+  });
+
+  it('accepts valid entity names', () => {
+    expect(isJunkEntity('Daniel Liebeskind')).toBe(false);
+    expect(isJunkEntity('Topia')).toBe(false);
+    expect(isJunkEntity('GPT-4')).toBe(false);
+    expect(isJunkEntity('Project Atlas')).toBe(false);
+    expect(isJunkEntity('AWS')).toBe(false);
   });
 });
 
@@ -81,6 +164,8 @@ describe('findOrCreateEntity', () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] });
     // No alias match
     mockPool.query.mockResolvedValueOnce({ rows: [] });
+    // No prefix match (single token "bob")
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
     // INSERT
     mockPool.query.mockResolvedValueOnce({
       rows: [{ id: 'entity-new', name: 'Bob', entity_type: 'person' }],
@@ -93,8 +178,61 @@ describe('findOrCreateEntity', () => {
     expect(result.id).toBe('entity-new');
 
     // Verify ON CONFLICT clause in INSERT
-    const insertCall = mockPool.query.mock.calls[2];
+    const insertCall = mockPool.query.mock.calls[3];
     expect(insertCall[0]).toContain('ON CONFLICT');
+  });
+
+  it('matches first name prefix for person entities', async () => {
+    // No canonical match
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    // No alias match
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    // Prefix match: "chris" matches "chris psiaki"
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ id: 'entity-chris', name: 'Chris Psiaki', entity_type: 'person' }],
+    });
+    // addAlias call
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+    const result = await findOrCreateEntity('Chris', 'person', mockPool as any);
+
+    expect(result.match_type).toBe('prefix');
+    expect(result.confidence).toBe(0.7);
+    expect(result.id).toBe('entity-chris');
+    expect(result.name).toBe('Chris Psiaki');
+  });
+
+  it('does not try prefix match for multi-word names', async () => {
+    // No canonical match
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    // No alias match
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    // Should skip prefix and go straight to INSERT
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ id: 'entity-new', name: 'Chris Smith', entity_type: 'person' }],
+    });
+
+    const result = await findOrCreateEntity('Chris Smith', 'person', mockPool as any);
+
+    expect(result.match_type).toBe('new');
+    // Should be 3 queries total: canonical, alias, insert (no prefix)
+    expect(mockPool.query).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not try prefix match for non-person entities', async () => {
+    // No canonical match
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    // No alias match
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    // Should skip prefix and go straight to INSERT
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ id: 'entity-new', name: 'Docker', entity_type: 'product' }],
+    });
+
+    const result = await findOrCreateEntity('Docker', 'product', mockPool as any);
+
+    expect(result.match_type).toBe('new');
+    expect(mockPool.query).toHaveBeenCalledTimes(3);
   });
 });
 
@@ -192,6 +330,39 @@ describe('resolveEntities', () => {
 
     // 2 entities resolved: person + company, each with 3 queries (find + link + bump)
     expect(mockPool.query).toHaveBeenCalledTimes(6);
+  });
+
+  it('skips junk entities during resolution', async () => {
+    // Only "Alice" is valid; "You" and ">{"  are junk
+    // Alice: canonical match + link + bump
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ id: 'e1', name: 'Alice', entity_type: 'person' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const metadata: ThoughtMetadata = {
+      thought_type: 'conversation',
+      people: ['Alice', 'You', '>{'],
+      topics: [],
+      action_items: [],
+      dates_mentioned: [],
+      sentiment: 'neutral',
+      summary: 'Chat with Alice',
+      companies: [],
+      products: [],
+      projects: [],
+    };
+
+    await resolveEntities(
+      'thought-3',
+      metadata,
+      'Chat with Alice',
+      mockPool as any,
+      mockConfig,
+    );
+
+    // Only 3 queries for Alice (find + link + bump), junk entities skipped
+    expect(mockPool.query).toHaveBeenCalledTimes(3);
   });
 
   it('handles empty metadata gracefully', async () => {

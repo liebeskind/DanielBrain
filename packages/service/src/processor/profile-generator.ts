@@ -12,6 +12,28 @@ interface ProfileConfig {
   extractionModel: string;
 }
 
+export const PROFILE_SYSTEM_PROMPT = `You are writing a profile for a knowledge graph entity. This profile will be used by AI agents to quickly understand who or what this entity is.
+
+STRUCTURE:
+- Sentence 1: Who or what this is — role, title, or category.
+- Sentences 2-3: Key themes and context from recent interactions.
+- Sentences 4-5 (if relevant): Notable relationships, projects, or decisions.
+
+RULES:
+- Write in third person. Example: "Daniel Liebeskind is the CEO of Topia." not "You are the CEO."
+- Be factual, not speculative. Only state what is supported by the provided context.
+- If the context is thin (few interactions), write 2-3 sentences. Do not pad with generic filler.
+- Do not add parenthetical annotations to names.
+- Do not start with "Based on the provided context" or similar meta-phrases.
+
+EXAMPLE:
+Context about "Rob Fisher" (person):
+1. [about] (telegram) Rob Fisher presented provocative.earth's carbon offset marketplace concept.
+2. [mentions] (telegram) Discussion about integrating spatial platforms with carbon trading.
+3. [mentions] (slack) Rob shared early mockups of the marketplace UI.
+
+Profile: Rob Fisher is the founder of provocative.earth, a carbon offset marketplace platform. He has been actively discussing integration possibilities with spatial platforms and has shared early UI mockups. His focus areas include carbon trading infrastructure and marketplace design.`;
+
 export function isProfileStale(
   entity: { profile_summary: string | null; mention_count: number; updated_at: Date },
 ): boolean {
@@ -62,7 +84,7 @@ export async function generateProfile(
     return `${i + 1}. [${t.relationship}] (${t.source}) ${text}`;
   }).join('\n');
 
-  const prompt = `Based on the following context about "${entity.name}" (${entity.entity_type}), write a concise 3-5 sentence profile summary. Focus on who/what this is, their role or significance, and key themes from recent interactions.\n\nContext:\n${thoughtSummaries}`;
+  const prompt = `Write a profile for "${entity.name}" (${entity.entity_type}) based on these interactions:\n\n${thoughtSummaries}`;
 
   const response = await fetch(`${config.ollamaBaseUrl}/api/chat`, {
     method: 'POST',
@@ -73,7 +95,7 @@ export async function generateProfile(
       messages: [
         {
           role: 'system',
-          content: 'You are a concise profile writer. Write a brief, informative profile summary based on the provided context. Keep it to 3-5 sentences.',
+          content: PROFILE_SYSTEM_PROMPT,
         },
         { role: 'user', content: prompt },
       ],

@@ -7,22 +7,52 @@ interface ResolverConfig {
 }
 
 const NAME_PREFIXES = /^(mr\.?|mrs\.?|ms\.?|dr\.?|prof\.?)\s+/i;
-const COMPANY_SUFFIXES = /\s+(inc\.?|llc\.?|ltd\.?|co\.?|corp\.?)$/i;
+const COMPANY_SUFFIXES = /\s+(inc\.?|llc\.?|ltd\.?|co\.?|corp\.?|gmbh|plc|s\.?a\.?)$/i;
+const PARENTHETICALS = /\s*\([^)]*\)\s*/g;
+const DOMAIN_SUFFIXES = /\.(io|com|org|net|co|earth|ai|dev|app|xyz|tech)$/i;
+const PRONOUN_SUFFIXES = /\s+(he\/him(\/his)?|she\/her(\/hers)?|they\/them(\/theirs)?|ze\/hir|xe\/xem)$/i;
+
+const JUNK_BLOCKLIST = new Set([
+  'you', 'me', 'we', 'they', 'i', 'he', 'she', 'it',
+  'someone', 'everyone', 'anyone', 'nobody',
+  'the speaker', 'not specified', 'unknown', 'n/a', 'none',
+  'null', 'undefined', 'your_name', 'the team', 'attendees',
+  'the audience', 'participants', 'the user', 'the host',
+]);
+
+const JUNK_PATTERNS = [
+  /^[^a-zA-Z]*$/,              // no alphabetic chars (e.g., `>{`, `],`)
+  /^(a|an|the)\s+/i,           // starts with article
+  /attendees$/i,               // ends with "attendees"
+  /^(curl|wget|npm|git|docker|ssh|sudo|pip)\b/i, // CLI commands
+];
 
 export function normalizeName(name: string): string {
   return name
     .toLowerCase()
     .trim()
+    .replace(PARENTHETICALS, ' ')
     .replace(/\s+/g, ' ')
+    .trim()
     .replace(NAME_PREFIXES, '')
-    .replace(COMPANY_SUFFIXES, '');
+    .replace(COMPANY_SUFFIXES, '')
+    .replace(DOMAIN_SUFFIXES, '')
+    .replace(PRONOUN_SUFFIXES, '')
+    .trim();
+}
+
+export function isJunkEntity(name: string): boolean {
+  const normalized = normalizeName(name);
+  if (normalized.length < 2 || normalized.length > 60) return true;
+  if (JUNK_BLOCKLIST.has(normalized)) return true;
+  return JUNK_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
 interface EntityMatch {
   id: string;
   name: string;
   entity_type: EntityType;
-  match_type: 'canonical' | 'alias' | 'new';
+  match_type: 'canonical' | 'alias' | 'prefix' | 'new';
   confidence: number;
 }
 
@@ -67,6 +97,29 @@ export async function findOrCreateEntity(
       match_type: 'alias',
       confidence: 0.9,
     };
+  }
+
+  // Try first-name prefix match (person type only, single-token input)
+  if (entityType === 'person' && !canonical.includes(' ')) {
+    const { rows: prefixRows } = await pool.query(
+      `SELECT id, name, entity_type FROM entities
+       WHERE canonical_name LIKE $1 || ' %' AND entity_type = 'person'
+       ORDER BY mention_count DESC
+       LIMIT 1`,
+      [canonical]
+    );
+
+    if (prefixRows.length > 0) {
+      // Auto-add first name as alias for future lookups
+      await addAlias(prefixRows[0].id, canonical, pool);
+      return {
+        id: prefixRows[0].id,
+        name: prefixRows[0].name,
+        entity_type: prefixRows[0].entity_type,
+        match_type: 'prefix',
+        confidence: 0.7,
+      };
+    }
   }
 
   // Create new entity — use ON CONFLICT to handle races
@@ -119,6 +172,18 @@ export function inferRelationship(
   return 'mentions';
 }
 
+async function addAlias(
+  entityId: string,
+  alias: string,
+  pool: pg.Pool,
+): Promise<void> {
+  await pool.query(
+    `UPDATE entities SET aliases = array_append(aliases, $1)
+     WHERE id = $2 AND NOT ($1 = ANY(aliases))`,
+    [alias, entityId]
+  );
+}
+
 async function linkEntity(
   thoughtId: string,
   entityId: string,
@@ -166,6 +231,7 @@ export async function resolveEntities(
   }
 
   for (const entry of entityEntries) {
+    if (isJunkEntity(entry.name)) continue;
     const match = await findOrCreateEntity(entry.name, entry.type, pool);
     const relationship = inferRelationship(entry.name, metadata, content, sourceMeta);
     await linkEntity(thoughtId, match.id, relationship, match.confidence, pool);

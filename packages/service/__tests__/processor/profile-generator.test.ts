@@ -135,6 +135,36 @@ describe('generateProfile', () => {
       generateProfile('e1', mockPool as any, mockConfig)
     ).rejects.toThrow('Ollama profile generation failed');
   });
+
+  it('uses detailed system prompt with knowledge graph context', async () => {
+    // Entity lookup
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ id: 'e1', name: 'Alice', entity_type: 'person', metadata: {} }],
+    });
+    // Linked thoughts
+    mockPool.query.mockResolvedValueOnce({
+      rows: [
+        { content: 'Test', summary: 'Meeting with Alice', thought_type: 'meeting_note', relationship: 'about', source: 'slack' },
+      ],
+    });
+    // Ollama response
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        message: { content: 'Alice is a collaborator.' },
+      }),
+    });
+    // Update entity
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+    await generateProfile('e1', mockPool as any, mockConfig);
+
+    const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const systemMsg = callBody.messages.find((m: { role: string }) => m.role === 'system');
+    expect(systemMsg.content).toContain('knowledge graph');
+    expect(systemMsg.content).toContain('third person');
+    expect(systemMsg.content).toContain('EXAMPLE:');
+  });
 });
 
 describe('refreshStaleProfiles', () => {

@@ -1,12 +1,38 @@
 import { z } from 'zod';
 
+// ISO date pattern: YYYY-MM-DD
+const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
+
+// Coerce LLM sentiment output to valid enum or null
+const sentimentValues = ['positive', 'negative', 'neutral', 'mixed'] as const;
+const resilientSentiment = z
+  .unknown()
+  .transform((val) => {
+    if (val == null || val === 'null' || val === '') return null;
+    const lower = String(val).toLowerCase().trim();
+    if (sentimentValues.includes(lower as typeof sentimentValues[number])) {
+      return lower as typeof sentimentValues[number];
+    }
+    return null; // Unknown sentiment → null rather than crash
+  });
+
+// Filter dates_mentioned to only valid ISO dates (LLM often returns junk like "no dates mentioned")
+const resilientDates = z
+  .array(z.unknown())
+  .default([])
+  .transform((arr) =>
+    arr
+      .map((v) => String(v).trim())
+      .filter((s) => isoDatePattern.test(s) && !isNaN(Date.parse(s)))
+  );
+
 export const metadataSchema = z.object({
   thought_type: z.string().nullable().default(null),
   people: z.array(z.string()).default([]),
   topics: z.array(z.string()).default([]),
   action_items: z.array(z.string()).default([]),
-  dates_mentioned: z.array(z.string()).default([]),
-  sentiment: z.enum(['positive', 'negative', 'neutral', 'mixed']).nullable().default(null),
+  dates_mentioned: resilientDates,
+  sentiment: resilientSentiment,
   summary: z.string().nullable().default(null),
   companies: z.array(z.string()).default([]),
   products: z.array(z.string()).default([]),

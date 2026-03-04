@@ -44,12 +44,38 @@ describe('metadataSchema', () => {
     }
   });
 
-  it('rejects invalid sentiment values', () => {
-    const result = metadataSchema.safeParse({
-      sentiment: 'invalid_sentiment',
-    });
+  it('coerces uppercase sentiment to lowercase', () => {
+    const result = metadataSchema.safeParse({ sentiment: 'NEUTRAL' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.sentiment).toBe('neutral');
+    }
+  });
 
-    expect(result.success).toBe(false);
+  it('coerces unknown sentiment to null', () => {
+    const result = metadataSchema.safeParse({ sentiment: 'curious' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.sentiment).toBeNull();
+    }
+  });
+
+  it('coerces string "null" sentiment to null', () => {
+    const result = metadataSchema.safeParse({ sentiment: 'null' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.sentiment).toBeNull();
+    }
+  });
+
+  it('filters out non-ISO dates from dates_mentioned', () => {
+    const result = metadataSchema.safeParse({
+      dates_mentioned: ['2026-03-04', 'no dates mentioned', 'March 03', '2026-01-15'],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.dates_mentioned).toEqual(['2026-03-04', '2026-01-15']);
+    }
   });
 
   it('accepts companies, products, and projects', () => {

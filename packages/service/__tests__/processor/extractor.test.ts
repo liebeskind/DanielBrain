@@ -139,6 +139,47 @@ describe('extractMetadata', () => {
     expect(callBody.format.properties.projects).toBeDefined();
   });
 
+  it('uses detailed system prompt with DO/DON\'T rules and examples', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          message: {
+            content: JSON.stringify({
+              thought_type: 'observation',
+              people: [],
+              topics: [],
+              action_items: [],
+              dates_mentioned: [],
+              sentiment: 'neutral',
+              summary: 'Test',
+              companies: [],
+              products: [],
+              projects: [],
+            }),
+          },
+        }),
+    });
+
+    await extractMetadata('Some text', {
+      ollamaBaseUrl: 'http://localhost:11434',
+      extractionModel: 'llama3.1:8b',
+    });
+
+    const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const systemMsg = callBody.messages.find((m: { role: string }) => m.role === 'system');
+    // Should contain explicit rules
+    expect(systemMsg.content).toContain("DON'T");
+    expect(systemMsg.content).toContain('DO:');
+    // Should contain few-shot example
+    expect(systemMsg.content).toContain('EXAMPLE:');
+    // Should mention knowledge management context
+    expect(systemMsg.content).toContain('knowledge management');
+    // Should have specific negative examples
+    expect(systemMsg.content).toContain('damenlopez');
+    expect(systemMsg.content).toContain('Topia.io');
+  });
+
   it('throws on Ollama error', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: false,

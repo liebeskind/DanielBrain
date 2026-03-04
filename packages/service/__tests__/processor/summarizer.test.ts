@@ -50,6 +50,27 @@ describe('summarize', () => {
     expect(systemMsg).toBeDefined();
   });
 
+  it('uses detailed system prompt with knowledge management context', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          message: { content: 'Summary' },
+        }),
+    });
+
+    await summarize('Input text', {
+      ollamaBaseUrl: 'http://localhost:11434',
+      extractionModel: 'llama3.1:8b',
+    });
+
+    const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+    const systemMsg = callBody.messages.find((m: { role: string }) => m.role === 'system');
+    expect(systemMsg.content).toContain('knowledge management');
+    expect(systemMsg.content).toContain('2-3 sentences');
+    expect(systemMsg.content).toContain('Name specific people');
+  });
+
   it('throws on Ollama error', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: false,

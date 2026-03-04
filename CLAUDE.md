@@ -39,7 +39,7 @@ packages/service/        # MCP server, processing pipeline, Slack + Telegram int
   src/auth.ts            # API key verification (timing-safe)
   src/config.ts          # Zod-validated config from env vars
   src/index.ts           # Entry: Express + MCP SSE + webhooks + queue poller + profile refresher
-migrations/              # 11 SQL migration files
+migrations/              # 13 SQL migration files
   001 pgvector           # Enable extensions
   002 thoughts           # Thoughts table + update_updated_at trigger
   003 queue              # Async processing queue
@@ -51,6 +51,8 @@ migrations/              # 11 SQL migration files
   009 entity_relationships # Entity-to-entity relationships (schema ready, not populated)
   010 entity_indexes     # HNSW, GIN, B-tree indexes for entities
   011 find_entity_function # find_entity_by_name() SQL function
+  012 merge_duplicates   # Junk cleanup + duplicate entity merge
+  013 update_find_entity # Align SQL normalization with app code
 scripts/migrate.ts       # Migration runner
 docker/                  # docker-compose.yml (prod) + docker-compose.test.yml (test)
 docs/
@@ -73,7 +75,7 @@ npm run migrate                # Run SQL migrations against DATABASE_URL
 - Full TDD: every module has tests written before implementation
 - Unit tests mock Ollama calls (fast, no GPU needed)
 - Integration tests use real Postgres via docker-compose.test.yml (port 5433)
-- Run: `npx vitest run` (164 tests across 26 files)
+- Run: `npx vitest run` (187 tests across 26 files)
 
 ## MCP Tools
 
@@ -126,6 +128,9 @@ After every thought INSERT, the pipeline runs entity resolution (non-blocking):
 - **Relationship inference**: deterministic rules based on source_meta, action items, summary
 - **Hybrid data model**: shared entity graph + privately-scoped thoughts + selective sharing
 - **Source-determined visibility**: public channels → company, DMs → participants, personal → owner
+- **LLM Prompting Standard**: All prompts sent to local Ollama models (llama3.1:8b) must be explicit, structured prompts with examples. Claude writes these prompts, optimized for the smaller model's capabilities. Every prompt must include: (1) clear role and context about the system, (2) explicit DO/DON'T rules per field, (3) at least one concrete few-shot example, (4) negative examples showing common mistakes, (5) exact format constraints. Applies to extraction, summarization, profile generation, and any future LLM calls.
+- **Entity normalization**: `normalizeName()` strips parentheticals, domain suffixes (.io/.com/.earth), pronouns, name prefixes, and company suffixes. `isJunkEntity()` rejects blocklisted words, non-alphabetic strings, and CLI commands before any DB interaction.
+- **First-name prefix matching**: Single-token person names (e.g., "Chris") match existing entities where `canonical_name LIKE 'chris %'`, auto-adding the first name as an alias
 
 ## Environment Variables
 
