@@ -35,6 +35,8 @@ export interface QueueItem {
   source: string;
   source_id?: string | null;
   source_meta?: Record<string, unknown> | null;
+  originated_at?: Date | null;
+  content_hash?: string | null;
   status: 'pending' | 'processing' | 'completed' | 'failed';
   error?: string | null;
   attempts: number;
@@ -42,6 +44,29 @@ export interface QueueItem {
   created_at: Date;
   processed_at?: Date | null;
 }
+
+// --- Source Envelope types (ride inside source_meta) ---
+
+export interface ParticipantIdentity {
+  name: string;
+  email?: string | null;
+  platform_id?: string | null;
+  role?: 'author' | 'participant' | 'recorder' | 'assignee';
+}
+
+export interface StructuredData {
+  summary?: string | null;
+  action_items?: Array<{
+    description: string;
+    assignee_name?: string | null;
+    assignee_email?: string | null;
+    completed?: boolean;
+  }>;
+  participants?: ParticipantIdentity[];
+  companies?: Array<{ name: string; record_url?: string }>;
+}
+
+export type ChannelType = 'public' | 'private' | 'dm' | 'group_dm' | 'meeting' | 'manual';
 
 export interface AccessKey {
   id: string;

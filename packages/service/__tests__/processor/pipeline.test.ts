@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { processThought } from '../../src/processor/pipeline.js';
+import { processThought, parseEnvelope } from '../../src/processor/pipeline.js';
 import * as embedder from '../../src/processor/embedder.js';
 import * as extractor from '../../src/processor/extractor.js';
 import * as chunker from '../../src/processor/chunker.js';
@@ -43,11 +43,37 @@ const sampleMetadata: ThoughtMetadata = {
   projects: [],
 };
 
+describe('parseEnvelope', () => {
+  it('returns empty structured and manual channel_type for null source_meta', () => {
+    const result = parseEnvelope(null);
+    expect(result.structured).toEqual({});
+    expect(result.channelType).toBe('manual');
+  });
+
+  it('extracts structured and channel_type from source_meta', () => {
+    const result = parseEnvelope({
+      channel_type: 'meeting',
+      structured: { summary: 'Quick sync call.' },
+    });
+    expect(result.structured.summary).toBe('Quick sync call.');
+    expect(result.channelType).toBe('meeting');
+  });
+
+  it('defaults to empty structured when not present', () => {
+    const result = parseEnvelope({ channel: 'C12345' });
+    expect(result.structured).toEqual({});
+    expect(result.channelType).toBe('manual');
+  });
+});
+
 describe('processThought', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPool.query.mockResolvedValue({ rows: [{ id: 'thought-uuid-1' }] });
     vi.mocked(embedder.embed).mockResolvedValue([0.1, 0.2, 0.3]);
+    vi.mocked(embedder.embedBatch).mockImplementation(async (texts: string[]) =>
+      texts.map(() => [0.1, 0.2, 0.3])
+    );
     vi.mocked(extractor.extractMetadata).mockResolvedValue(sampleMetadata);
     vi.mocked(summarizer.summarize).mockResolvedValue('Summary text');
   });
@@ -86,6 +112,69 @@ describe('processThought', () => {
     expect(embedder.embed).toHaveBeenCalled();
     // Multiple inserts: parent + chunks
     expect(mockPool.query).toHaveBeenCalled();
+  });
+
+  it('skips summarizer when structured.summary is available (long content)', async () => {
+    const longText = 'This is a long sentence about various topics. '.repeat(700);
+    const sourceMeta = {
+      channel_type: 'meeting',
+      structured: {
+        summary: 'Pre-computed meeting summary.',
+      },
+    };
+
+    await processThought(longText, 'fathom', mockPool as any, mockConfig, sourceMeta, 'fathom-123');
+
+    // Summarizer should NOT be called — structured summary used instead
+    expect(summarizer.summarize).not.toHaveBeenCalled();
+    // Embed should still be called (for the summary embedding)
+    expect(embedder.embed).toHaveBeenCalled();
+  });
+
+  it('merges structured action items with LLM-extracted ones', async () => {
+    const metaWithActions: ThoughtMetadata = {
+      ...sampleMetadata,
+      action_items: ['LLM found: Alice should review docs'],
+    };
+    vi.mocked(extractor.extractMetadata).mockResolvedValue(metaWithActions);
+
+    const sourceMeta = {
+      structured: {
+        action_items: [
+          { description: 'Bob sends report', assignee_name: 'Bob', assignee_email: null, completed: false },
+          // Duplicate of LLM item (same first 30 chars won't match, so it gets added)
+          { description: 'New structured item', assignee_name: null, assignee_email: null, completed: false },
+        ],
+      },
+    };
+
+    const result = await processThought('Short thought', 'fathom', mockPool as any, mockConfig, sourceMeta);
+
+    expect(result.metadata.action_items).toContain('LLM found: Alice should review docs');
+    expect(result.metadata.action_items).toContain('Bob sends report (Bob)');
+    expect(result.metadata.action_items).toContain('New structured item');
+  });
+
+  it('deduplicates action items by first 30 chars', async () => {
+    const metaWithActions: ThoughtMetadata = {
+      ...sampleMetadata,
+      action_items: ['Send report to the team by Friday'],
+    };
+    vi.mocked(extractor.extractMetadata).mockResolvedValue(metaWithActions);
+
+    const sourceMeta = {
+      structured: {
+        action_items: [
+          // Same first 30 chars as LLM item
+          { description: 'Send report to the team by Friday afternoon', assignee_name: null, assignee_email: null, completed: false },
+        ],
+      },
+    };
+
+    const result = await processThought('Short thought', 'fathom', mockPool as any, mockConfig, sourceMeta);
+
+    // Should not duplicate — only the original LLM version kept
+    expect(result.metadata.action_items).toHaveLength(1);
   });
 
   it('returns extracted metadata', async () => {

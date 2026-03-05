@@ -14,13 +14,17 @@ function truncateForEmbed(text: string): string {
   return words.slice(0, MAX_EMBED_WORDS).join(' ');
 }
 
-async function callOllamaEmbed(text: string, config: EmbedConfig): Promise<number[]> {
+async function callOllamaEmbed(input: string | string[], config: EmbedConfig): Promise<number[][]> {
+  const truncated = Array.isArray(input)
+    ? input.map(truncateForEmbed)
+    : truncateForEmbed(input);
+
   const response = await fetch(`${config.ollamaBaseUrl}/api/embed`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: config.embeddingModel,
-      input: truncateForEmbed(text),
+      input: truncated,
     }),
   });
 
@@ -30,13 +34,21 @@ async function callOllamaEmbed(text: string, config: EmbedConfig): Promise<numbe
   }
 
   const data = await response.json() as { embeddings: number[][] };
-  return data.embeddings[0];
+  return data.embeddings;
 }
 
 export async function embed(text: string, config: EmbedConfig): Promise<number[]> {
-  return callOllamaEmbed(`${SEARCH_DOCUMENT_PREFIX}${text}`, config);
+  const embeddings = await callOllamaEmbed(`${SEARCH_DOCUMENT_PREFIX}${text}`, config);
+  return embeddings[0];
+}
+
+export async function embedBatch(texts: string[], config: EmbedConfig): Promise<number[][]> {
+  if (texts.length === 0) return [];
+  const prefixed = texts.map(t => `${SEARCH_DOCUMENT_PREFIX}${t}`);
+  return callOllamaEmbed(prefixed, config);
 }
 
 export async function embedQuery(text: string, config: EmbedConfig): Promise<number[]> {
-  return callOllamaEmbed(`${SEARCH_QUERY_PREFIX}${text}`, config);
+  const embeddings = await callOllamaEmbed(`${SEARCH_QUERY_PREFIX}${text}`, config);
+  return embeddings[0];
 }

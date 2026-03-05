@@ -16,7 +16,7 @@ interface QueueConfig {
 export async function pollQueue(pool: pg.Pool, config: QueueConfig): Promise<void> {
   // Claim pending items atomically
   const { rows: items } = await pool.query(
-    `SELECT id, content, source, source_id, source_meta, attempts
+    `SELECT id, content, source, source_id, source_meta, originated_at, attempts
      FROM queue
      WHERE status = 'pending'
      ORDER BY created_at ASC
@@ -50,13 +50,16 @@ export async function pollQueue(pool: pg.Pool, config: QueueConfig): Promise<voi
         ? (typeof item.source_meta === 'string' ? JSON.parse(item.source_meta) : item.source_meta)
         : null;
 
+      const createdAt = item.originated_at ? new Date(item.originated_at) : null;
+
       const result = await processThought(
         item.content,
         item.source,
         pool,
         config,
         sourceMeta,
-        item.source_id ?? null
+        item.source_id ?? null,
+        createdAt
       );
 
       await pool.query(

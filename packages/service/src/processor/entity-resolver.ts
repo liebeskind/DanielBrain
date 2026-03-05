@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import type { ThoughtMetadata, EntityType, EntityRelationshipType } from '@danielbrain/shared';
+import type { ThoughtMetadata, EntityType, EntityRelationshipType, StructuredData, ParticipantIdentity } from '@danielbrain/shared';
 import { shouldCreateProposal, createLinkProposal } from '../proposals/helpers.js';
 
 interface ResolverConfig {
@@ -207,6 +207,65 @@ async function linkEntity(
   );
 }
 
+async function storeEmailOnEntity(
+  entityId: string,
+  email: string,
+  pool: pg.Pool,
+): Promise<void> {
+  await pool.query(
+    `UPDATE entities SET metadata = jsonb_set(
+       COALESCE(metadata, '{}'::jsonb),
+       '{email}',
+       $1::jsonb
+     )
+     WHERE id = $2 AND (metadata->>'email') IS NULL`,
+    [JSON.stringify(email), entityId]
+  );
+}
+
+/**
+ * Resolve structured participants (from source envelope) before LLM resolution.
+ * Returns a Set of normalized names that were already resolved.
+ */
+export async function resolveStructuredParticipants(
+  thoughtId: string,
+  structured: StructuredData,
+  metadata: ThoughtMetadata,
+  content: string,
+  pool: pg.Pool,
+  sourceMeta?: Record<string, unknown> | null,
+): Promise<Set<string>> {
+  const resolvedNames = new Set<string>();
+
+  // Resolve participants (people)
+  if (structured.participants?.length) {
+    for (const p of structured.participants) {
+      if (isJunkEntity(p.name)) continue;
+      const match = await findOrCreateEntity(p.name, 'person', pool);
+      const relationship: EntityRelationshipType = p.role === 'author' ? 'from' : p.role === 'recorder' ? 'from' : 'mentions';
+      await linkEntity(thoughtId, match.id, relationship, 1.0, pool);
+
+      if (p.email) {
+        await storeEmailOnEntity(match.id, p.email, pool);
+      }
+
+      resolvedNames.add(normalizeName(p.name));
+    }
+  }
+
+  // Resolve structured companies
+  if (structured.companies?.length) {
+    for (const c of structured.companies) {
+      if (isJunkEntity(c.name)) continue;
+      const match = await findOrCreateEntity(c.name, 'company', pool);
+      await linkEntity(thoughtId, match.id, 'mentions', 1.0, pool);
+      resolvedNames.add(normalizeName(c.name));
+    }
+  }
+
+  return resolvedNames;
+}
+
 export async function resolveEntities(
   thoughtId: string,
   metadata: ThoughtMetadata,
@@ -215,6 +274,23 @@ export async function resolveEntities(
   _config: ResolverConfig,
   sourceMeta?: Record<string, unknown> | null,
 ): Promise<void> {
+  // Phase B: resolve structured participants first
+  let alreadyResolved = new Set<string>();
+  if (sourceMeta?.structured) {
+    try {
+      alreadyResolved = await resolveStructuredParticipants(
+        thoughtId,
+        sourceMeta.structured as StructuredData,
+        metadata,
+        content,
+        pool,
+        sourceMeta,
+      );
+    } catch (err) {
+      console.error('Structured participant resolution failed (non-fatal):', err);
+    }
+  }
+
   // Collect all entities to resolve: people, companies, products, projects, topics
   const entityEntries: Array<{ name: string; type: EntityType }> = [];
 
@@ -233,6 +309,10 @@ export async function resolveEntities(
 
   for (const entry of entityEntries) {
     if (isJunkEntity(entry.name)) continue;
+
+    // Skip names already resolved via structured data
+    if (alreadyResolved.has(normalizeName(entry.name))) continue;
+
     const match = await findOrCreateEntity(entry.name, entry.type, pool);
     const relationship = inferRelationship(entry.name, metadata, content, sourceMeta);
     await linkEntity(thoughtId, match.id, relationship, match.confidence, pool);

@@ -38,7 +38,7 @@ describe('handleFathomEvent', () => {
     vi.clearAllMocks();
   });
 
-  it('inserts meeting into queue with formatted content', async () => {
+  it('inserts meeting into queue with structured data, originated_at, content_hash', async () => {
     mockPool.query.mockResolvedValueOnce({ rowCount: 1 });
 
     const result = await handleFathomEvent(meeting, mockPool as any);
@@ -48,18 +48,27 @@ describe('handleFathomEvent', () => {
 
     const insertCall = mockPool.query.mock.calls[0];
     expect(insertCall[0]).toContain('INSERT INTO queue');
-    expect(insertCall[0]).toContain('ON CONFLICT');
+    expect(insertCall[0]).toContain('originated_at');
+    expect(insertCall[0]).toContain('content_hash');
     // content
     expect(insertCall[1][0]).toContain('Meeting: Team Sync - Alice and Bob');
-    expect(insertCall[1][0]).toContain('Alice: Hello');
     // source
     expect(insertCall[1][1]).toBe('fathom');
     // source_id
     expect(insertCall[1][2]).toBe('fathom-123');
-    // source_meta
+    // originated_at from recording_start_time
+    expect(insertCall[1][4]).toEqual(new Date('2026-03-01T10:00:00Z'));
+    // content_hash
+    expect(insertCall[1][5]).toMatch(/^[a-f0-9]{64}$/);
+
+    // source_meta has structured data
     const meta = JSON.parse(insertCall[1][3]);
-    expect(meta.recording_id).toBe(123);
-    expect(meta.participants).toEqual(['Alice', 'Bob']);
+    expect(meta.channel_type).toBe('meeting');
+    expect(meta.structured.summary).toBe('Quick sync call.');
+    expect(meta.structured.participants).toEqual([
+      { name: 'Alice', email: 'alice@co.com', role: 'recorder' },
+      { name: 'Bob', email: 'bob@co.com', role: 'participant' },
+    ]);
   });
 
   it('deduplicates already-queued recordings', async () => {
@@ -71,13 +80,13 @@ describe('handleFathomEvent', () => {
     expect(result.queued).toBe(false);
   });
 
-  it('includes summary and action item metadata', async () => {
+  it('includes structured action items', async () => {
     mockPool.query.mockResolvedValueOnce({ rowCount: 1 });
 
     const meetingWithActions: FathomMeeting = {
       ...meeting,
       action_items: [
-        { description: 'Send report', user_generated: false, completed: false, recording_timestamp: '00:10:00', recording_playback_url: 'https://fathom.video/calls/123#10m', assignee: { name: 'Bob', email: null, team: null } },
+        { description: 'Send report', user_generated: false, completed: false, recording_timestamp: '00:10:00', recording_playback_url: 'https://fathom.video/calls/123#10m', assignee: { name: 'Bob', email: 'bob@co.com', team: null } },
       ],
     };
 
@@ -86,5 +95,28 @@ describe('handleFathomEvent', () => {
     const meta = JSON.parse(mockPool.query.mock.calls[0][1][3]);
     expect(meta.has_summary).toBe(true);
     expect(meta.action_item_count).toBe(1);
+    expect(meta.structured.action_items).toEqual([
+      { description: 'Send report', assignee_name: 'Bob', assignee_email: 'bob@co.com', completed: false },
+    ]);
+  });
+
+  it('includes structured companies from CRM matches', async () => {
+    mockPool.query.mockResolvedValueOnce({ rowCount: 1 });
+
+    const meetingWithCrm: FathomMeeting = {
+      ...meeting,
+      crm_matches: {
+        companies: [
+          { name: 'Acme Corp', record_url: 'https://crm.example.com/companies/1' },
+        ],
+      },
+    };
+
+    await handleFathomEvent(meetingWithCrm, mockPool as any);
+
+    const meta = JSON.parse(mockPool.query.mock.calls[0][1][3]);
+    expect(meta.structured.companies).toEqual([
+      { name: 'Acme Corp', record_url: 'https://crm.example.com/companies/1' },
+    ]);
   });
 });

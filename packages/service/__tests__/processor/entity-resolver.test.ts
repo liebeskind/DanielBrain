@@ -5,6 +5,7 @@ import {
   findOrCreateEntity,
   inferRelationship,
   resolveEntities,
+  resolveStructuredParticipants,
 } from '../../src/processor/entity-resolver.js';
 import type { ThoughtMetadata } from '@danielbrain/shared';
 
@@ -525,5 +526,187 @@ describe('resolveEntities', () => {
 
     // Entity was still linked despite proposal failure
     expect(mockPool.query).toHaveBeenCalledTimes(6);
+  });
+
+  it('resolves structured participants before LLM entities and skips duplicates', async () => {
+    // Structured participant: Alice (canonical match + link + bump + storeEmail)
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ id: 'e1', name: 'Alice Smith', entity_type: 'person' }] }) // find Alice
+      .mockResolvedValueOnce({ rows: [] }) // link
+      .mockResolvedValueOnce({ rows: [] }) // bump
+      .mockResolvedValueOnce({ rows: [] }); // storeEmail
+
+    // LLM resolution: Alice is skipped (already resolved), Bob gets resolved
+    // Bob: canonical match + link + bump
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ id: 'e2', name: 'Bob', entity_type: 'person' }] }) // find Bob
+      .mockResolvedValueOnce({ rows: [] }) // link
+      .mockResolvedValueOnce({ rows: [] }); // bump
+
+    const metadata: ThoughtMetadata = {
+      thought_type: 'meeting_note',
+      people: ['Alice Smith', 'Bob'],
+      topics: [],
+      action_items: [],
+      dates_mentioned: [],
+      sentiment: 'neutral',
+      summary: 'Meeting notes',
+      companies: [],
+      products: [],
+      projects: [],
+    };
+
+    const sourceMeta = {
+      structured: {
+        participants: [
+          { name: 'Alice Smith', email: 'alice@co.com', role: 'recorder' },
+        ],
+      },
+    };
+
+    await resolveEntities(
+      'thought-7',
+      metadata,
+      'Meeting content',
+      mockPool as any,
+      mockConfig,
+      sourceMeta,
+    );
+
+    // 4 queries for structured Alice (find + link + bump + email) + 3 for LLM Bob = 7
+    expect(mockPool.query).toHaveBeenCalledTimes(7);
+
+    // Verify email was stored
+    const emailCall = mockPool.query.mock.calls[3];
+    expect(emailCall[0]).toContain('email');
+    expect(emailCall[1][0]).toContain('alice@co.com');
+  });
+
+  it('resolves structured companies from CRM at confidence 1.0', async () => {
+    // Structured company: Acme (canonical match + link + bump)
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ id: 'e1', name: 'Acme Corp', entity_type: 'company' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const metadata: ThoughtMetadata = {
+      thought_type: 'meeting_note',
+      people: [],
+      topics: [],
+      action_items: [],
+      dates_mentioned: [],
+      sentiment: 'neutral',
+      summary: 'Meeting notes',
+      companies: ['Acme Corp'], // LLM also found it — should skip
+      products: [],
+      projects: [],
+    };
+
+    const sourceMeta = {
+      structured: {
+        companies: [
+          { name: 'Acme Corp', record_url: 'https://crm.example.com/companies/1' },
+        ],
+      },
+    };
+
+    await resolveEntities(
+      'thought-8',
+      metadata,
+      'Meeting about Acme',
+      mockPool as any,
+      mockConfig,
+      sourceMeta,
+    );
+
+    // 3 queries for structured Acme only, LLM duplicate skipped
+    expect(mockPool.query).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('resolveStructuredParticipants', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const baseMetadata: ThoughtMetadata = {
+    thought_type: 'meeting_note',
+    people: [],
+    topics: [],
+    action_items: [],
+    dates_mentioned: [],
+    sentiment: 'neutral',
+    summary: 'Meeting notes',
+    companies: [],
+    products: [],
+    projects: [],
+  };
+
+  it('returns set of resolved normalized names', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ id: 'e1', name: 'Alice', entity_type: 'person' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const resolved = await resolveStructuredParticipants(
+      'thought-1',
+      { participants: [{ name: 'Alice', role: 'participant' }] },
+      baseMetadata,
+      'content',
+      mockPool as any,
+    );
+
+    expect(resolved.has('alice')).toBe(true);
+  });
+
+  it('stores email on entity when provided', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ id: 'e1', name: 'Alice', entity_type: 'person' }] })
+      .mockResolvedValueOnce({ rows: [] }) // link
+      .mockResolvedValueOnce({ rows: [] }) // bump
+      .mockResolvedValueOnce({ rows: [] }); // storeEmail
+
+    await resolveStructuredParticipants(
+      'thought-1',
+      { participants: [{ name: 'Alice', email: 'alice@co.com', role: 'participant' }] },
+      baseMetadata,
+      'content',
+      mockPool as any,
+    );
+
+    // 4th call is storeEmail
+    const emailCall = mockPool.query.mock.calls[3];
+    expect(emailCall[0]).toContain('email');
+  });
+
+  it('uses "from" relationship for author/recorder roles', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [{ id: 'e1', name: 'Alice', entity_type: 'person' }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await resolveStructuredParticipants(
+      'thought-1',
+      { participants: [{ name: 'Alice', role: 'recorder' }] },
+      baseMetadata,
+      'content',
+      mockPool as any,
+    );
+
+    // linkEntity call — check relationship param
+    const linkCall = mockPool.query.mock.calls[1];
+    expect(linkCall[1][2]).toBe('from');
+  });
+
+  it('skips junk participants', async () => {
+    await resolveStructuredParticipants(
+      'thought-1',
+      { participants: [{ name: 'You', role: 'participant' }] },
+      baseMetadata,
+      'content',
+      mockPool as any,
+    );
+
+    expect(mockPool.query).not.toHaveBeenCalled();
   });
 });
