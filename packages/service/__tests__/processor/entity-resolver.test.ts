@@ -8,6 +8,14 @@ import {
 } from '../../src/processor/entity-resolver.js';
 import type { ThoughtMetadata } from '@danielbrain/shared';
 
+// Mock proposal helpers
+vi.mock('../../src/proposals/helpers.js', () => ({
+  shouldCreateProposal: vi.fn().mockReturnValue(false),
+  createLinkProposal: vi.fn().mockResolvedValue('proposal-id'),
+}));
+
+import { shouldCreateProposal, createLinkProposal } from '../../src/proposals/helpers.js';
+
 const mockPool = {
   query: vi.fn(),
 };
@@ -388,5 +396,134 @@ describe('resolveEntities', () => {
     );
 
     expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  it('creates proposal for low-confidence prefix match', async () => {
+    (shouldCreateProposal as ReturnType<typeof vi.fn>).mockReturnValue(true);
+
+    // Chris: no canonical match
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    // No alias match
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    // Prefix match
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ id: 'entity-chris', name: 'Chris Psiaki', entity_type: 'person' }],
+    });
+    // addAlias
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    // linkEntity INSERT
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    // linkEntity bump
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+    const metadata: ThoughtMetadata = {
+      thought_type: 'conversation',
+      people: ['Chris'],
+      topics: [],
+      action_items: [],
+      dates_mentioned: [],
+      sentiment: 'neutral',
+      summary: 'Chat with Chris',
+      companies: [],
+      products: [],
+      projects: [],
+    };
+
+    await resolveEntities(
+      'thought-4',
+      metadata,
+      'Chat with Chris',
+      mockPool as any,
+      mockConfig,
+    );
+
+    expect(shouldCreateProposal).toHaveBeenCalledWith(0.7, 'entity_link');
+    expect(createLinkProposal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        thoughtId: 'thought-4',
+        entityId: 'entity-chris',
+        entityName: 'Chris',
+        matchedName: 'Chris Psiaki',
+        matchType: 'prefix',
+        confidence: 0.7,
+        aliasAdded: 'chris',
+      }),
+      expect.anything(),
+    );
+  });
+
+  it('does not create proposal for high-confidence matches', async () => {
+    (shouldCreateProposal as ReturnType<typeof vi.fn>).mockReturnValue(false);
+
+    // Alice: canonical match
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ id: 'e1', name: 'Alice', entity_type: 'person' }],
+    });
+    // linkEntity
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+    const metadata: ThoughtMetadata = {
+      thought_type: 'conversation',
+      people: ['Alice'],
+      topics: [],
+      action_items: [],
+      dates_mentioned: [],
+      sentiment: 'neutral',
+      summary: 'Chat with Alice',
+      companies: [],
+      products: [],
+      projects: [],
+    };
+
+    await resolveEntities(
+      'thought-5',
+      metadata,
+      'Chat with Alice',
+      mockPool as any,
+      mockConfig,
+    );
+
+    expect(createLinkProposal).not.toHaveBeenCalled();
+  });
+
+  it('does not fail resolution if proposal creation throws', async () => {
+    (shouldCreateProposal as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (createLinkProposal as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('DB error'));
+
+    // Chris: prefix match flow
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ id: 'entity-chris', name: 'Chris Psiaki', entity_type: 'person' }],
+    });
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // addAlias
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // link
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // bump
+
+    const metadata: ThoughtMetadata = {
+      thought_type: 'conversation',
+      people: ['Chris'],
+      topics: [],
+      action_items: [],
+      dates_mentioned: [],
+      sentiment: 'neutral',
+      summary: 'Chat with Chris',
+      companies: [],
+      products: [],
+      projects: [],
+    };
+
+    // Should not throw
+    await resolveEntities(
+      'thought-6',
+      metadata,
+      'Chat with Chris',
+      mockPool as any,
+      mockConfig,
+    );
+
+    // Entity was still linked despite proposal failure
+    expect(mockPool.query).toHaveBeenCalledTimes(6);
   });
 });

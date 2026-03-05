@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Approvals - DanielBrain Admin</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav>
+    <a href="index.html" class="logo">DanielBrain</a>
+    <a href="approvals.html" class="active">Approvals</a>
+    <a href="entities.html">Entities</a>
+  </nav>
+
+  <div class="container">
+    <h1>Approvals Queue</h1>
+
+    <div id="flash"></div>
+
+    <div class="tabs" id="status-tabs">
+      <button class="tab active" data-status="">All <span class="count" id="count-all"></span></button>
+      <button class="tab" data-status="pending">Pending <span class="count" id="count-pending"></span></button>
+      <button class="tab" data-status="approved">Approved <span class="count" id="count-approved"></span></button>
+      <button class="tab" data-status="applied">Applied <span class="count" id="count-applied"></span></button>
+      <button class="tab" data-status="rejected">Rejected <span class="count" id="count-rejected"></span></button>
+      <button class="tab" data-status="needs_changes">Needs Changes <span class="count" id="count-needs_changes"></span></button>
+    </div>
+
+    <div id="proposals-list">
+      <div class="loading">Loading proposals...</div>
+    </div>
+  </div>
+
+  <script>
+    let currentStatus = '';
+    let proposals = [];
+
+    // Flash message
+    function flash(message, type) {
+      const el = document.getElementById('flash');
+      el.innerHTML = '<div class="flash flash-' + type + '">' + escapeHtml(message) + '</div>';
+      setTimeout(() => { el.innerHTML = ''; }, 4000);
+    }
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    // Format date
+    function formatDate(dateStr) {
+      if (!dateStr) return '';
+      const d = new Date(dateStr);
+      return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    // Render proposed data in a human-friendly way
+    function renderProposedData(data) {
+      let html = '';
+      for (const [key, value] of Object.entries(data)) {
+        const displayKey = key.replace(/_/g, ' ');
+        let displayValue = String(value);
+        if (typeof value === 'string' && value.startsWith('http')) {
+          displayValue = '<a href="' + escapeHtml(value) + '" target="_blank" rel="noopener">' + escapeHtml(value) + '</a>';
+        } else {
+          displayValue = escapeHtml(displayValue);
+        }
+        html += '<div><span class="key">' + escapeHtml(displayKey) + ':</span> ' + displayValue + '</div>';
+      }
+      return html;
+    }
+
+    // Render entity context section
+    function renderEntityContext(ctx) {
+      if (!ctx) return '';
+      let html = '<div class="entity-context">';
+      html += '<div class="entity-context-header">';
+      html += '<strong>' + escapeHtml(ctx.name || '') + '</strong>';
+      if (ctx.type) html += ' <span class="badge badge-type">' + escapeHtml(ctx.type) + '</span>';
+      html += '</div>';
+      if (ctx.profile) {
+        html += '<div class="entity-profile">' + escapeHtml(ctx.profile) + '</div>';
+      }
+      if (ctx.recent_excerpts && ctx.recent_excerpts.length > 0) {
+        html += '<div class="entity-excerpts"><div class="excerpts-label">Recent mentions:</div>';
+        ctx.recent_excerpts.slice(0, 3).forEach(function(ex) {
+          html += '<div class="excerpt-item">';
+          if (ex.summary) {
+            html += '<div class="excerpt-summary">' + escapeHtml(ex.summary) + '</div>';
+          }
+          html += '<span class="excerpt-text">"' + escapeHtml(ex.excerpt) + '"</span>';
+          var sourceLabel = ex.source;
+          if (ex.source_meta) {
+            if (ex.source_meta.from_username) sourceLabel += ' (@' + ex.source_meta.from_username + ')';
+            if (ex.source_meta.title) sourceLabel = ex.source_meta.title;
+            if (ex.source_meta.channel_name) sourceLabel += ' #' + ex.source_meta.channel_name;
+          }
+          html += '<span class="excerpt-meta"> — ' + escapeHtml(sourceLabel) + ', ' + formatDate(ex.created_at) + '</span>';
+          html += '</div>';
+        });
+        html += '</div>';
+      }
+      html += '</div>';
+      return html;
+    }
+
+    // Render LinkedIn details from proposed_data
+    function renderLinkedInDetails(data) {
+      if (!data.linkedin_title && !data.linkedin_snippet) return '';
+      let html = '<div class="linkedin-details">';
+      if (data.linkedin_title) {
+        html += '<div class="linkedin-title">' + escapeHtml(data.linkedin_title) + '</div>';
+      }
+      if (data.linkedin_snippet) {
+        html += '<div class="linkedin-snippet">' + escapeHtml(data.linkedin_snippet) + '</div>';
+      }
+      html += '</div>';
+      return html;
+    }
+
+    // Render a single proposal card
+    function renderCard(p) {
+      const autoTag = p.auto_applied ? '<span class="badge badge-auto">Auto-applied</span>' : '';
+      const statusBadge = '<span class="badge badge-' + p.status + '">' + escapeHtml(p.status) + '</span>';
+      const typeBadge = '<span class="badge badge-type">' + escapeHtml(p.proposal_type) + '</span>';
+
+      let actions = '';
+      if (p.status === 'pending') {
+        actions = '<div class="card-actions">' +
+          '<button class="btn btn-approve" onclick="reviewProposal(\'' + p.id + '\', \'approve\')">Approve</button>' +
+          '<button class="btn btn-reject" onclick="showNotes(\'' + p.id + '\', \'reject\')">Reject</button>' +
+          '<button class="btn btn-changes" onclick="showNotes(\'' + p.id + '\', \'needs-changes\')">Needs Changes</button>' +
+          '<input type="text" class="notes-input" id="notes-' + p.id + '" placeholder="Notes (optional)..." onkeydown="if(event.key===\'Enter\') submitWithNotes(\'' + p.id + '\')">' +
+          '<button class="btn" id="submit-' + p.id + '" style="display:none" onclick="submitWithNotes(\'' + p.id + '\')">Submit</button>' +
+          '</div>';
+      } else if (p.status === 'needs_changes') {
+        // Try to extract a LinkedIn URL from reviewer notes first, fall back to proposed_data
+        var urlFromNotes = (p.reviewer_notes || '').match(/https?:\/\/(?:www\.)?linkedin\.com\/in\/[^\s,)]+/);
+        var currentUrl = urlFromNotes ? urlFromNotes[0] : ((p.proposed_data && p.proposed_data.linkedin_url) || '');
+        actions = '<div class="card-actions-correction">' +
+          '<label class="correction-label">Correct URL:</label>' +
+          '<input type="text" class="correction-input" id="correction-' + p.id + '" value="' + escapeHtml(currentUrl) + '" placeholder="https://linkedin.com/in/...">' +
+          '<button class="btn btn-approve" onclick="approveWithCorrection(\'' + p.id + '\')">Approve with Correction</button>' +
+          '<button class="btn btn-reject" onclick="reviewProposal(\'' + p.id + '\', \'reject\')">Reject</button>' +
+          '</div>';
+      }
+
+      if (p.reviewer_notes) {
+        actions += '<div class="card-meta" style="margin-top:8px"><strong>Notes:</strong> ' + escapeHtml(p.reviewer_notes) + '</div>';
+      }
+
+      return '<div class="card" id="card-' + p.id + '">' +
+        '<div class="card-header">' +
+          '<h3>' + escapeHtml(p.title) + '</h3>' +
+          typeBadge + statusBadge + autoTag +
+        '</div>' +
+        (p.description ? '<div class="card-description">' + escapeHtml(p.description) + '</div>' : '') +
+        renderEntityContext(p.entity_context) +
+        renderLinkedInDetails(p.proposed_data || {}) +
+        '<div class="proposed-data">' + renderProposedData(p.proposed_data) + '</div>' +
+        '<div class="card-meta">Created: ' + formatDate(p.created_at) +
+          (p.applied_at ? ' | Applied: ' + formatDate(p.applied_at) : '') +
+          ' | Source: ' + escapeHtml(p.source) + '</div>' +
+        actions +
+      '</div>';
+    }
+
+    // Track pending action for notes flow
+    let pendingAction = {};
+
+    function showNotes(id, action) {
+      pendingAction = { id, action };
+      document.getElementById('notes-' + id).classList.add('visible');
+      document.getElementById('submit-' + id).style.display = 'inline-block';
+      document.getElementById('notes-' + id).focus();
+    }
+
+    function submitWithNotes(id) {
+      const notes = document.getElementById('notes-' + id).value;
+      reviewProposal(pendingAction.id, pendingAction.action, notes);
+    }
+
+    async function approveWithCorrection(id) {
+      var urlInput = document.getElementById('correction-' + id);
+      var correctedUrl = urlInput.value.trim();
+      if (!correctedUrl) {
+        flash('Please enter a URL.', 'error');
+        return;
+      }
+      try {
+        var res = await fetch('/api/proposals/' + id + '/approve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            reviewer_notes: 'Manually corrected URL',
+            proposed_data: { linkedin_url: correctedUrl },
+          }),
+        });
+        var data = await res.json();
+        if (res.ok) {
+          flash('Proposal approved with corrected URL.', 'success');
+          var card = document.getElementById('card-' + id);
+          if (card) {
+            card.style.opacity = '0';
+            card.style.transform = 'translateX(20px)';
+            card.style.transition = 'all 0.3s ease';
+            setTimeout(function() { card.remove(); }, 300);
+          }
+          loadCounts();
+        } else {
+          flash(data.error || 'Action failed.', 'error');
+        }
+      } catch (err) {
+        flash('Network error: ' + err.message, 'error');
+      }
+    }
+
+    // API calls
+    async function loadProposals() {
+      const params = new URLSearchParams();
+      if (currentStatus) params.set('status', currentStatus);
+      params.set('limit', '50');
+
+      try {
+        const res = await fetch('/api/proposals?' + params.toString());
+        const data = await res.json();
+        proposals = data.proposals || [];
+
+        const list = document.getElementById('proposals-list');
+        if (proposals.length === 0) {
+          list.innerHTML = '<div class="empty-state">No proposals found.</div>';
+        } else {
+          list.innerHTML = proposals.map(renderCard).join('');
+        }
+      } catch (err) {
+        document.getElementById('proposals-list').innerHTML =
+          '<div class="empty-state">Failed to load proposals.</div>';
+      }
+    }
+
+    async function loadCounts() {
+      try {
+        const res = await fetch('/api/proposals?limit=0');
+        const data = await res.json();
+        document.getElementById('count-all').textContent = data.total || '';
+
+        // Load counts per status
+        for (const status of ['pending', 'approved', 'applied', 'rejected', 'needs_changes']) {
+          const sRes = await fetch('/api/proposals?status=' + status + '&limit=0');
+          const sData = await sRes.json();
+          const el = document.getElementById('count-' + status);
+          if (el) el.textContent = sData.total || '';
+        }
+      } catch (err) {
+        // Ignore count errors
+      }
+    }
+
+    async function reviewProposal(id, action, notes) {
+      try {
+        const body = notes ? { reviewer_notes: notes } : {};
+        const res = await fetch('/api/proposals/' + id + '/' + action, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+
+        const data = await res.json();
+
+        if (res.ok) {
+          flash('Proposal ' + (data.status || action) + ' successfully.', 'success');
+          // Remove card with animation
+          const card = document.getElementById('card-' + id);
+          if (card) {
+            card.style.opacity = '0';
+            card.style.transform = 'translateX(20px)';
+            card.style.transition = 'all 0.3s ease';
+            setTimeout(() => card.remove(), 300);
+          }
+          loadCounts();
+        } else {
+          flash(data.error || 'Action failed.', 'error');
+        }
+      } catch (err) {
+        flash('Network error: ' + err.message, 'error');
+      }
+    }
+
+    // Tab switching
+    document.getElementById('status-tabs').addEventListener('click', (e) => {
+      const tab = e.target.closest('.tab');
+      if (!tab) return;
+
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      currentStatus = tab.dataset.status;
+      loadProposals();
+    });
+
+    // Initial load
+    loadProposals();
+    loadCounts();
+  </script>
+</body>
+</html>

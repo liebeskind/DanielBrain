@@ -11,7 +11,12 @@ import { verifyTelegramSecret } from './telegram/verify.js';
 import { handleTelegramUpdate } from './telegram/webhook.js';
 import { pollQueue } from './processor/queue-poller.js';
 import { refreshStaleProfiles } from './processor/profile-generator.js';
-import { PROFILE_REFRESH_INTERVAL_MS } from '@danielbrain/shared';
+import { PROFILE_REFRESH_INTERVAL_MS, LINKEDIN_ENRICHMENT_INTERVAL_MS } from '@danielbrain/shared';
+import { createProposalRoutes } from './proposals/routes.js';
+import { createAdminRoutes } from './admin/routes.js';
+import { enrichLinkedInBatch } from './enrichers/linkedin.js';
+import { verifyFathomSignature } from './fathom/verify.js';
+import { handleFathomEvent } from './fathom/webhook.js';
 
 const config = loadConfig();
 const pool = new pg.Pool({ connectionString: config.databaseUrl });
@@ -84,6 +89,43 @@ if (config.telegramBotToken && config.telegramWebhookSecret) {
   });
 }
 
+// --- Fathom webhook (optional — only if configured) ---
+if (config.fathomApiKey && config.fathomWebhookSecret) {
+  app.post('/fathom/events', express.raw({ type: '*/*' }), async (req, res) => {
+    const body = req.body.toString();
+
+    const valid = verifyFathomSignature({
+      webhookId: req.headers['webhook-id'] as string | undefined,
+      webhookTimestamp: req.headers['webhook-timestamp'] as string | undefined,
+      webhookSignature: req.headers['webhook-signature'] as string | undefined,
+      body,
+      secret: config.fathomWebhookSecret!,
+    });
+
+    if (!valid) {
+      res.status(401).json({ error: 'Invalid signature' });
+      return;
+    }
+
+    try {
+      const meeting = JSON.parse(body);
+      res.json({ ok: true });
+      await handleFathomEvent(meeting, pool);
+    } catch (err) {
+      console.error('Fathom webhook error:', err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Internal error' });
+      }
+    }
+  });
+}
+
+// --- Proposal API (JSON body parsing) ---
+app.use('/api/proposals', express.json(), createProposalRoutes(pool));
+
+// --- Admin dashboard ---
+app.use('/admin', createAdminRoutes(pool));
+
 // --- API key auth middleware for MCP routes ---
 app.use('/mcp', (req, res, next) => {
   const key = req.headers['x-brain-key'] as string | undefined;
@@ -152,11 +194,32 @@ function startProfileRefresher() {
   }, PROFILE_REFRESH_INTERVAL_MS);
 }
 
+// --- LinkedIn enrichment poller (optional — only if configured) ---
+let linkedinInterval: ReturnType<typeof setInterval> | undefined;
+
+function startLinkedInEnricher() {
+  if (!config.serpApiKey) return;
+
+  linkedinInterval = setInterval(async () => {
+    try {
+      const count = await enrichLinkedInBatch(pool, {
+        serpApiKey: config.serpApiKey!,
+      });
+      if (count > 0) {
+        console.log(`Created ${count} LinkedIn enrichment proposal(s)`);
+      }
+    } catch (err) {
+      console.error('LinkedIn enrichment error:', err);
+    }
+  }, LINKEDIN_ENRICHMENT_INTERVAL_MS);
+}
+
 // --- Graceful shutdown ---
 function shutdown() {
   console.log('Shutting down...');
   clearInterval(pollInterval);
   clearInterval(profileInterval);
+  if (linkedinInterval) clearInterval(linkedinInterval);
   pool.end().then(() => {
     console.log('Database pool closed');
     process.exit(0);
@@ -176,11 +239,20 @@ app.listen(config.mcpPort, () => {
   if (config.telegramBotToken) {
     console.log(`  Telegram webhook: http://localhost:${config.mcpPort}/telegram/updates`);
   }
+  if (config.fathomApiKey) {
+    console.log(`  Fathom webhook: http://localhost:${config.mcpPort}/fathom/events`);
+  }
   console.log(`  Health: http://localhost:${config.mcpPort}/health`);
+  console.log(`  Admin dashboard: http://localhost:${config.mcpPort}/admin`);
+  console.log(`  Proposals API: http://localhost:${config.mcpPort}/api/proposals`);
   startPoller();
   console.log(`  Queue poller: every ${config.pollIntervalMs}ms`);
   startProfileRefresher();
   console.log(`  Profile refresh: every ${PROFILE_REFRESH_INTERVAL_MS / 1000}s`);
+  startLinkedInEnricher();
+  if (config.serpApiKey) {
+    console.log(`  LinkedIn enricher: every ${LINKEDIN_ENRICHMENT_INTERVAL_MS / 1000}s`);
+  }
 });
 
 export { app, pool };

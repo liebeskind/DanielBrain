@@ -9,6 +9,19 @@ export const DEFAULT_MCP_PORT = 3000;
 export const SEARCH_DOCUMENT_PREFIX = 'search_document: ';
 export const SEARCH_QUERY_PREFIX = 'search_query: ';
 
+// Approval thresholds
+export const DEFAULT_APPROVAL_THRESHOLD = 0.8;
+export const APPROVAL_THRESHOLDS: Record<string, number | 'always'> = {
+  entity_link: 0.8,
+  entity_enrichment: 'always',
+  entity_merge: 'always',
+};
+
+// LinkedIn enricher
+export const LINKEDIN_ENRICHMENT_INTERVAL_MS = 60_000;
+export const LINKEDIN_ENRICHMENT_BATCH_SIZE = 5;
+export const SERPAPI_DAILY_LIMIT = 33; // ~1000/month on Starter plan
+
 // Entity staleness thresholds
 export const ENTITY_STALE_MENTIONS = 10;
 export const ENTITY_STALE_DAYS = 7;

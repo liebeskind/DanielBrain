@@ -41,7 +41,7 @@ describe('pollQueue', () => {
       // SELECT pending items
       .mockResolvedValueOnce({
         rows: [
-          { id: 'q1', content: 'Thought 1', source: 'slack', source_meta: null, attempts: 0 },
+          { id: 'q1', content: 'Thought 1', source: 'slack', source_id: null, source_meta: null, attempts: 0 },
         ],
       })
       // UPDATE status to processing
@@ -53,12 +53,13 @@ describe('pollQueue', () => {
 
     const selectCall = mockPool.query.mock.calls[0];
     expect(selectCall[0]).toContain('FOR UPDATE SKIP LOCKED');
+    expect(selectCall[0]).toContain('source_id');
   });
 
   it('marks completed on success', async () => {
     mockPool.query
       .mockResolvedValueOnce({
-        rows: [{ id: 'q1', content: 'Thought 1', source: 'slack', source_meta: null, attempts: 0 }],
+        rows: [{ id: 'q1', content: 'Thought 1', source: 'slack', source_id: null, source_meta: null, attempts: 0 }],
       })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
@@ -70,12 +71,32 @@ describe('pollQueue', () => {
     expect(lastCall[0]).toContain('completed');
   });
 
+  it('passes source_id to processThought', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({
+        rows: [{ id: 'q1', content: 'Meeting notes', source: 'fathom', source_id: 'fathom-rec-123', source_meta: null, attempts: 0 }],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await pollQueue(mockPool as any, mockConfig);
+
+    expect(pipeline.processThought).toHaveBeenCalledWith(
+      'Meeting notes',
+      'fathom',
+      mockPool,
+      mockConfig,
+      null,
+      'fathom-rec-123',
+    );
+  });
+
   it('marks failed on error', async () => {
     vi.mocked(pipeline.processThought).mockRejectedValue(new Error('Ollama down'));
 
     mockPool.query
       .mockResolvedValueOnce({
-        rows: [{ id: 'q1', content: 'Bad thought', source: 'slack', source_meta: null, attempts: 0 }],
+        rows: [{ id: 'q1', content: 'Bad thought', source: 'slack', source_id: null, source_meta: null, attempts: 0 }],
       })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
@@ -98,7 +119,7 @@ describe('pollQueue', () => {
   it('skips items that have exceeded max retries', async () => {
     mockPool.query
       .mockResolvedValueOnce({
-        rows: [{ id: 'q1', content: 'Failed many times', source: 'slack', source_meta: null, attempts: 3 }],
+        rows: [{ id: 'q1', content: 'Failed many times', source: 'slack', source_id: null, source_meta: null, attempts: 3 }],
       })
       .mockResolvedValueOnce({ rows: [] }); // marks permanently failed
 

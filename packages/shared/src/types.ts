@@ -33,6 +33,7 @@ export interface QueueItem {
   id: string;
   content: string;
   source: string;
+  source_id?: string | null;
   source_meta?: Record<string, unknown> | null;
   status: 'pending' | 'processing' | 'completed' | 'failed';
   error?: string | null;
@@ -92,6 +93,25 @@ export interface ThoughtEntity {
   relationship: EntityRelationshipType;
   confidence: number;
   created_at: Date;
+}
+
+export type ProposalStatus = 'pending' | 'approved' | 'rejected' | 'needs_changes' | 'applied' | 'failed';
+
+export interface Proposal {
+  id: string;
+  proposal_type: string;
+  status: ProposalStatus;
+  entity_id: string | null;
+  title: string;
+  description: string | null;
+  proposed_data: Record<string, unknown>;
+  current_data: Record<string, unknown> | null;
+  auto_applied: boolean;
+  reviewer_notes: string | null;
+  source: string;
+  applied_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
 }
 
 export interface SearchResult {

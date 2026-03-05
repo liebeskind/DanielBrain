@@ -101,3 +101,19 @@ export const getTimelineInputSchema = z.object({
   (data) => data.entity_id || data.entity_name,
   { message: 'Either entity_id or entity_name must be provided' }
 );
+
+// --- Proposal schemas ---
+
+const proposalStatusEnum = z.enum(['pending', 'approved', 'rejected', 'needs_changes', 'applied', 'failed']);
+
+export const listProposalsInputSchema = z.object({
+  status: proposalStatusEnum.optional(),
+  proposal_type: z.string().optional(),
+  limit: z.number().int().min(0).max(100).default(20),
+  offset: z.number().int().min(0).default(0),
+});
+
+export const reviewProposalInputSchema = z.object({
+  action: z.enum(['approve', 'reject', 'needs_changes']),
+  reviewer_notes: z.string().optional(),
+});

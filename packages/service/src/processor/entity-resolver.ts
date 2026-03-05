@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import type { ThoughtMetadata, EntityType, EntityRelationshipType } from '@danielbrain/shared';
+import { shouldCreateProposal, createLinkProposal } from '../proposals/helpers.js';
 
 interface ResolverConfig {
   ollamaBaseUrl: string;
@@ -235,5 +236,24 @@ export async function resolveEntities(
     const match = await findOrCreateEntity(entry.name, entry.type, pool);
     const relationship = inferRelationship(entry.name, metadata, content, sourceMeta);
     await linkEntity(thoughtId, match.id, relationship, match.confidence, pool);
+
+    // Create proposal for low-confidence links (e.g., prefix matches)
+    if (shouldCreateProposal(match.confidence, 'entity_link')) {
+      try {
+        await createLinkProposal({
+          thoughtId,
+          entityId: match.id,
+          entityName: entry.name,
+          matchedName: match.name,
+          matchType: match.match_type,
+          relationship,
+          confidence: match.confidence,
+          aliasAdded: match.match_type === 'prefix' ? normalizeName(entry.name) : undefined,
+        }, pool);
+      } catch (err) {
+        // Non-blocking — proposal creation should never prevent entity resolution
+        console.error('Failed to create link proposal:', err);
+      }
+    }
   }
 }

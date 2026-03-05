@@ -23,7 +23,7 @@ DELETE FROM thought_entities WHERE entity_id IN (
     OR lower(trim(name)) ~ '^(a|an|the)\s+'
 );
 
-DELETE FROM entity_relationships WHERE source_entity_id IN (
+DELETE FROM entity_relationships WHERE source_id IN (
   SELECT id FROM entities WHERE
     lower(trim(name)) IN (
       'you', 'me', 'we', 'they', 'i', 'he', 'she', 'it',
@@ -35,7 +35,7 @@ DELETE FROM entity_relationships WHERE source_entity_id IN (
     OR lower(trim(name)) !~ '[a-zA-Z]'
     OR length(trim(name)) < 2
     OR lower(trim(name)) ~ '^(a|an|the)\s+'
-) OR target_entity_id IN (
+) OR target_id IN (
   SELECT id FROM entities WHERE
     lower(trim(name)) IN (
       'you', 'me', 'we', 'they', 'i', 'he', 'she', 'it',
@@ -60,6 +60,9 @@ DELETE FROM entities WHERE
   OR lower(trim(name)) !~ '[a-zA-Z]'
   OR length(trim(name)) < 2
   OR lower(trim(name)) ~ '^(a|an|the)\s+';
+
+-- Step 2a: Temporarily drop unique index so re-normalization doesn't fail on convergent names
+DROP INDEX IF EXISTS entities_canonical_type_unique;
 
 -- Step 2: Re-normalize all canonical_name values using the same transforms as updated normalizeName()
 UPDATE entities SET canonical_name =
@@ -123,14 +126,14 @@ WHERE te.entity_id = el.loser_id;
 
 -- Reassign entity_relationships
 UPDATE entity_relationships er
-SET source_entity_id = el.survivor_id
+SET source_id = el.survivor_id
 FROM entity_losers el
-WHERE er.source_entity_id = el.loser_id;
+WHERE er.source_id = el.loser_id;
 
 UPDATE entity_relationships er
-SET target_entity_id = el.survivor_id
+SET target_id = el.survivor_id
 FROM entity_losers el
-WHERE er.target_entity_id = el.loser_id;
+WHERE er.target_id = el.loser_id;
 
 -- Merge aliases from losers into survivors
 UPDATE entities survivor SET
@@ -169,8 +172,8 @@ BEGIN
     UPDATE thought_entities SET entity_id = v_target_id WHERE entity_id = v_source_id
       AND NOT EXISTS (SELECT 1 FROM thought_entities te2 WHERE te2.thought_id = thought_entities.thought_id AND te2.entity_id = v_target_id AND te2.relationship = thought_entities.relationship);
     DELETE FROM thought_entities WHERE entity_id = v_source_id;
-    UPDATE entity_relationships SET source_entity_id = v_target_id WHERE source_entity_id = v_source_id;
-    UPDATE entity_relationships SET target_entity_id = v_target_id WHERE target_entity_id = v_source_id;
+    UPDATE entity_relationships SET source_id = v_target_id WHERE source_id = v_source_id;
+    UPDATE entity_relationships SET target_id = v_target_id WHERE target_id = v_source_id;
     UPDATE entities SET
       mention_count = mention_count + (SELECT mention_count FROM entities WHERE id = v_source_id),
       aliases = array_append(aliases, 'damenlopez')
@@ -178,6 +181,9 @@ BEGIN
     DELETE FROM entities WHERE id = v_source_id;
   END IF;
 END $$;
+
+-- Step 4b: Re-add unique index after merging
+CREATE UNIQUE INDEX entities_canonical_type_unique ON entities (canonical_name, entity_type);
 
 -- Step 5: Invalidate all profiles so they regenerate with merged data
 UPDATE entities SET profile_summary = NULL, embedding = NULL;

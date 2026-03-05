@@ -19,6 +19,10 @@ See `docs/vision/` for detailed use cases and architecture vision.
 - **MCP server** (HTTP/SSE transport) with 8 tools (4 thought tools + 4 entity tools)
 - **Entity knowledge graph**: first-class entities (person, company, topic, product, project, place) linked to thoughts with relationship types
 - **Profile generation**: LLM-generated entity profiles with vector embeddings for entity-level semantic search
+- **Approvals queue**: confidence-gated proposal system for human-in-the-loop quality control
+- **Admin dashboard**: web UI at `/admin` for reviewing proposals, entity overview, and stats
+- **LinkedIn enricher**: background poller using SerpAPI (optional, 33/day on Starter plan)
+- **Fathom webhook**: meeting transcript ingestion from Fathom (opt-in via config)
 - **Slack webhook** capture through Cloudflare Tunnel
 - **Telegram webhook** as second input channel (opt-in via config)
 - **Cloudflare Tunnel + Zero Trust** for remote access (no open ports)
@@ -36,10 +40,14 @@ packages/service/        # MCP server, processing pipeline, Slack + Telegram int
                          # get-entity, list-entities, get-context, get-timeline
   src/slack/             # Webhook handler + signature verification
   src/telegram/          # Webhook handler + secret token verification
+  src/fathom/            # Webhook handler + svix signature verification + transcript fetcher
+  src/proposals/          # Approvals queue: applier, reverter, helpers, REST routes
+  src/enrichers/          # Background enrichment pollers (LinkedIn via Google CSE)
+  src/admin/              # Admin dashboard routes + static HTML/CSS/JS
   src/auth.ts            # API key verification (timing-safe)
   src/config.ts          # Zod-validated config from env vars
-  src/index.ts           # Entry: Express + MCP SSE + webhooks + queue poller + profile refresher
-migrations/              # 13 SQL migration files
+  src/index.ts           # Entry: Express + MCP SSE + webhooks + queue poller + profile refresher + enricher
+migrations/              # 15 SQL migration files
   001 pgvector           # Enable extensions
   002 thoughts           # Thoughts table + update_updated_at trigger
   003 queue              # Async processing queue
@@ -53,6 +61,8 @@ migrations/              # 13 SQL migration files
   011 find_entity_function # find_entity_by_name() SQL function
   012 merge_duplicates   # Junk cleanup + duplicate entity merge
   013 update_find_entity # Align SQL normalization with app code
+  014 create_proposals   # Proposals table for approvals queue
+  015 add_queue_source_id # Add source_id to queue for dedup (Fathom etc.)
 scripts/migrate.ts       # Migration runner
 docker/                  # docker-compose.yml (prod) + docker-compose.test.yml (test)
 docs/
@@ -75,7 +85,7 @@ npm run migrate                # Run SQL migrations against DATABASE_URL
 - Full TDD: every module has tests written before implementation
 - Unit tests mock Ollama calls (fast, no GPU needed)
 - Integration tests use real Postgres via docker-compose.test.yml (port 5433)
-- Run: `npx vitest run` (187 tests across 26 files)
+- Run: `npx vitest run` (245 tests across 34 files)
 
 ## MCP Tools
 
@@ -113,6 +123,31 @@ After every thought INSERT, the pipeline runs entity resolution (non-blocking):
 - Staleness: refresh after 10 new mentions OR 7 days
 - Refreshed on-demand (get_entity) + background poller (every 5 min, batch of 5)
 
+## Approvals Queue
+
+General-purpose, confidence-gated proposal system. Any operation where confidence is below a threshold creates a proposal for human review via the admin dashboard.
+
+### Confidence Thresholds
+- `entity_link: 0.8` — prefix matches (confidence 0.7) auto-apply + create reviewable proposal
+- `entity_enrichment: 'always'` — LinkedIn URLs always held for review
+- `entity_merge: 'always'` — destructive, always held for review
+
+### Apply Strategy
+| Operation | Risk | Behavior |
+|-----------|------|----------|
+| Entity link (prefix match) | Low | Auto-apply + review after. Reject = undo link + alias |
+| LinkedIn URL enrichment | Medium | Hold until approved. Approve = write to entity metadata |
+| Entity merge | High | Hold until approved. Approve = reassign links, merge aliases, delete loser |
+
+### Status Lifecycle
+`pending` → `approved` → `applied` (or `rejected` / `needs_changes` / `failed`)
+
+### Admin Dashboard
+- URL: `http://localhost:3000/admin`
+- Approvals page: card-per-proposal with approve/reject/needs-changes actions
+- Entities page: type counts, top by mentions, recently active, proposal status
+- Plain HTML + CSS + vanilla JS, no framework, no build step
+
 ## Key Design Decisions
 
 - **Embedding prefixes**: nomic-embed-text requires `search_document: ` for storage, `search_query: ` for search
@@ -131,6 +166,14 @@ After every thought INSERT, the pipeline runs entity resolution (non-blocking):
 - **LLM Prompting Standard**: All prompts sent to local Ollama models (llama3.1:8b) must be explicit, structured prompts with examples. Claude writes these prompts, optimized for the smaller model's capabilities. Every prompt must include: (1) clear role and context about the system, (2) explicit DO/DON'T rules per field, (3) at least one concrete few-shot example, (4) negative examples showing common mistakes, (5) exact format constraints. Applies to extraction, summarization, profile generation, and any future LLM calls.
 - **Entity normalization**: `normalizeName()` strips parentheticals, domain suffixes (.io/.com/.earth), pronouns, name prefixes, and company suffixes. `isJunkEntity()` rejects blocklisted words, non-alphabetic strings, and CLI commands before any DB interaction.
 - **First-name prefix matching**: Single-token person names (e.g., "Chris") match existing entities where `canonical_name LIKE 'chris %'`, auto-adding the first name as an alias
+- **Confidence-gated proposals**: operations below threshold auto-apply + create reviewable proposal; high-risk ops hold until approved
+- **Proposal type is TEXT**: no migration needed for new operation types; status is ENUM (fixed lifecycle)
+- **LinkedIn enricher opt-in**: only starts when `SERPAPI_KEY` is set; in-memory daily counter (33/day) resets at midnight UTC
+- **Admin dashboard no-auth**: protected by network (Cloudflare Zero Trust), no API key required for `/admin` routes
+- **Fathom opt-in**: route only registered when `FATHOM_API_KEY` + `FATHOM_WEBHOOK_SECRET` are set
+- **Fathom signature verification**: svix HMAC-SHA256 with base64-decoded secret, timing-safe comparison
+- **Queue source_id dedup**: partial unique index on `source_id WHERE source_id IS NOT NULL` prevents duplicate processing
+- **Approvals context**: proposals list includes entity profile + recent thought excerpts for informed review
 
 ## Environment Variables
 
@@ -140,6 +183,8 @@ See `.env.example` for all required/optional vars. Key ones:
 - `SLACK_BOT_TOKEN` / `SLACK_SIGNING_SECRET` — Slack app credentials
 - `TELEGRAM_BOT_TOKEN` / `TELEGRAM_WEBHOOK_SECRET` — Telegram bot credentials (optional)
 - `OLLAMA_BASE_URL` — defaults to http://localhost:11434
+- `SERPAPI_KEY` — SerpAPI key for LinkedIn enrichment (optional)
+- `FATHOM_API_KEY` / `FATHOM_WEBHOOK_SECRET` — Fathom meeting transcript integration (optional)
 
 ## Build Phases
 
@@ -149,6 +194,8 @@ See `.env.example` for all required/optional vars. Key ones:
 - [x] Phase 4: Queue Processor + Slack Webhook
 - [x] Phase 4b: Telegram Webhook Integration
 - [x] Phase 4c: Entity Knowledge Graph (entities, resolver, profiles, 4 MCP tools)
+- [x] Phase 4d: Approvals Queue + Admin Dashboard + LinkedIn Enrichment
+- [x] Phase 4e: Fathom Meeting Transcript Integration
 - [ ] Phase 5: Cloudflare Tunnel + Zero Trust (infrastructure setup)
 - [ ] Phase 6: Polish (retry backoff, health checks, structured logging, backup)
 - [ ] Phase 7: Permissions enforcement (visibility scoping, access_keys, selective sharing)
