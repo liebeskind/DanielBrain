@@ -151,7 +151,7 @@ General-purpose, confidence-gated proposal system. Any operation where confidenc
 ## Key Design Decisions
 
 - **Embedding prefixes**: nomic-embed-text requires `search_document: ` for storage, `search_query: ` for search
-- **Chunking threshold**: 6000 tokens (~4500 words). Chunks are ~2000 tokens with 200-token overlap
+- **Chunking threshold**: 2000 estimated tokens. Chunks are ~1000 estimated tokens with 100-token overlap. Lower than nomic-embed-text's 8192 limit because word-based estimation undercounts actual tokens
 - **Long content**: parent thought gets summary embedding; child chunks get individual embeddings
 - **Queue**: Slack/Telegram messages go to queue table, processed async by poller (FOR UPDATE SKIP LOCKED)
 - **Auth**: `x-brain-key` header with 64-char hex key, timing-safe comparison

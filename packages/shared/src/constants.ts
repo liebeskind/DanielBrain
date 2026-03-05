@@ -1,7 +1,7 @@
 export const EMBEDDING_DIMENSIONS = 768;
-export const CHUNK_THRESHOLD_TOKENS = 6000;
-export const CHUNK_SIZE_TOKENS = 2000;
-export const CHUNK_OVERLAP_TOKENS = 200;
+export const CHUNK_THRESHOLD_TOKENS = 2000;
+export const CHUNK_SIZE_TOKENS = 1000;
+export const CHUNK_OVERLAP_TOKENS = 100;
 export const DEFAULT_POLL_INTERVAL_MS = 5000;
 export const DEFAULT_BATCH_SIZE = 5;
 export const DEFAULT_MAX_RETRIES = 3;

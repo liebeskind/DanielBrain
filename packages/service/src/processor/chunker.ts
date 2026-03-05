@@ -61,7 +61,12 @@ export function chunkText(
 }
 
 function splitIntoSentences(text: string): string[] {
-  // Split on sentence-ending punctuation followed by whitespace
-  const parts = text.split(/(?<=[.!?])\s+/);
-  return parts.filter(Boolean);
+  // Split on newlines first, then on sentence-ending punctuation
+  const lines = text.split(/\n+/).filter(Boolean);
+  const parts: string[] = [];
+  for (const line of lines) {
+    const sentences = line.split(/(?<=[.!?])\s+/).filter(Boolean);
+    parts.push(...sentences);
+  }
+  return parts;
 }

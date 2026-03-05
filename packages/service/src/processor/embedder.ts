@@ -5,13 +5,22 @@ interface EmbedConfig {
   embeddingModel: string;
 }
 
+// nomic-embed-text supports 8192 tokens; truncate to ~5000 words as safety margin
+const MAX_EMBED_WORDS = 5000;
+
+function truncateForEmbed(text: string): string {
+  const words = text.split(/\s+/);
+  if (words.length <= MAX_EMBED_WORDS) return text;
+  return words.slice(0, MAX_EMBED_WORDS).join(' ');
+}
+
 async function callOllamaEmbed(text: string, config: EmbedConfig): Promise<number[]> {
   const response = await fetch(`${config.ollamaBaseUrl}/api/embed`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: config.embeddingModel,
-      input: text,
+      input: truncateForEmbed(text),
     }),
   });
 
