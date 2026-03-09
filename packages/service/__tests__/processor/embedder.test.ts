@@ -63,26 +63,22 @@ describe('embedBatch (for batch storage)', () => {
     mockFetch.mockReset();
   });
 
-  it('sends all texts in a single Ollama call with search_document prefix', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve({
-        embeddings: [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]],
-      }),
-    });
+  it('sends each text individually with search_document prefix', async () => {
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ embeddings: [[0.1, 0.2]] }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ embeddings: [[0.3, 0.4]] }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ embeddings: [[0.5, 0.6]] }) });
 
     const result = await embedBatch(['chunk 1', 'chunk 2', 'chunk 3'], {
       ollamaBaseUrl: 'http://localhost:11434',
       embeddingModel: 'nomic-embed-text',
     });
 
-    expect(mockFetch).toHaveBeenCalledTimes(1);
-    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-    expect(body.input).toEqual([
-      'search_document: chunk 1',
-      'search_document: chunk 2',
-      'search_document: chunk 3',
-    ]);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    for (let i = 0; i < 3; i++) {
+      const body = JSON.parse(mockFetch.mock.calls[i][1].body);
+      expect(body.input).toBe(`search_document: chunk ${i + 1}`);
+    }
     expect(result).toEqual([[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]]);
   });
 

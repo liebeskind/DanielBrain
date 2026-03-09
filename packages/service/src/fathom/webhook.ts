@@ -89,6 +89,7 @@ export async function handleFathomEvent(
     has_crm_matches: !!(meeting.crm_matches?.contacts?.length || meeting.crm_matches?.companies?.length),
     channel_type: 'meeting' as const,
     structured,
+    raw_meeting: meeting,
   };
 
   const originatedAt = meeting.recording_start_time

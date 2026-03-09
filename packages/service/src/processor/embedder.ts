@@ -5,13 +5,21 @@ interface EmbedConfig {
   embeddingModel: string;
 }
 
-// nomic-embed-text supports 8192 tokens; truncate to ~5000 words as safety margin
-const MAX_EMBED_WORDS = 5000;
+// nomic-embed-text actual context is 2048 tokens (nomic-bert.context_length), not 8192
+// Use conservative limits: ~1500 tokens leaves margin for prefix + tokenizer variance
+const MAX_EMBED_WORDS = 1000;
+const MAX_EMBED_CHARS = 6000; // ~4 chars/token * 1500 tokens
 
 function truncateForEmbed(text: string): string {
-  const words = text.split(/\s+/);
-  if (words.length <= MAX_EMBED_WORDS) return text;
-  return words.slice(0, MAX_EMBED_WORDS).join(' ');
+  let result = text;
+  if (result.length > MAX_EMBED_CHARS) {
+    result = result.slice(0, MAX_EMBED_CHARS);
+  }
+  const words = result.split(/\s+/);
+  if (words.length > MAX_EMBED_WORDS) {
+    result = words.slice(0, MAX_EMBED_WORDS).join(' ');
+  }
+  return result;
 }
 
 async function callOllamaEmbed(input: string | string[], config: EmbedConfig): Promise<number[][]> {
@@ -44,8 +52,13 @@ export async function embed(text: string, config: EmbedConfig): Promise<number[]
 
 export async function embedBatch(texts: string[], config: EmbedConfig): Promise<number[][]> {
   if (texts.length === 0) return [];
-  const prefixed = texts.map(t => `${SEARCH_DOCUMENT_PREFIX}${t}`);
-  return callOllamaEmbed(prefixed, config);
+  // Process individually to avoid combined context length issues with Ollama batch API
+  const results: number[][] = [];
+  for (const text of texts) {
+    const embeddings = await callOllamaEmbed(`${SEARCH_DOCUMENT_PREFIX}${text}`, config);
+    results.push(embeddings[0]);
+  }
+  return results;
 }
 
 export async function embedQuery(text: string, config: EmbedConfig): Promise<number[]> {

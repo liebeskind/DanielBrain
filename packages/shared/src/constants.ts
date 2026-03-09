@@ -1,7 +1,8 @@
 export const EMBEDDING_DIMENSIONS = 768;
-export const CHUNK_THRESHOLD_TOKENS = 2000;
-export const CHUNK_SIZE_TOKENS = 1000;
-export const CHUNK_OVERLAP_TOKENS = 100;
+// nomic-embed-text context is 2048 tokens; chunks must fit within that
+export const CHUNK_THRESHOLD_TOKENS = 1500;
+export const CHUNK_SIZE_TOKENS = 500;
+export const CHUNK_OVERLAP_TOKENS = 50;
 export const DEFAULT_POLL_INTERVAL_MS = 5000;
 export const DEFAULT_BATCH_SIZE = 5;
 export const DEFAULT_MAX_RETRIES = 3;

@@ -112,6 +112,7 @@ async function main(): Promise<void> {
           has_crm_matches: !!(meeting.crm_matches?.contacts?.length || meeting.crm_matches?.companies?.length),
           channel_type: 'meeting' as const,
           structured,
+          raw_meeting: meeting,
         };
 
         // Use the meeting's actual recording start time, not NOW()
