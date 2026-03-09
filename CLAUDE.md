@@ -12,6 +12,10 @@ DanielBrain is a **shared memory layer for AI agents**. Agents are stateless wor
 
 See `docs/vision/` for detailed use cases and architecture vision.
 
+## Data Sovereignty — MANDATORY
+
+**All inference, storage, and retrieval MUST remain on-prem (DGX Spark).** No company vault data — thoughts, transcripts, entities, embeddings, or any brain contents — may ever be sent to external AI APIs (Claude API, OpenAI, etc.). Claude Code may read source code and assist with development, but must never be given access to production data. Any new feature (chat, search, summarization) must use local Ollama models, not cloud LLMs. This is a hard architectural constraint, not a preference.
+
 ## Architecture
 
 - **PostgreSQL + pgvector** on DGX Spark for storage and vector search

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DanielBrain Chat</title>
+  <link rel="stylesheet" href="/admin/style.css">
+  <link rel="stylesheet" href="chat.css">
+</head>
+<body>
+  <nav>
+    <a href="/admin" class="logo">DanielBrain</a>
+    <a href="/admin/approvals.html">Approvals</a>
+    <a href="/admin/entities.html">Entities</a>
+    <a href="/admin/examples.html">Examples</a>
+    <a href="/chat" class="active">Chat</a>
+  </nav>
+
+  <div class="chat-container">
+    <div id="messages" class="messages">
+      <div class="welcome-message">
+        <h2>DanielBrain Chat</h2>
+        <p>Ask me anything about your knowledge base — meetings, people, projects, action items.</p>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <div class="input-row">
+        <textarea id="input" placeholder="Ask the brain..." rows="1"></textarea>
+        <button id="send-btn" onclick="sendMessage()">Send</button>
+      </div>
+      <div class="input-hint">Enter to send, Shift+Enter for newline</div>
+    </div>
+  </div>
+
+  <script src="chat.js"></script>
+</body>
+</html>

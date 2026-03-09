@@ -66,10 +66,12 @@ describe('Proposal Routes', () => {
           rows: [{
             entity_id: 'e-1',
             entity_name: 'Alice',
+            relationship: 'mentions',
             content: 'Met with Alice about the project to discuss next steps',
-            summary: 'Discussion about project planning',
+            summary: 'Discussion about project planning with Alice',
             source: 'slack',
             source_meta: { channel_name: 'general' },
+            thought_type: 'conversation',
             created_at: '2026-03-01T10:00:00Z',
           }],
         });
@@ -85,9 +87,8 @@ describe('Proposal Routes', () => {
         type: 'person',
         profile: 'A person',
         recent_excerpts: [{
-          excerpt: 'Met with Alice about the project to discuss next steps',
-          summary: 'Discussion about project planning',
-          source: 'slack',
+          excerpt: expect.stringContaining('Alice'),
+          source: 'slack #general',
           source_meta: { channel_name: 'general' },
           created_at: '2026-03-01T10:00:00Z',
         }],

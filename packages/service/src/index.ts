@@ -14,9 +14,11 @@ import { refreshStaleProfiles } from './processor/profile-generator.js';
 import { PROFILE_REFRESH_INTERVAL_MS, LINKEDIN_ENRICHMENT_INTERVAL_MS } from '@danielbrain/shared';
 import { createProposalRoutes } from './proposals/routes.js';
 import { createAdminRoutes } from './admin/routes.js';
+import { createChatRoutes } from './chat/routes.js';
 import { enrichLinkedInBatch } from './enrichers/linkedin.js';
 import { verifyFathomSignature } from './fathom/verify.js';
 import { handleFathomEvent } from './fathom/webhook.js';
+import { createCorrectionRoutes } from './corrections/routes.js';
 
 const config = loadConfig();
 const pool = new pg.Pool({ connectionString: config.databaseUrl });
@@ -123,8 +125,14 @@ if (config.fathomApiKey && config.fathomWebhookSecret) {
 // --- Proposal API (JSON body parsing) ---
 app.use('/api/proposals', express.json(), createProposalRoutes(pool));
 
+// --- Corrections API ---
+app.use('/api/corrections', express.json(), createCorrectionRoutes(pool));
+
 // --- Admin dashboard ---
 app.use('/admin', createAdminRoutes(pool));
+
+// --- Chat interface ---
+app.use('/chat', createChatRoutes(pool, config));
 
 // --- API key auth middleware for MCP routes ---
 app.use('/mcp', (req, res, next) => {
@@ -244,6 +252,7 @@ app.listen(config.mcpPort, () => {
   }
   console.log(`  Health: http://localhost:${config.mcpPort}/health`);
   console.log(`  Admin dashboard: http://localhost:${config.mcpPort}/admin`);
+  console.log(`  Chat: http://localhost:${config.mcpPort}/chat`);
   console.log(`  Proposals API: http://localhost:${config.mcpPort}/api/proposals`);
   startPoller();
   console.log(`  Queue poller: every ${config.pollIntervalMs}ms`);

@@ -117,3 +117,26 @@ export const reviewProposalInputSchema = z.object({
   action: z.enum(['approve', 'reject', 'needs_changes']),
   reviewer_notes: z.string().optional(),
 });
+
+// --- Correction example schemas ---
+
+const correctionCategoryEnum = z.enum(['linkedin_search', 'entity_extraction', 'entity_link', 'profile_generation']);
+
+export const createCorrectionExampleSchema = z.object({
+  category: correctionCategoryEnum,
+  input_context: z.record(z.unknown()),
+  actual_output: z.record(z.unknown()).nullable().optional(),
+  expected_output: z.record(z.unknown()),
+  explanation: z.string().nullable().optional(),
+  entity_id: z.string().uuid().nullable().optional(),
+  proposal_id: z.string().uuid().nullable().optional(),
+  tags: z.array(z.string()).default([]),
+});
+
+export const listCorrectionExamplesSchema = z.object({
+  category: correctionCategoryEnum.optional(),
+  entity_id: z.string().uuid().optional(),
+  tags: z.array(z.string()).optional(),
+  limit: z.number().int().min(1).max(100).default(50),
+  offset: z.number().int().min(0).default(0),
+});

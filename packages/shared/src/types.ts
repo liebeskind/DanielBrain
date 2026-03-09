@@ -139,6 +139,22 @@ export interface Proposal {
   updated_at: Date;
 }
 
+export type CorrectionCategory = 'linkedin_search' | 'entity_extraction' | 'entity_link' | 'profile_generation';
+
+export interface CorrectionExample {
+  id: string;
+  category: CorrectionCategory;
+  input_context: Record<string, unknown>;
+  actual_output: Record<string, unknown> | null;
+  expected_output: Record<string, unknown>;
+  explanation: string | null;
+  entity_id: string | null;
+  proposal_id: string | null;
+  tags: string[];
+  created_at: Date;
+  updated_at: Date;
+}
+
 export interface SearchResult {
   id: string;
   content: string;

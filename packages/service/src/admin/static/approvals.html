@@ -11,6 +11,8 @@
     <a href="index.html" class="logo">DanielBrain</a>
     <a href="approvals.html" class="active">Approvals</a>
     <a href="entities.html">Entities</a>
+    <a href="examples.html">Examples</a>
+    <a href="/chat">Chat</a>
   </nav>
 
   <div class="container">
@@ -25,6 +27,12 @@
       <button class="tab" data-status="applied">Applied <span class="count" id="count-applied"></span></button>
       <button class="tab" data-status="rejected">Rejected <span class="count" id="count-rejected"></span></button>
       <button class="tab" data-status="needs_changes">Needs Changes <span class="count" id="count-needs_changes"></span></button>
+      <button class="tab" data-status="failed">Failed <span class="count" id="count-failed"></span></button>
+    </div>
+
+    <div id="bulk-actions" style="margin-bottom:16px; display:none">
+      <button class="btn btn-changes" onclick="bulkReEnrich()" id="bulk-re-enrich-btn">Re-run All Rejected Enrichments</button>
+      <span id="bulk-re-enrich-info" style="font-size:12px; color:#888; margin-left:8px"></span>
     </div>
 
     <div id="proposals-list">
@@ -47,6 +55,31 @@
       const div = document.createElement('div');
       div.textContent = str;
       return div.innerHTML;
+    }
+
+    // Simple markdown to HTML (bold, italic, links, lists, line breaks)
+    function renderMarkdown(str) {
+      if (!str) return '';
+      let html = escapeHtml(str);
+      // Bold
+      html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      // Italic
+      html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+      // Inline code
+      html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+      // Links
+      html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+      // Headings (### ## #)
+      html = html.replace(/^### (.+)$/gm, '<strong style="font-size:14px">$1</strong>');
+      html = html.replace(/^## (.+)$/gm, '<strong style="font-size:15px">$1</strong>');
+      html = html.replace(/^# (.+)$/gm, '<strong style="font-size:16px">$1</strong>');
+      // Unordered list items
+      html = html.replace(/^[-*] (.+)$/gm, '<li>$1</li>');
+      // Wrap consecutive <li> in <ul>
+      html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul style="margin:4px 0 4px 16px;padding:0">$1</ul>');
+      // Line breaks
+      html = html.replace(/\n/g, '<br>');
+      return html;
     }
 
     // Format date
@@ -84,20 +117,11 @@
         html += '<div class="entity-profile">' + escapeHtml(ctx.profile) + '</div>';
       }
       if (ctx.recent_excerpts && ctx.recent_excerpts.length > 0) {
-        html += '<div class="entity-excerpts"><div class="excerpts-label">Recent mentions:</div>';
-        ctx.recent_excerpts.slice(0, 3).forEach(function(ex) {
+        html += '<div class="entity-excerpts"><div class="excerpts-label">How do we know this person:</div>';
+        ctx.recent_excerpts.slice(0, 5).forEach(function(ex) {
           html += '<div class="excerpt-item">';
-          if (ex.summary) {
-            html += '<div class="excerpt-summary">' + escapeHtml(ex.summary) + '</div>';
-          }
-          html += '<span class="excerpt-text">"' + escapeHtml(ex.excerpt) + '"</span>';
-          var sourceLabel = ex.source;
-          if (ex.source_meta) {
-            if (ex.source_meta.from_username) sourceLabel += ' (@' + ex.source_meta.from_username + ')';
-            if (ex.source_meta.title) sourceLabel = ex.source_meta.title;
-            if (ex.source_meta.channel_name) sourceLabel += ' #' + ex.source_meta.channel_name;
-          }
-          html += '<span class="excerpt-meta"> — ' + escapeHtml(sourceLabel) + ', ' + formatDate(ex.created_at) + '</span>';
+          html += '<span class="excerpt-text">' + escapeHtml(ex.excerpt) + '</span>';
+          html += '<span class="excerpt-meta"> (' + escapeHtml(ex.source) + ', ' + formatDate(ex.created_at) + ')</span>';
           html += '</div>';
         });
         html += '</div>';
@@ -144,6 +168,13 @@
           '<input type="text" class="correction-input" id="correction-' + p.id + '" value="' + escapeHtml(currentUrl) + '" placeholder="https://linkedin.com/in/...">' +
           '<button class="btn btn-approve" onclick="approveWithCorrection(\'' + p.id + '\')">Approve with Correction</button>' +
           '<button class="btn btn-reject" onclick="reviewProposal(\'' + p.id + '\', \'reject\')">Reject</button>' +
+          '</div>';
+      }
+
+      // Re-enrich button for rejected/applied/failed enrichment proposals
+      if (p.proposal_type === 'entity_enrichment' && (p.status === 'rejected' || p.status === 'applied' || p.status === 'failed')) {
+        actions += '<div class="card-actions" style="margin-top:8px">' +
+          '<button class="btn btn-changes" onclick="reEnrich(\'' + p.id + '\')">Re-enrich</button>' +
           '</div>';
       }
 
@@ -247,12 +278,13 @@
         document.getElementById('count-all').textContent = data.total || '';
 
         // Load counts per status
-        for (const status of ['pending', 'approved', 'applied', 'rejected', 'needs_changes']) {
+        for (const status of ['pending', 'approved', 'applied', 'rejected', 'needs_changes', 'failed']) {
           const sRes = await fetch('/api/proposals?status=' + status + '&limit=0');
           const sData = await sRes.json();
           const el = document.getElementById('count-' + status);
           if (el) el.textContent = sData.total || '';
         }
+        updateBulkActions();
       } catch (err) {
         // Ignore count errors
       }
@@ -285,6 +317,72 @@
         }
       } catch (err) {
         flash('Network error: ' + err.message, 'error');
+      }
+    }
+
+    async function reEnrich(id) {
+      if (!confirm('Reset this enrichment and re-run search with corrections?')) return;
+      try {
+        var res = await fetch('/api/proposals/' + id + '/re-enrich', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        var data = await res.json();
+        if (res.ok) {
+          flash(data.message || 'Reset for re-enrichment.', 'success');
+          var card = document.getElementById('card-' + id);
+          if (card) {
+            card.style.opacity = '0';
+            card.style.transition = 'opacity 0.3s ease';
+            setTimeout(function() { card.remove(); }, 300);
+          }
+          loadCounts();
+        } else {
+          flash(data.error || 'Re-enrich failed.', 'error');
+        }
+      } catch (err) {
+        flash('Network error: ' + err.message, 'error');
+      }
+    }
+
+    async function bulkReEnrich() {
+      var count = document.getElementById('count-rejected').textContent;
+      if (!confirm('Reset all ' + (count || '') + ' rejected enrichment proposals and re-run with corrections? This will consume SerpAPI quota over the next few poll cycles.')) return;
+
+      var btn = document.getElementById('bulk-re-enrich-btn');
+      btn.disabled = true;
+      btn.textContent = 'Resetting...';
+
+      try {
+        var res = await fetch('/api/proposals/bulk/re-enrich-rejected', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        var data = await res.json();
+        if (res.ok) {
+          flash(data.message || 'Bulk reset complete.', 'success');
+          loadProposals();
+          loadCounts();
+        } else {
+          flash(data.error || 'Bulk re-enrich failed.', 'error');
+        }
+      } catch (err) {
+        flash('Network error: ' + err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Re-run All Rejected Enrichments';
+      }
+    }
+
+    function updateBulkActions() {
+      var rejectedCount = parseInt(document.getElementById('count-rejected').textContent || '0', 10);
+      var bulkDiv = document.getElementById('bulk-actions');
+      var info = document.getElementById('bulk-re-enrich-info');
+      if (rejectedCount > 0) {
+        bulkDiv.style.display = 'block';
+        info.textContent = rejectedCount + ' rejected proposal(s) will be reset and re-searched with correction examples.';
+      } else {
+        bulkDiv.style.display = 'none';
       }
     }
 

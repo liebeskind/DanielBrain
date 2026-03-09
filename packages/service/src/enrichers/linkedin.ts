@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { LINKEDIN_ENRICHMENT_BATCH_SIZE, SERPAPI_DAILY_LIMIT } from '@danielbrain/shared';
 import { createEnrichmentProposal } from '../proposals/helpers.js';
+import { getExamplesByCategory } from '../corrections/store.js';
 
 export interface LinkedInEnricherConfig {
   serpApiKey: string;
@@ -32,6 +33,7 @@ interface CandidateEntity {
   name: string;
   company_name: string | null;
   reviewer_hint: string | null;
+  profile_summary: string | null;
 }
 
 async function findCandidates(pool: pg.Pool, batchSize: number): Promise<CandidateEntity[]> {
@@ -40,7 +42,7 @@ async function findCandidates(pool: pg.Pool, batchSize: number): Promise<Candida
   // excluding the globally most-mentioned company (likely the user's own org).
   // Also pull reviewer notes from any needs_changes proposal as search hints.
   const { rows } = await pool.query(
-    `SELECT e.id, e.name,
+    `SELECT e.id, e.name, e.profile_summary,
        (SELECT e2.name
         FROM thought_entities te
         JOIN thought_entities te2 ON te2.thought_id = te.thought_id AND te2.entity_id != te.entity_id
@@ -93,11 +95,67 @@ interface LinkedInSearchResult {
   snippet: string;
 }
 
+export interface LinkedInCorrections {
+  badCompanies: string[];
+  excludeUrls: string[];
+}
+
+export async function loadLinkedInCorrections(
+  entityName: string,
+  pool: pg.Pool,
+): Promise<LinkedInCorrections> {
+  const corrections: LinkedInCorrections = { badCompanies: [], excludeUrls: [] };
+
+  try {
+    const examples = await getExamplesByCategory('linkedin_search', pool, 20);
+    const nameLower = entityName.toLowerCase();
+
+    for (const ex of examples) {
+      const ctx = ex.input_context as Record<string, unknown>;
+      const exName = (ctx.entity_name as string || '').toLowerCase();
+
+      // Exact match or similar entity name
+      if (exName === nameLower) {
+        // Extract companies that led to wrong results
+        const companies = ctx.company_context as string[] | undefined;
+        if (companies) {
+          corrections.badCompanies.push(...companies);
+        }
+
+        // Extract known-wrong URLs to exclude
+        const actual = ex.actual_output as Record<string, unknown> | null;
+        if (actual?.linkedin_url && typeof actual.linkedin_url === 'string') {
+          corrections.excludeUrls.push(actual.linkedin_url);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load LinkedIn corrections:', err);
+  }
+
+  return corrections;
+}
+
+export function extractProfileKeywords(profileSummary: string): string {
+  // Extract role/title keywords from profile summary to improve LinkedIn search
+  // Look for patterns like "VP of Engineering", "CEO", "co-founder", "product manager"
+  const rolePatterns = /\b(?:ceo|cto|coo|cfo|vp|director|manager|engineer|founder|co-founder|partner|head of|lead|principal|architect|designer|consultant|advisor)\b[^.;,]*/gi;
+  const matches = profileSummary.match(rolePatterns);
+  if (matches && matches.length > 0) {
+    // Take the first role match, trim to reasonable length
+    const role = matches[0].trim().slice(0, 60);
+    return role;
+  }
+  return '';
+}
+
 async function searchLinkedIn(
   name: string,
   company: string | null,
   config: LinkedInEnricherConfig,
   reviewerHint?: string | null,
+  corrections?: LinkedInCorrections,
+  profileSummary?: string | null,
 ): Promise<LinkedInSearchResult | null> {
   // If reviewer left hints (e.g. "Myles from Provocative Earth"), extract keywords for the search
   let contextPart = '';
@@ -109,9 +167,38 @@ async function searchLinkedIn(
       contextPart = ` ${hintText}`;
     }
   } else if (company) {
-    contextPart = ` "${company}"`;
+    // Skip company if corrections show it led to wrong results
+    const isBadCompany = corrections?.badCompanies.some(
+      bc => bc.toLowerCase() === company.toLowerCase()
+    );
+    if (!isBadCompany) {
+      contextPart = ` "${company}"`;
+    }
   }
-  const query = `site:linkedin.com/in "${name}"${contextPart}`;
+
+  // If no company context yet, try to extract role keywords from entity profile
+  if (!contextPart && profileSummary) {
+    const roleKeywords = extractProfileKeywords(profileSummary);
+    if (roleKeywords) {
+      contextPart = ` ${roleKeywords}`;
+    }
+  }
+
+  // Add exclusions for known-wrong LinkedIn profile slugs
+  let exclusions = '';
+  if (corrections?.excludeUrls.length) {
+    const slugs = corrections.excludeUrls
+      .map(url => {
+        const match = url.match(/linkedin\.com\/in\/([^/?]+)/);
+        return match ? match[1] : null;
+      })
+      .filter(Boolean);
+    if (slugs.length > 0) {
+      exclusions = slugs.map(s => ` -"${s}"`).join('');
+    }
+  }
+
+  const query = `site:linkedin.com/in "${name}"${contextPart}${exclusions}`;
 
   const url = new URL('https://serpapi.com/search.json');
   url.searchParams.set('api_key', config.serpApiKey);
@@ -162,7 +249,8 @@ export async function enrichLinkedInBatch(
 
     try {
       dailySearchCount++;
-      const result = await searchLinkedIn(candidate.name, candidate.company_name, config, candidate.reviewer_hint);
+      const corrections = await loadLinkedInCorrections(candidate.name, pool);
+      const result = await searchLinkedIn(candidate.name, candidate.company_name, config, candidate.reviewer_hint, corrections, candidate.profile_summary);
 
       if (result) {
         let searchDesc: string;

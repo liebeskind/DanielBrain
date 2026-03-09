@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Correction Examples - DanielBrain Admin</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .form-section {
+      background: #fff;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 24px;
+    }
+    .form-section h2 {
+      font-size: 16px;
+      margin-bottom: 12px;
+    }
+    .form-row {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 10px;
+      align-items: start;
+    }
+    .form-row label {
+      min-width: 120px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #555;
+      padding-top: 6px;
+    }
+    .form-row input,
+    .form-row textarea,
+    .form-row select {
+      flex: 1;
+      padding: 6px 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 13px;
+      font-family: inherit;
+    }
+    .form-row textarea {
+      min-height: 60px;
+      resize: vertical;
+    }
+    .form-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .toggle-raw {
+      font-size: 12px;
+      color: #6c63ff;
+      cursor: pointer;
+      text-decoration: underline;
+      margin-bottom: 8px;
+      display: inline-block;
+    }
+    .raw-fields { display: none; }
+    .raw-fields.visible { display: block; }
+    .structured-fields.hidden { display: none; }
+    .example-row {
+      display: flex;
+      align-items: start;
+      gap: 12px;
+      padding: 12px;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .example-row:last-child { border-bottom: none; }
+    .example-info { flex: 1; }
+    .example-meta {
+      font-size: 11px;
+      color: #999;
+      margin-top: 4px;
+    }
+    .example-detail {
+      font-size: 12px;
+      color: #555;
+      margin-top: 4px;
+    }
+    .example-detail strong {
+      color: #333;
+    }
+    .diff-wrong { color: #c5221f; text-decoration: line-through; }
+    .diff-correct { color: #137333; font-weight: 500; }
+    .btn-sm {
+      padding: 4px 10px;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="index.html" class="logo">DanielBrain</a>
+    <a href="approvals.html">Approvals</a>
+    <a href="entities.html">Entities</a>
+    <a href="examples.html" class="active">Examples</a>
+    <a href="/chat">Chat</a>
+  </nav>
+
+  <div class="container">
+    <h1>Correction Examples</h1>
+
+    <div id="flash"></div>
+
+    <!-- Filters -->
+    <div class="tabs" id="category-tabs">
+      <button class="tab active" data-category="">All</button>
+      <button class="tab" data-category="linkedin_search">LinkedIn Search</button>
+      <button class="tab" data-category="entity_extraction">Entity Extraction</button>
+      <button class="tab" data-category="entity_link">Entity Link</button>
+      <button class="tab" data-category="profile_generation">Profile Generation</button>
+    </div>
+
+    <!-- Add Example Form -->
+    <div class="form-section" id="add-form-section">
+      <h2>Add Correction Example</h2>
+      <div class="form-row">
+        <label>Category:</label>
+        <select id="form-category" onchange="onCategoryChange()">
+          <option value="linkedin_search">LinkedIn Search</option>
+          <option value="entity_extraction">Entity Extraction</option>
+          <option value="entity_link">Entity Link</option>
+          <option value="profile_generation">Profile Generation</option>
+        </select>
+      </div>
+
+      <!-- Structured fields for linkedin_search -->
+      <div id="structured-linkedin" class="structured-fields">
+        <div class="form-row">
+          <label>Entity Name:</label>
+          <input type="text" id="s-entity-name" placeholder="Jamie Farrell">
+        </div>
+        <div class="form-row">
+          <label>Wrong URL:</label>
+          <input type="text" id="s-wrong-url" placeholder="https://linkedin.com/in/wrong-person">
+        </div>
+        <div class="form-row">
+          <label>Correct URL:</label>
+          <input type="text" id="s-correct-url" placeholder="https://linkedin.com/in/correct-person">
+        </div>
+        <div class="form-row">
+          <label>Company Used:</label>
+          <input type="text" id="s-company" placeholder="Company name that led to wrong result">
+        </div>
+        <div class="form-row">
+          <label>Explanation:</label>
+          <input type="text" id="s-explanation" placeholder="Pearson was a customer, not Jamie's employer">
+        </div>
+      </div>
+
+      <!-- Structured fields for entity_extraction -->
+      <div id="structured-extraction" class="structured-fields hidden">
+        <div class="form-row">
+          <label>Input Text:</label>
+          <textarea id="s-ext-input" placeholder="Text snippet that was analyzed"></textarea>
+        </div>
+        <div class="form-row">
+          <label>Wrong Extraction:</label>
+          <textarea id="s-ext-wrong" placeholder='{"people": ["wrong name"]}'></textarea>
+        </div>
+        <div class="form-row">
+          <label>Correct Extraction:</label>
+          <textarea id="s-ext-correct" placeholder='{"people": ["correct name"]}'></textarea>
+        </div>
+        <div class="form-row">
+          <label>Explanation:</label>
+          <input type="text" id="s-ext-explanation" placeholder="Why the extraction was wrong">
+        </div>
+      </div>
+
+      <!-- Structured fields for entity_link -->
+      <div id="structured-link" class="structured-fields hidden">
+        <div class="form-row">
+          <label>Entity Name:</label>
+          <input type="text" id="s-link-entity" placeholder="Chris">
+        </div>
+        <div class="form-row">
+          <label>Thought Excerpt:</label>
+          <textarea id="s-link-thought" placeholder="Relevant text from the thought"></textarea>
+        </div>
+        <div class="form-row">
+          <label>Link Correct?</label>
+          <select id="s-link-correct">
+            <option value="no">No (wrong link)</option>
+            <option value="yes">Yes (correct link)</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Explanation:</label>
+          <input type="text" id="s-link-explanation" placeholder="Why the link was wrong">
+        </div>
+      </div>
+
+      <!-- Structured fields for profile_generation -->
+      <div id="structured-profile" class="structured-fields hidden">
+        <div class="form-row">
+          <label>Entity Name:</label>
+          <input type="text" id="s-prof-entity" placeholder="Alice Smith">
+        </div>
+        <div class="form-row">
+          <label>Wrong Profile:</label>
+          <textarea id="s-prof-wrong" placeholder="The incorrect profile text"></textarea>
+        </div>
+        <div class="form-row">
+          <label>Correct Profile:</label>
+          <textarea id="s-prof-correct" placeholder="What the profile should say"></textarea>
+        </div>
+        <div class="form-row">
+          <label>Explanation:</label>
+          <input type="text" id="s-prof-explanation" placeholder="Why the profile was wrong">
+        </div>
+      </div>
+
+      <span class="toggle-raw" onclick="toggleRaw()">Toggle Raw JSON</span>
+
+      <!-- Raw JSON fields -->
+      <div id="raw-fields" class="raw-fields">
+        <div class="form-row">
+          <label>input_context:</label>
+          <textarea id="raw-input" placeholder='{"entity_name": "..."}'></textarea>
+        </div>
+        <div class="form-row">
+          <label>actual_output:</label>
+          <textarea id="raw-actual" placeholder='{"linkedin_url": "..."}'></textarea>
+        </div>
+        <div class="form-row">
+          <label>expected_output:</label>
+          <textarea id="raw-expected" placeholder='{"linkedin_url": "..."}'></textarea>
+        </div>
+        <div class="form-row">
+          <label>explanation:</label>
+          <input type="text" id="raw-explanation" placeholder="Why this correction matters">
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <button class="btn btn-approve" onclick="submitExample()">Add Example</button>
+      </div>
+    </div>
+
+    <!-- Examples list -->
+    <div id="examples-list">
+      <div class="loading">Loading examples...</div>
+    </div>
+  </div>
+
+  <script>
+    var currentCategory = '';
+    var useRaw = false;
+
+    function flash(message, type) {
+      var el = document.getElementById('flash');
+      el.innerHTML = '<div class="flash flash-' + type + '">' + escapeHtml(message) + '</div>';
+      setTimeout(function() { el.innerHTML = ''; }, 4000);
+    }
+
+    function escapeHtml(str) {
+      var div = document.createElement('div');
+      div.textContent = str || '';
+      return div.innerHTML;
+    }
+
+    function formatDate(dateStr) {
+      if (!dateStr) return '';
+      var d = new Date(dateStr);
+      return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function onCategoryChange() {
+      var cat = document.getElementById('form-category').value;
+      // Hide all structured
+      document.querySelectorAll('.structured-fields').forEach(function(el) {
+        el.classList.add('hidden');
+      });
+      // Show matching
+      var map = {
+        linkedin_search: 'structured-linkedin',
+        entity_extraction: 'structured-extraction',
+        entity_link: 'structured-link',
+        profile_generation: 'structured-profile',
+      };
+      if (map[cat]) {
+        document.getElementById(map[cat]).classList.remove('hidden');
+      }
+    }
+
+    function toggleRaw() {
+      useRaw = !useRaw;
+      document.getElementById('raw-fields').classList.toggle('visible', useRaw);
+      document.querySelectorAll('.structured-fields').forEach(function(el) {
+        if (useRaw) el.classList.add('hidden');
+        else onCategoryChange();
+      });
+    }
+
+    function buildPayloadFromStructured(cat) {
+      if (cat === 'linkedin_search') {
+        return {
+          category: cat,
+          input_context: {
+            entity_name: document.getElementById('s-entity-name').value,
+            company_context: document.getElementById('s-company').value ? [document.getElementById('s-company').value] : [],
+          },
+          actual_output: document.getElementById('s-wrong-url').value
+            ? { linkedin_url: document.getElementById('s-wrong-url').value }
+            : null,
+          expected_output: { linkedin_url: document.getElementById('s-correct-url').value },
+          explanation: document.getElementById('s-explanation').value || null,
+        };
+      }
+      if (cat === 'entity_extraction') {
+        return {
+          category: cat,
+          input_context: { text: document.getElementById('s-ext-input').value },
+          actual_output: tryParseJson(document.getElementById('s-ext-wrong').value),
+          expected_output: tryParseJson(document.getElementById('s-ext-correct').value) || {},
+          explanation: document.getElementById('s-ext-explanation').value || null,
+        };
+      }
+      if (cat === 'entity_link') {
+        return {
+          category: cat,
+          input_context: {
+            entity_name: document.getElementById('s-link-entity').value,
+            thought_excerpt: document.getElementById('s-link-thought').value,
+          },
+          actual_output: { link_correct: document.getElementById('s-link-correct').value === 'yes' },
+          expected_output: { link_correct: document.getElementById('s-link-correct').value !== 'yes' },
+          explanation: document.getElementById('s-link-explanation').value || null,
+        };
+      }
+      if (cat === 'profile_generation') {
+        return {
+          category: cat,
+          input_context: { entity_name: document.getElementById('s-prof-entity').value },
+          actual_output: document.getElementById('s-prof-wrong').value
+            ? { profile: document.getElementById('s-prof-wrong').value }
+            : null,
+          expected_output: { profile: document.getElementById('s-prof-correct').value },
+          explanation: document.getElementById('s-prof-explanation').value || null,
+        };
+      }
+      return null;
+    }
+
+    function tryParseJson(str) {
+      if (!str || !str.trim()) return null;
+      try { return JSON.parse(str); } catch (e) { return null; }
+    }
+
+    async function submitExample() {
+      var cat = document.getElementById('form-category').value;
+      var payload;
+
+      if (useRaw) {
+        var inputCtx = tryParseJson(document.getElementById('raw-input').value);
+        var expectedOut = tryParseJson(document.getElementById('raw-expected').value);
+        if (!inputCtx || !expectedOut) {
+          flash('input_context and expected_output must be valid JSON.', 'error');
+          return;
+        }
+        payload = {
+          category: cat,
+          input_context: inputCtx,
+          actual_output: tryParseJson(document.getElementById('raw-actual').value),
+          expected_output: expectedOut,
+          explanation: document.getElementById('raw-explanation').value || null,
+        };
+      } else {
+        payload = buildPayloadFromStructured(cat);
+        if (!payload) {
+          flash('Could not build payload for this category.', 'error');
+          return;
+        }
+      }
+
+      try {
+        var res = await fetch('/api/corrections', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        var data = await res.json();
+        if (res.ok) {
+          flash('Example created.', 'success');
+          loadExamples();
+          clearForm();
+        } else {
+          flash(data.error || 'Failed to create example.', 'error');
+        }
+      } catch (err) {
+        flash('Network error: ' + err.message, 'error');
+      }
+    }
+
+    function clearForm() {
+      document.querySelectorAll('#add-form-section input, #add-form-section textarea').forEach(function(el) {
+        if (el.type !== 'button' && el.tagName !== 'SELECT') el.value = '';
+      });
+    }
+
+    function renderExample(ex) {
+      var categoryLabel = ex.category.replace(/_/g, ' ');
+      var inputSummary = summarizeObj(ex.input_context);
+      var actualHtml = ex.actual_output ? '<span class="diff-wrong">' + summarizeObj(ex.actual_output) + '</span>' : '';
+      var expectedHtml = '<span class="diff-correct">' + summarizeObj(ex.expected_output) + '</span>';
+
+      return '<div class="example-row" id="ex-' + ex.id + '">' +
+        '<div class="example-info">' +
+          '<span class="badge badge-type">' + escapeHtml(categoryLabel) + '</span>' +
+          (ex.tags && ex.tags.length ? ' ' + ex.tags.map(function(t) {
+            return '<span class="badge badge-pending" style="font-size:10px">' + escapeHtml(t) + '</span>';
+          }).join(' ') : '') +
+          '<div class="example-detail"><strong>Input:</strong> ' + escapeHtml(inputSummary) + '</div>' +
+          (actualHtml ? '<div class="example-detail"><strong>Produced:</strong> ' + actualHtml + '</div>' : '') +
+          '<div class="example-detail"><strong>Expected:</strong> ' + expectedHtml + '</div>' +
+          (ex.explanation ? '<div class="example-detail"><strong>Why:</strong> ' + escapeHtml(ex.explanation) + '</div>' : '') +
+          '<div class="example-meta">Created: ' + formatDate(ex.created_at) + '</div>' +
+        '</div>' +
+        '<button class="btn btn-reject btn-sm" onclick="deleteExample(\'' + ex.id + '\')">Delete</button>' +
+      '</div>';
+    }
+
+    function summarizeObj(obj) {
+      if (!obj) return '';
+      return Object.entries(obj).map(function(entry) {
+        var val = typeof entry[1] === 'string' ? entry[1] : JSON.stringify(entry[1]);
+        if (val && val.length > 80) val = val.slice(0, 80) + '...';
+        return entry[0] + '=' + val;
+      }).join(', ');
+    }
+
+    async function loadExamples() {
+      var params = new URLSearchParams();
+      if (currentCategory) params.set('category', currentCategory);
+      params.set('limit', '100');
+
+      try {
+        var res = await fetch('/api/corrections?' + params.toString());
+        var data = await res.json();
+        var list = document.getElementById('examples-list');
+        if (!data.examples || data.examples.length === 0) {
+          list.innerHTML = '<div class="empty-state">No correction examples yet.</div>';
+        } else {
+          list.innerHTML = '<div class="card">' + data.examples.map(renderExample).join('') + '</div>';
+        }
+      } catch (err) {
+        document.getElementById('examples-list').innerHTML =
+          '<div class="empty-state">Failed to load examples.</div>';
+      }
+    }
+
+    async function deleteExample(id) {
+      if (!confirm('Delete this correction example?')) return;
+      try {
+        var res = await fetch('/api/corrections/' + id, { method: 'DELETE' });
+        if (res.ok) {
+          flash('Example deleted.', 'success');
+          var el = document.getElementById('ex-' + id);
+          if (el) el.remove();
+        } else {
+          var data = await res.json();
+          flash(data.error || 'Delete failed.', 'error');
+        }
+      } catch (err) {
+        flash('Network error: ' + err.message, 'error');
+      }
+    }
+
+    // Tab switching
+    document.getElementById('category-tabs').addEventListener('click', function(e) {
+      var tab = e.target.closest('.tab');
+      if (!tab) return;
+      document.querySelectorAll('#category-tabs .tab').forEach(function(t) { t.classList.remove('active'); });
+      tab.classList.add('active');
+      currentCategory = tab.dataset.category;
+      loadExamples();
+    });
+
+    // Init
+    onCategoryChange();
+    loadExamples();
+  </script>
+</body>
+</html>

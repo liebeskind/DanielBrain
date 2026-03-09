@@ -23,6 +23,15 @@ export const LINKEDIN_ENRICHMENT_INTERVAL_MS = 60_000;
 export const LINKEDIN_ENRICHMENT_BATCH_SIZE = 5;
 export const SERPAPI_DAILY_LIMIT = 33; // ~1000/month on Starter plan
 
+// Chat RAG settings
+export const CHAT_CONTEXT_SEARCH_LIMIT = 5;
+export const CHAT_CONTEXT_SEARCH_THRESHOLD = 0.3;
+export const CHAT_MAX_HISTORY_MESSAGES = 20;
+
+// Correction examples
+export const CORRECTION_CATEGORIES = ['linkedin_search', 'entity_extraction', 'entity_link', 'profile_generation'] as const;
+export const MAX_PROMPT_INJECTION_EXAMPLES = 3;
+
 // Entity staleness thresholds
 export const ENTITY_STALE_MENTIONS = 10;
 export const ENTITY_STALE_DAYS = 7;
