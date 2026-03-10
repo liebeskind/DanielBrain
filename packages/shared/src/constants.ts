@@ -16,7 +16,12 @@ export const APPROVAL_THRESHOLDS: Record<string, number | 'always'> = {
   entity_link: 0.8,
   entity_enrichment: 'always',
   entity_merge: 'always',
+  entity_relationship: 'always',
 };
+
+// Relationship description poller
+export const RELATIONSHIP_DESCRIPTION_BATCH_SIZE = 5;
+export const RELATIONSHIP_DESCRIPTION_INTERVAL_MS = 60_000;
 
 // LinkedIn enricher
 export const LINKEDIN_ENRICHMENT_INTERVAL_MS = 60_000;

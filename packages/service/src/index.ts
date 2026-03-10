@@ -11,7 +11,7 @@ import { verifyTelegramSecret } from './telegram/verify.js';
 import { handleTelegramUpdate } from './telegram/webhook.js';
 import { pollQueue } from './processor/queue-poller.js';
 import { refreshStaleProfiles } from './processor/profile-generator.js';
-import { PROFILE_REFRESH_INTERVAL_MS, LINKEDIN_ENRICHMENT_INTERVAL_MS } from '@danielbrain/shared';
+import { PROFILE_REFRESH_INTERVAL_MS, LINKEDIN_ENRICHMENT_INTERVAL_MS, RELATIONSHIP_DESCRIPTION_INTERVAL_MS } from '@danielbrain/shared';
 import { createProposalRoutes } from './proposals/routes.js';
 import { createAdminRoutes } from './admin/routes.js';
 import { createChatRoutes } from './chat/routes.js';
@@ -19,6 +19,7 @@ import { enrichLinkedInBatch } from './enrichers/linkedin.js';
 import { verifyFathomSignature } from './fathom/verify.js';
 import { handleFathomEvent } from './fathom/webhook.js';
 import { createCorrectionRoutes } from './corrections/routes.js';
+import { describeUndescribedRelationships } from './processor/relationship-describer.js';
 
 const config = loadConfig();
 const pool = new pg.Pool({ connectionString: config.databaseUrl });
@@ -222,12 +223,34 @@ function startLinkedInEnricher() {
   }, LINKEDIN_ENRICHMENT_INTERVAL_MS);
 }
 
+// --- Relationship description poller (optional — only if configured) ---
+let relationshipInterval: ReturnType<typeof setInterval> | undefined;
+
+function startRelationshipDescriber() {
+  if (!config.relationshipModel) return;
+
+  relationshipInterval = setInterval(async () => {
+    try {
+      const count = await describeUndescribedRelationships(pool, {
+        ollamaBaseUrl: config.ollamaBaseUrl,
+        relationshipModel: config.relationshipModel!,
+      });
+      if (count > 0) {
+        console.log(`Described ${count} relationship edge(s)`);
+      }
+    } catch (err) {
+      console.error('Relationship description error:', err);
+    }
+  }, RELATIONSHIP_DESCRIPTION_INTERVAL_MS);
+}
+
 // --- Graceful shutdown ---
 function shutdown() {
   console.log('Shutting down...');
   clearInterval(pollInterval);
   clearInterval(profileInterval);
   if (linkedinInterval) clearInterval(linkedinInterval);
+  if (relationshipInterval) clearInterval(relationshipInterval);
   pool.end().then(() => {
     console.log('Database pool closed');
     process.exit(0);
@@ -261,6 +284,10 @@ app.listen(config.mcpPort, () => {
   startLinkedInEnricher();
   if (config.serpApiKey) {
     console.log(`  LinkedIn enricher: every ${LINKEDIN_ENRICHMENT_INTERVAL_MS / 1000}s`);
+  }
+  startRelationshipDescriber();
+  if (config.relationshipModel) {
+    console.log(`  Relationship describer: every ${RELATIONSHIP_DESCRIPTION_INTERVAL_MS / 1000}s (model: ${config.relationshipModel})`);
   }
 });
 

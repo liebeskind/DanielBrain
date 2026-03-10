@@ -24,9 +24,18 @@ interface ContextThought {
   matched_entities: string[];
 }
 
+interface EntityEdge {
+  source_name: string;
+  target_name: string;
+  relationship: string;
+  description: string | null;
+  weight: number;
+}
+
 interface GetContextResult {
   resolved_entities: ResolvedEntity[];
   shared_thoughts: ContextThought[];
+  entity_relationships: EntityEdge[];
   action_items: string[];
   key_topics: string[];
 }
@@ -56,6 +65,7 @@ export async function handleGetContext(
     return {
       resolved_entities: [],
       shared_thoughts: [],
+      entity_relationships: [],
       action_items: [],
       key_topics: [],
     };
@@ -82,7 +92,30 @@ export async function handleGetContext(
     [entityIds, input.days_back, input.max_thoughts]
   );
 
-  // Step 3: Collect action items if requested
+  // Step 3: Fetch relationship edges between resolved entities
+  let entityEdges: EntityEdge[] = [];
+  if (entityIds.length >= 2) {
+    const { rows: edgeRows } = await pool.query(
+      `SELECT s.name as source_name, t.name as target_name,
+              er.relationship, er.description, er.weight
+       FROM entity_relationships er
+       JOIN entities s ON s.id = er.source_id
+       JOIN entities t ON t.id = er.target_id
+       WHERE er.source_id = ANY($1) AND er.target_id = ANY($1)
+         AND er.invalid_at IS NULL
+       ORDER BY er.weight DESC`,
+      [entityIds]
+    );
+    entityEdges = edgeRows.map(r => ({
+      source_name: r.source_name,
+      target_name: r.target_name,
+      relationship: r.relationship,
+      description: r.description,
+      weight: parseInt(r.weight, 10),
+    }));
+  }
+
+  // Step 4: Collect action items if requested
   let actionItems: string[] = [];
   if (input.include_action_items) {
     for (const row of thoughtRows) {
@@ -92,7 +125,7 @@ export async function handleGetContext(
     }
   }
 
-  // Step 4: Collect key topics across all shared thoughts
+  // Step 5: Collect key topics across all shared thoughts
   const topicCounts = new Map<string, number>();
   for (const row of thoughtRows) {
     if (row.topics) {
@@ -108,6 +141,7 @@ export async function handleGetContext(
 
   return {
     resolved_entities: resolvedEntities,
+    entity_relationships: entityEdges,
     shared_thoughts: thoughtRows.map(r => ({
       id: r.id,
       content: r.content,

@@ -29,6 +29,9 @@ interface ConnectedEntity {
   name: string;
   entity_type: string;
   shared_thought_count: number;
+  relationship_description?: string | null;
+  relationship_weight?: number;
+  relationship_type?: string;
 }
 
 interface GetEntityResult {
@@ -91,15 +94,31 @@ export async function handleGetEntity(
     [entity.id]
   );
 
-  // Fetch connected entities (entities sharing thoughts with this one)
+  // Fetch connected entities (entities sharing thoughts + explicit relationship edges)
   const { rows: connected } = await pool.query(
-    `SELECT e.id, e.name, e.entity_type, COUNT(*) as shared_thought_count
-     FROM thought_entities te1
-     JOIN thought_entities te2 ON te1.thought_id = te2.thought_id AND te1.entity_id != te2.entity_id
-     JOIN entities e ON e.id = te2.entity_id
-     WHERE te1.entity_id = $1
-     GROUP BY e.id, e.name, e.entity_type
-     ORDER BY shared_thought_count DESC
+    `SELECT e.id, e.name, e.entity_type,
+            COALESCE(co.shared_thought_count, 0) as shared_thought_count,
+            er.description as relationship_description,
+            er.weight as relationship_weight,
+            er.relationship as relationship_type
+     FROM (
+       -- Co-occurrence via shared thoughts
+       SELECT te2.entity_id, COUNT(*) as shared_thought_count
+       FROM thought_entities te1
+       JOIN thought_entities te2 ON te1.thought_id = te2.thought_id AND te1.entity_id != te2.entity_id
+       WHERE te1.entity_id = $1
+       GROUP BY te2.entity_id
+     ) co
+     FULL OUTER JOIN (
+       -- Explicit relationship edges (active only)
+       SELECT
+         CASE WHEN source_id = $1 THEN target_id ELSE source_id END as entity_id,
+         description, weight, relationship
+       FROM entity_relationships
+       WHERE (source_id = $1 OR target_id = $1) AND invalid_at IS NULL
+     ) er ON co.entity_id = er.entity_id
+     JOIN entities e ON e.id = COALESCE(co.entity_id, er.entity_id)
+     ORDER BY COALESCE(er.weight, 0) + COALESCE(co.shared_thought_count, 0) DESC
      LIMIT 10`,
     [entity.id]
   );
@@ -115,8 +134,13 @@ export async function handleGetEntity(
     entity,
     recent_thoughts: thoughts,
     connected_entities: connected.map(r => ({
-      ...r,
+      id: r.id,
+      name: r.name,
+      entity_type: r.entity_type,
       shared_thought_count: parseInt(r.shared_thought_count, 10),
+      relationship_description: r.relationship_description || null,
+      relationship_weight: r.relationship_weight ? parseInt(r.relationship_weight, 10) : undefined,
+      relationship_type: r.relationship_type || undefined,
     })),
     needs_profile_refresh: needsRefresh,
   };

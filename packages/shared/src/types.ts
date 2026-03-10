@@ -155,6 +155,24 @@ export interface CorrectionExample {
   updated_at: Date;
 }
 
+export interface EntityRelationship {
+  id: string;
+  source_id: string;
+  target_id: string;
+  relationship: string;
+  description: string | null;
+  weight: number;
+  metadata: Record<string, unknown>;
+  visibility: string[];
+  valid_at: Date | null;
+  invalid_at: Date | null;
+  source_thought_ids: string[];
+  first_seen_at: Date;
+  last_seen_at: Date;
+  created_at: Date;
+  updated_at: Date;
+}
+
 export interface SearchResult {
   id: string;
   content: string;

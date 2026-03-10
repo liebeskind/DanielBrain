@@ -12,6 +12,9 @@ export async function applyProposal(proposal: Proposal, pool: pg.Pool): Promise<
     case 'entity_merge':
       await applyEntityMerge(proposal, pool);
       break;
+    case 'entity_relationship':
+      await applyEntityRelationship(proposal, pool);
+      break;
     default:
       throw new Error(`Unknown proposal type: ${proposal.proposal_type}`);
   }
@@ -26,6 +29,9 @@ export async function revertProposal(proposal: Proposal, pool: pg.Pool): Promise
       // Not auto-applied, nothing to revert
       break;
     case 'entity_merge':
+      // Not auto-applied, nothing to revert
+      break;
+    case 'entity_relationship':
       // Not auto-applied, nothing to revert
       break;
     default:
@@ -120,8 +126,68 @@ async function applyEntityMerge(proposal: Proposal, pool: pg.Pool): Promise<void
     [winner_id, loser_id]
   );
 
+  // Reassign entity_relationships from loser to winner (both source_id and target_id)
+  // Update source_id references (skip if would create duplicate)
+  await pool.query(
+    `UPDATE entity_relationships SET source_id = $1
+     WHERE source_id = $2
+     AND NOT EXISTS (
+       SELECT 1 FROM entity_relationships er2
+       WHERE er2.source_id = $1 AND er2.target_id = entity_relationships.target_id AND er2.relationship = entity_relationships.relationship
+     )`,
+    [winner_id, loser_id]
+  );
+
+  // Update target_id references (skip if would create duplicate)
+  await pool.query(
+    `UPDATE entity_relationships SET target_id = $1
+     WHERE target_id = $2
+     AND NOT EXISTS (
+       SELECT 1 FROM entity_relationships er2
+       WHERE er2.source_id = entity_relationships.source_id AND er2.target_id = $1 AND er2.relationship = entity_relationships.relationship
+     )`,
+    [winner_id, loser_id]
+  );
+
+  // Delete any remaining duplicate relationship edges referencing loser
+  await pool.query(
+    `DELETE FROM entity_relationships WHERE source_id = $1 OR target_id = $1`,
+    [loser_id]
+  );
+
   // Delete loser entity
   await pool.query(`DELETE FROM entities WHERE id = $1`, [loser_id]);
+}
+
+async function applyEntityRelationship(proposal: Proposal, pool: pg.Pool): Promise<void> {
+  const { edge_id, new_description } = proposal.proposed_data as {
+    edge_id: string;
+    new_description: string;
+  };
+  if (!edge_id || !new_description) {
+    throw new Error('entity_relationship proposal missing edge_id or new_description');
+  }
+
+  // Invalidate old edge
+  await pool.query(
+    `UPDATE entity_relationships SET invalid_at = NOW() WHERE id = $1`,
+    [edge_id]
+  );
+
+  // Fetch old edge to create successor
+  const { rows } = await pool.query(
+    `SELECT source_id, target_id, relationship, weight, source_thought_ids FROM entity_relationships WHERE id = $1`,
+    [edge_id]
+  );
+
+  if (rows.length > 0) {
+    const old = rows[0];
+    await pool.query(
+      `INSERT INTO entity_relationships (source_id, target_id, relationship, description, weight, source_thought_ids, valid_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+      [old.source_id, old.target_id, old.relationship, new_description, old.weight, old.source_thought_ids]
+    );
+  }
 }
 
 async function revertEntityLink(proposal: Proposal, pool: pg.Pool): Promise<void> {

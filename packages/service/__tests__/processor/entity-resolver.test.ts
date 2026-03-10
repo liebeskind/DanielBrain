@@ -15,7 +15,12 @@ vi.mock('../../src/proposals/helpers.js', () => ({
   createLinkProposal: vi.fn().mockResolvedValue('proposal-id'),
 }));
 
+vi.mock('../../src/processor/relationship-builder.js', () => ({
+  createCooccurrenceEdges: vi.fn().mockResolvedValue(0),
+}));
+
 import { shouldCreateProposal, createLinkProposal } from '../../src/proposals/helpers.js';
+import { createCooccurrenceEdges } from '../../src/processor/relationship-builder.js';
 
 const mockPool = {
   query: vi.fn(),
@@ -94,8 +99,9 @@ describe('isJunkEntity', () => {
     expect(isJunkEntity('a')).toBe(true);
   });
 
-  it('rejects names over 60 chars', () => {
-    expect(isJunkEntity('a'.repeat(61))).toBe(true);
+  it('rejects names over 40 chars', () => {
+    expect(isJunkEntity('a'.repeat(41))).toBe(true);
+    expect(isJunkEntity('topia virtual school student engagement platform')).toBe(true);
   });
 
   it('rejects blocklisted words', () => {
@@ -120,18 +126,60 @@ describe('isJunkEntity', () => {
     expect(isJunkEntity('an idea')).toBe(true);
   });
 
+  it('rejects email addresses', () => {
+    expect(isJunkEntity('chris@topia.io')).toBe(true);
+    expect(isJunkEntity('gordon.smith@topia.io')).toBe(true);
+    expect(isJunkEntity('spark04@wharton.upenn.edu')).toBe(true);
+  });
+
+  it('rejects build phase names', () => {
+    expect(isJunkEntity('Phase 4')).toBe(true);
+    expect(isJunkEntity('phase 1')).toBe(true);
+    expect(isJunkEntity('Phase 10')).toBe(true);
+  });
+
   it('rejects CLI commands', () => {
     expect(isJunkEntity('curl')).toBe(true);
     expect(isJunkEntity('wget https://example.com')).toBe(true);
     expect(isJunkEntity('docker compose up')).toBe(true);
   });
 
+  it('rejects descriptions with prepositions', () => {
+    expect(isJunkEntity('pilot project with stride')).toBe(true);
+    expect(isJunkEntity('sso setup between calops and schoolspace')).toBe(true);
+    expect(isJunkEntity('curriculum integration for schools')).toBe(true);
+    expect(isJunkEntity('child-to-child interactivity of virtual schools')).toBe(true);
+  });
+
+  it('rejects URLs', () => {
+    expect(isJunkEntity('https://fathom.video/share/abc123')).toBe(true);
+    expect(isJunkEntity('http://example.com/path')).toBe(true);
+  });
+
+  it('rejects activity/task descriptions', () => {
+    expect(isJunkEntity('canvas integration')).toBe(true);
+    expect(isJunkEntity('career fair planning')).toBe(true);
+    expect(isJunkEntity('bare-metal experiment')).toBe(true);
+    expect(isJunkEntity('personalization strategy')).toBe(true);
+    expect(isJunkEntity('classroom solution')).toBe(true);
+    expect(isJunkEntity('sso setup')).toBe(true);
+    expect(isJunkEntity('brass ring marketing presentation')).toBe(true);
+    expect(isJunkEntity('classroom one-pager')).toBe(true);
+    expect(isJunkEntity('case studies and logos')).toBe(true);
+    expect(isJunkEntity('asu/gsv followups')).toBe(true);
+  });
+
   it('accepts valid entity names', () => {
     expect(isJunkEntity('Daniel Liebeskind')).toBe(false);
     expect(isJunkEntity('Topia')).toBe(false);
     expect(isJunkEntity('GPT-4')).toBe(false);
-    expect(isJunkEntity('Project Atlas')).toBe(false);
+    expect(isJunkEntity('K12 Zone')).toBe(false);
     expect(isJunkEntity('AWS')).toBe(false);
+    expect(isJunkEntity('College Conversations')).toBe(false);
+    expect(isJunkEntity('Choose Love Academy')).toBe(false);
+    // "of" in the middle — but this is a real org name
+    // Illinois Institute of Technology would be rejected by preposition rule
+    // That's acceptable: better to miss a few real names than let through junk
   });
 });
 
@@ -339,6 +387,12 @@ describe('resolveEntities', () => {
 
     // 2 entities resolved: person + company, each with 3 queries (find + link + bump)
     expect(mockPool.query).toHaveBeenCalledTimes(6);
+    // Co-occurrence edges created for 2 entities
+    expect(createCooccurrenceEdges).toHaveBeenCalledWith(
+      'thought-1',
+      expect.arrayContaining(['e1', 'e2']),
+      expect.anything(),
+    );
   });
 
   it('skips junk entities during resolution', async () => {
@@ -575,6 +629,12 @@ describe('resolveEntities', () => {
 
     // 4 queries for structured Alice (find + link + bump + email) + 3 for LLM Bob = 7
     expect(mockPool.query).toHaveBeenCalledTimes(7);
+    // Co-occurrence edges created for structured Alice + LLM Bob
+    expect(createCooccurrenceEdges).toHaveBeenCalledWith(
+      'thought-7',
+      expect.arrayContaining(['e1', 'e2']),
+      expect.anything(),
+    );
 
     // Verify email was stored
     const emailCall = mockPool.query.mock.calls[3];
@@ -656,7 +716,8 @@ describe('resolveStructuredParticipants', () => {
       mockPool as any,
     );
 
-    expect(resolved.has('alice')).toBe(true);
+    expect(resolved.resolvedNames.has('alice')).toBe(true);
+    expect(resolved.resolvedEntityIds).toContain('e1');
   });
 
   it('stores email on entity when provided', async () => {

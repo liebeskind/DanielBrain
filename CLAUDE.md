@@ -19,9 +19,9 @@ See `docs/vision/` for detailed use cases and architecture vision.
 ## Architecture
 
 - **PostgreSQL + pgvector** on DGX Spark for storage and vector search
-- **Ollama** on DGX Spark for embeddings (nomic-embed-text) and metadata extraction (llama3.1:8b)
+- **Ollama** on DGX Spark for embeddings (nomic-embed-text), metadata extraction (llama3.1:8b), and relationship description (llama3.1:70b-q4_K_M)
 - **MCP server** (HTTP/SSE transport) with 8 tools (4 thought tools + 4 entity tools)
-- **Entity knowledge graph**: first-class entities (person, company, topic, product, project, place) linked to thoughts with relationship types
+- **Entity knowledge graph**: first-class entities linked to thoughts + entity-to-entity relationship edges with temporal tracking
 - **Profile generation**: LLM-generated entity profiles with vector embeddings for entity-level semantic search
 - **Approvals queue**: confidence-gated proposal system for human-in-the-loop quality control
 - **Admin dashboard**: web UI at `/admin` for reviewing proposals, entity overview, and stats
@@ -38,6 +38,7 @@ packages/shared/         # Types, Zod schemas, DB client, constants
 packages/service/        # MCP server, processing pipeline, Slack + Telegram integration
   src/processor/         # chunker, embedder, extractor, summarizer, pipeline,
                          # entity-resolver, profile-generator, queue-poller,
+                         # relationship-builder, relationship-describer,
                          # slack-notifier, telegram-notifier
   src/mcp/               # MCP server + 8 tool handlers
     tools/               # semantic-search, list-recent, stats, save-thought,
@@ -67,10 +68,21 @@ migrations/              # 15 SQL migration files
   013 update_find_entity # Align SQL normalization with app code
   014 create_proposals   # Proposals table for approvals queue
   015 add_queue_source_id # Add source_id to queue for dedup (Fathom etc.)
+  ...
+  020 add_relationship_columns # weight, description, valid_at/invalid_at, source_thought_ids
 scripts/migrate.ts       # Migration runner
 docker/                  # docker-compose.yml (prod) + docker-compose.test.yml (test)
 docs/
   reference/             # Original Open Brain video transcript
+  reference/graphiti/    # Graphiti (Zep) — temporal KG for agent memory (9 docs)
+  reference/graphrag/    # Microsoft GraphRAG — community detection + global search (8 docs)
+  reference/khoj/        # Khoj — self-hosted AI brain with agents (9 docs)
+  reference/mem0/        # Mem0 — memory lifecycle management (9 docs)
+  reference/lightrag/    # LightRAG — dual-level retrieval (2 docs)
+  reference/haystack/    # Haystack — pipeline architecture (2 docs)
+  reference/ragflow/     # RAGFlow — document understanding + HITL (8 docs)
+  reference/cognee/      # cognee — KG memory framework (11 docs)
+  reference/synthesis.md # Cross-project comparison + architecture recommendations
   vision/                # Use cases by department, context graph vision
   plans/                 # Implementation plans (design docs)
 ```
@@ -89,7 +101,7 @@ npm run migrate                # Run SQL migrations against DATABASE_URL
 - Full TDD: every module has tests written before implementation
 - Unit tests mock Ollama calls (fast, no GPU needed)
 - Integration tests use real Postgres via docker-compose.test.yml (port 5433)
-- Run: `npx vitest run` (245 tests across 34 files)
+- Run: `npx vitest run` (330 tests across 44 files)
 
 ## MCP Tools
 
@@ -120,6 +132,14 @@ After every thought INSERT, the pipeline runs entity resolution (non-blocking):
 3. Find or create: canonical match → alias match → ON CONFLICT create (race-safe)
 4. Infer relationship: author → `from`, action item → `assigned_to`, summary → `about`, default → `mentions`
 5. Link entity to thought, bump mention_count and last_seen_at
+
+### Entity-to-Entity Relationships
+- Co-occurrence edges created automatically when 2+ entities appear in the same thought
+- Canonical edge direction: smaller UUID = source_id (avoids A→B / B→A duplicates)
+- Weight tracks co-occurrence count; source_thought_ids provides traceability
+- LLM description (70B) generated for edges with weight >= 2 (background poller)
+- Temporal edges: `valid_at`/`invalid_at` track fact evolution (contradictions create new edge)
+- Low-confidence contradictions → proposals queue for human review
 
 ### Profile Generation
 - LLM generates 3-5 sentence profile from recent linked thoughts
@@ -178,6 +198,13 @@ General-purpose, confidence-gated proposal system. Any operation where confidenc
 - **Fathom signature verification**: svix HMAC-SHA256 with base64-decoded secret, timing-safe comparison
 - **Queue source_id dedup**: partial unique index on `source_id WHERE source_id IS NOT NULL` prevents duplicate processing
 - **Approvals context**: proposals list includes entity profile + recent thought excerpts for informed review
+- **Canonical edge direction**: smaller UUID = source_id to deterministically avoid A→B / B→A duplicates
+- **`co_occurs` as base relationship**: LLM description enriches via `description` field; free-text avoids premature taxonomy
+- **weight >= 2 threshold for LLM description**: avoids wasting 70B time on single-co-occurrence noise
+- **source_thought_ids array**: traceability without a separate junction table
+- **Contradiction detection → proposals queue**: uncertain contradictions get human review (HITL moat)
+- **Entity merge cascading**: `applyEntityMerge` updates both `thought_entities` and `entity_relationships`
+- **Dual-model architecture**: 8B for extraction/chat, 70B for relationship description/contradiction (opt-in via RELATIONSHIP_MODEL)
 
 ## Environment Variables
 
@@ -189,6 +216,7 @@ See `.env.example` for all required/optional vars. Key ones:
 - `OLLAMA_BASE_URL` — defaults to http://localhost:11434
 - `SERPAPI_KEY` — SerpAPI key for LinkedIn enrichment (optional)
 - `FATHOM_API_KEY` / `FATHOM_WEBHOOK_SECRET` — Fathom meeting transcript integration (optional)
+- `RELATIONSHIP_MODEL` — Ollama model for relationship description/contradiction (optional, e.g. `llama3.1:70b-q4_K_M`)
 
 ## Build Phases
 
@@ -200,14 +228,15 @@ See `.env.example` for all required/optional vars. Key ones:
 - [x] Phase 4c: Entity Knowledge Graph (entities, resolver, profiles, 4 MCP tools)
 - [x] Phase 4d: Approvals Queue + Admin Dashboard + LinkedIn Enrichment
 - [x] Phase 4e: Fathom Meeting Transcript Integration
-- [ ] Phase 5: Cloudflare Tunnel + Zero Trust (infrastructure setup)
-- [ ] Phase 6: Polish (retry backoff, health checks, structured logging, backup)
-- [ ] Phase 7: Permissions enforcement (visibility scoping, access_keys, selective sharing)
-- [ ] Phase 8: Slack bot selective capture (@mention to choose what enters shared graph)
-- [ ] Phase 9: Context diff + staleness monitoring ("what changed this week?")
-- [ ] Phase 10: Entity-to-entity relationships (populate entity_relationships table)
-- [ ] Phase 11: Meeting prep autopilot (calendar integration, proactive briefings)
-- [ ] Phase 12: Action item lifecycle (open/closed/stale tracking with assignees)
+- [x] Phase 4f: Chat v1 + Correction Examples
+- [x] Phase 5: Entity Relationships + Temporal Edges (co-occurrence edges, 70B descriptions, contradiction detection, proposals)
+- [ ] Phase 6: Hybrid Retrieval (BM25 + tsvector + RRF, query routing, intent detection)
+- [ ] Phase 7: Community Detection + Global Search (Louvain via graphology, community summaries, simplified global search)
+- [ ] Phase 8: Agent Interface Enhancement (new MCP tools, agent personas, research mode, dual-level keywords)
+- [ ] Phase 9: Permissions + Multi-User (visibility scoping, access_keys, selective sharing)
+- [ ] Phase 10: Infrastructure + Polish (Cloudflare Tunnel, cross-encoder reranking, source-specific chunking, logging, backup)
+- [ ] Phase 11: Advanced Knowledge Quality (fact-level dedup, atomic fact extraction, recursive splitting)
+- [ ] Phase 12: Automation + Calendar (scheduled monitoring, meeting prep autopilot, action item lifecycle)
 
 ## Git History
 

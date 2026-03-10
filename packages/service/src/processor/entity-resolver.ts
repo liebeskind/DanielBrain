@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import type { ThoughtMetadata, EntityType, EntityRelationshipType, StructuredData, ParticipantIdentity } from '@danielbrain/shared';
 import { shouldCreateProposal, createLinkProposal } from '../proposals/helpers.js';
+import { createCooccurrenceEdges } from './relationship-builder.js';
 
 interface ResolverConfig {
   ollamaBaseUrl: string;
@@ -26,7 +27,16 @@ const JUNK_PATTERNS = [
   /^(a|an|the)\s+/i,           // starts with article
   /attendees$/i,               // ends with "attendees"
   /^(curl|wget|npm|git|docker|ssh|sudo|pip)\b/i, // CLI commands
+  /^[^\s]+@[^\s]+\.[^\s]+$/,   // email addresses (user@domain.tld)
+  /^phase\s+\d+/i,            // build phases (e.g., "Phase 4")
+  /\b(of|for|between|with)\b/i, // prepositions indicate descriptions, not proper names
+  /^https?:\/\//i,             // URLs
+  /\b(integration|planning|experiment|strategy|solution|setup|presentation)\b/i, // activity/task words
+  /\b(one-pager|case studies|followups?)\b/i, // deliverables, not project names
 ];
+
+// Names above this length are almost always descriptions, not proper names
+const MAX_ENTITY_NAME_LENGTH = 40;
 
 export function normalizeName(name: string): string {
   return name
@@ -42,9 +52,17 @@ export function normalizeName(name: string): string {
     .trim();
 }
 
+// Patterns checked against raw (pre-normalization) input
+const RAW_JUNK_PATTERNS = [
+  /^[^\s]+@[^\s]+\.[^\s]+$/,   // email addresses (user@domain.tld)
+];
+
 export function isJunkEntity(name: string): boolean {
+  const trimmed = name.trim();
+  if (RAW_JUNK_PATTERNS.some((pattern) => pattern.test(trimmed))) return true;
+
   const normalized = normalizeName(name);
-  if (normalized.length < 2 || normalized.length > 60) return true;
+  if (normalized.length < 2 || normalized.length > MAX_ENTITY_NAME_LENGTH) return true;
   if (JUNK_BLOCKLIST.has(normalized)) return true;
   return JUNK_PATTERNS.some((pattern) => pattern.test(normalized));
 }
@@ -234,8 +252,9 @@ export async function resolveStructuredParticipants(
   content: string,
   pool: pg.Pool,
   sourceMeta?: Record<string, unknown> | null,
-): Promise<Set<string>> {
+): Promise<{ resolvedNames: Set<string>; resolvedEntityIds: string[] }> {
   const resolvedNames = new Set<string>();
+  const resolvedEntityIds: string[] = [];
 
   // Resolve participants (people)
   if (structured.participants?.length) {
@@ -250,6 +269,7 @@ export async function resolveStructuredParticipants(
       }
 
       resolvedNames.add(normalizeName(p.name));
+      resolvedEntityIds.push(match.id);
     }
   }
 
@@ -260,10 +280,11 @@ export async function resolveStructuredParticipants(
       const match = await findOrCreateEntity(c.name, 'company', pool);
       await linkEntity(thoughtId, match.id, 'mentions', 1.0, pool);
       resolvedNames.add(normalizeName(c.name));
+      resolvedEntityIds.push(match.id);
     }
   }
 
-  return resolvedNames;
+  return { resolvedNames, resolvedEntityIds };
 }
 
 export async function resolveEntities(
@@ -276,9 +297,10 @@ export async function resolveEntities(
 ): Promise<void> {
   // Phase B: resolve structured participants first
   let alreadyResolved = new Set<string>();
+  const allEntityIds: string[] = [];
   if (sourceMeta?.structured) {
     try {
-      alreadyResolved = await resolveStructuredParticipants(
+      const result = await resolveStructuredParticipants(
         thoughtId,
         sourceMeta.structured as StructuredData,
         metadata,
@@ -286,6 +308,8 @@ export async function resolveEntities(
         pool,
         sourceMeta,
       );
+      alreadyResolved = result.resolvedNames;
+      allEntityIds.push(...result.resolvedEntityIds);
     } catch (err) {
       console.error('Structured participant resolution failed (non-fatal):', err);
     }
@@ -316,6 +340,7 @@ export async function resolveEntities(
     const match = await findOrCreateEntity(entry.name, entry.type, pool);
     const relationship = inferRelationship(entry.name, metadata, content, sourceMeta);
     await linkEntity(thoughtId, match.id, relationship, match.confidence, pool);
+    allEntityIds.push(match.id);
 
     // Create proposal for low-confidence links (e.g., prefix matches)
     if (shouldCreateProposal(match.confidence, 'entity_link')) {
@@ -334,6 +359,15 @@ export async function resolveEntities(
         // Non-blocking — proposal creation should never prevent entity resolution
         console.error('Failed to create link proposal:', err);
       }
+    }
+  }
+
+  // Create co-occurrence edges between all resolved entities (non-blocking)
+  if (allEntityIds.length >= 2) {
+    try {
+      await createCooccurrenceEdges(thoughtId, allEntityIds, pool);
+    } catch (err) {
+      console.error('Co-occurrence edge creation failed (non-fatal):', err);
     }
   }
 }

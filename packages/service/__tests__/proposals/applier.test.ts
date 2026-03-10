@@ -75,8 +75,10 @@ describe('applyProposal', () => {
 
     await applyProposal(proposal, mockPool as any);
 
-    // 4 queries: reassign links, delete dupes, merge aliases, delete loser
-    expect(mockPool.query).toHaveBeenCalledTimes(4);
+    // 7 queries: reassign thought links, delete thought dupes, merge aliases,
+    // reassign relationship source_ids, reassign relationship target_ids,
+    // delete remaining relationship dupes, delete loser
+    expect(mockPool.query).toHaveBeenCalledTimes(7);
   });
 
   it('throws for unknown proposal type', async () => {

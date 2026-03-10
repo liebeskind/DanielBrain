@@ -34,6 +34,10 @@ describe('handleGetContext', () => {
         matched_entities: ['Alice', 'Project X'],
       }],
     });
+    // Entity relationships between resolved entities
+    mockPool.query.mockResolvedValueOnce({
+      rows: [],
+    });
 
     const result = await handleGetContext({
       entities: ['Alice', 'Project X'],

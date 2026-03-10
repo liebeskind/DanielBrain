@@ -44,6 +44,42 @@ export async function createLinkProposal(
   return rows[0].id;
 }
 
+interface RelationshipProposalInput {
+  edgeId: string;
+  sourceEntityId: string;
+  sourceName: string;
+  targetName: string;
+  currentDescription: string;
+  proposedDescription: string;
+  confidence: number;
+}
+
+export async function createRelationshipProposal(
+  input: RelationshipProposalInput,
+  pool: pg.Pool,
+): Promise<string> {
+  const { rows } = await pool.query(
+    `INSERT INTO proposals (proposal_type, entity_id, title, description, proposed_data, current_data, auto_applied, source)
+     VALUES ($1, $2, $3, $4, $5, $6, FALSE, 'relationship_describer')
+     RETURNING id`,
+    [
+      'entity_relationship',
+      input.sourceEntityId,
+      `Update relationship: ${input.sourceName} ↔ ${input.targetName}`,
+      `Contradiction detected (confidence ${input.confidence}). Review proposed description change.`,
+      JSON.stringify({
+        edge_id: input.edgeId,
+        new_description: input.proposedDescription,
+      }),
+      JSON.stringify({
+        edge_id: input.edgeId,
+        current_description: input.currentDescription,
+      }),
+    ]
+  );
+  return rows[0].id;
+}
+
 export async function createEnrichmentProposal(
   entityId: string,
   entityName: string,
