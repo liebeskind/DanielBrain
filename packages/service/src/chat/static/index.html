@@ -3,33 +3,74 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DanielBrain Chat</title>
+  <title>Chat - TopiaBrain</title>
   <link rel="stylesheet" href="/admin/style.css">
   <link rel="stylesheet" href="chat.css">
 </head>
 <body>
-  <nav>
-    <a href="/admin" class="logo">DanielBrain</a>
-    <a href="/admin/approvals.html">Approvals</a>
-    <a href="/admin/entities.html">Entities</a>
-    <a href="/admin/examples.html">Examples</a>
-    <a href="/chat" class="active">Chat</a>
-  </nav>
-
-  <div class="chat-container">
-    <div id="messages" class="messages">
-      <div class="welcome-message">
-        <h2>DanielBrain Chat</h2>
-        <p>Ask me anything about your knowledge base — meetings, people, projects, action items.</p>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <a href="/admin" class="sidebar-logo">
+        <span class="logo-icon">T</span>
+        TopiaBrain
+      </a>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Knowledge</div>
+        <a href="/admin/browse.html" class="sidebar-link">
+          <span class="link-icon">&#x1F4DA;</span> Browse
+        </a>
+        <a href="/admin/ingest.html" class="sidebar-link">
+          <span class="link-icon">&#x2795;</span> Add Content
+        </a>
+        <a href="/chat" class="sidebar-link active">
+          <span class="link-icon">&#x1F4AC;</span> Chat
+        </a>
       </div>
-    </div>
-
-    <div class="input-area">
-      <div class="input-row">
-        <textarea id="input" placeholder="Ask the brain..." rows="1"></textarea>
-        <button id="send-btn" onclick="sendMessage()">Send</button>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Manage</div>
+        <a href="/admin/entities.html" class="sidebar-link">
+          <span class="link-icon">&#x1F465;</span> Entities
+        </a>
+        <a href="/admin/approvals.html" class="sidebar-link">
+          <span class="link-icon">&#x2705;</span> Approvals
+        </a>
+        <a href="/admin/examples.html" class="sidebar-link">
+          <span class="link-icon">&#x1F4DD;</span> Examples
+        </a>
       </div>
-      <div class="input-hint">Enter to send, Shift+Enter for newline</div>
+
+      <div class="sidebar-divider"></div>
+
+      <div class="sidebar-section chat-section">
+        <div class="chat-section-header">
+          <div class="sidebar-section-label">Conversations</div>
+          <button class="btn-icon btn-new-chat" onclick="newChat()" title="New Chat">+</button>
+        </div>
+        <div class="project-filter">
+          <select id="project-filter" onchange="filterByProject(this.value)">
+            <option value="">All conversations</option>
+          </select>
+        </div>
+        <div id="conversation-list" class="conversation-list"></div>
+      </div>
+    </aside>
+
+    <div class="chat-wrapper">
+      <div id="messages" class="messages">
+        <div class="welcome-message">
+          <div class="welcome-icon">&#x1F9E0;</div>
+          <h2>TopiaBrain Chat</h2>
+          <p>Ask me anything about your knowledge base — meetings, people, projects, action items.</p>
+        </div>
+      </div>
+
+      <div class="input-area">
+        <div class="input-row">
+          <textarea id="input" placeholder="Ask the brain..." rows="1"></textarea>
+          <button id="send-btn" onclick="sendMessage()">Send</button>
+        </div>
+        <div class="input-hint">Enter to send, Shift+Enter for newline</div>
+      </div>
     </div>
   </div>
 

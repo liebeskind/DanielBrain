@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Browse - TopiaBrain</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <a href="index.html" class="sidebar-logo">
+        <span class="logo-icon">T</span>
+        TopiaBrain
+      </a>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Knowledge</div>
+        <a href="browse.html" class="sidebar-link active">
+          <span class="link-icon">&#x1F4DA;</span> Browse
+        </a>
+        <a href="ingest.html" class="sidebar-link">
+          <span class="link-icon">&#x2795;</span> Add Content
+        </a>
+        <a href="/chat" class="sidebar-link">
+          <span class="link-icon">&#x1F4AC;</span> Chat
+        </a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Manage</div>
+        <a href="entities.html" class="sidebar-link">
+          <span class="link-icon">&#x1F465;</span> Entities
+        </a>
+        <a href="approvals.html" class="sidebar-link">
+          <span class="link-icon">&#x2705;</span> Approvals
+        </a>
+        <a href="examples.html" class="sidebar-link">
+          <span class="link-icon">&#x1F4DD;</span> Examples
+        </a>
+      </div>
+      <div class="sidebar-spacer"></div>
+    </aside>
+
+    <main class="main-content" x-data="browseApp()" x-init="init()">
+      <div class="page-header">
+        <h1>Browse Knowledge</h1>
+        <p>All thoughts, meetings, messages, and documents in your brain</p>
+      </div>
+
+      <!-- Stats row -->
+      <div class="stats-grid" x-show="stats">
+        <div class="stat-card">
+          <div class="number" x-text="stats?.total || 0"></div>
+          <div class="label">Total Thoughts</div>
+        </div>
+        <template x-for="tc in (stats?.by_source || [])" :key="tc.source">
+          <div class="stat-card">
+            <div class="number" x-text="tc.count"></div>
+            <div class="label" x-text="tc.source"></div>
+          </div>
+        </template>
+      </div>
+
+      <!-- Toolbar -->
+      <div class="browse-toolbar">
+        <div class="search-box">
+          <input type="text" placeholder="Search thoughts..." x-model="searchQuery"
+                 @keydown.enter="resetAndLoad()" @keydown.escape="searchQuery = ''; resetAndLoad()">
+        </div>
+        <div class="filter-group">
+          <select x-model="filterSource" @change="resetAndLoad()">
+            <option value="">All Sources</option>
+            <option value="slack">Slack</option>
+            <option value="telegram">Telegram</option>
+            <option value="fathom">Fathom</option>
+            <option value="manual">Manual</option>
+            <option value="mcp">MCP</option>
+          </select>
+          <select x-model="filterType" @change="resetAndLoad()">
+            <option value="">All Types</option>
+            <option value="meeting_transcript">Meeting</option>
+            <option value="conversation">Conversation</option>
+            <option value="note">Note</option>
+            <option value="action_item">Action Item</option>
+            <option value="summary">Summary</option>
+            <option value="decision">Decision</option>
+          </select>
+          <select x-model="sortBy" @change="resetAndLoad()">
+            <option value="newest">Newest First</option>
+            <option value="oldest">Oldest First</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Results -->
+      <div id="thoughts-list">
+        <template x-if="loading && thoughts.length === 0">
+          <div class="loading">Loading thoughts</div>
+        </template>
+
+        <template x-if="!loading && thoughts.length === 0">
+          <div class="empty-state">No thoughts found matching your filters.</div>
+        </template>
+
+        <template x-for="t in thoughts" :key="t.id">
+          <div class="thought-card" @click="openDetail(t)">
+            <div class="thought-header">
+              <span class="thought-title" x-text="thoughtTitle(t)"></span>
+              <span :class="'badge badge-source-' + t.source" x-text="t.source"></span>
+              <span class="badge badge-type" x-show="t.thought_type" x-text="formatType(t.thought_type)"></span>
+              <span class="thought-date" x-text="formatDate(t.created_at)"></span>
+            </div>
+            <div class="thought-summary" x-show="t.summary" x-text="t.summary"></div>
+            <div class="thought-content-preview" x-show="!t.summary" x-text="truncate(t.content, 200)"></div>
+
+            <!-- Entities -->
+            <div class="thought-entities" x-show="t.entities && t.entities.length > 0">
+              <template x-for="e in (t.entities || []).slice(0, 8)" :key="e.id">
+                <span :class="'thought-entity-tag badge-entity-' + e.entity_type" x-text="e.name"></span>
+              </template>
+              <span class="thought-entity-tag" x-show="t.entities && t.entities.length > 8"
+                    x-text="'+' + (t.entities.length - 8) + ' more'"></span>
+            </div>
+
+            <!-- Action items -->
+            <div class="action-items" x-show="t.action_items && t.action_items.length > 0">
+              <template x-for="(ai, idx) in (t.action_items || []).slice(0, 3)" :key="idx">
+                <div class="action-item" x-text="ai"></div>
+              </template>
+            </div>
+
+            <div class="thought-footer">
+              <span x-show="t.people && t.people.length > 0" x-text="'People: ' + (t.people || []).join(', ')"></span>
+              <span x-show="t.topics && t.topics.length > 0" x-text="'Topics: ' + (t.topics || []).join(', ')"></span>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- Pagination -->
+      <div class="pagination" x-show="thoughts.length > 0">
+        <button class="btn" @click="prevPage()" :disabled="page === 0">Previous</button>
+        <span class="page-info" x-text="pageInfo()"></span>
+        <button class="btn" @click="nextPage()" :disabled="!hasMore">Next</button>
+      </div>
+
+      <!-- Detail Modal -->
+      <template x-if="selectedThought">
+        <div class="thought-detail-overlay" @click.self="selectedThought = null" @keydown.escape.window="selectedThought = null">
+          <div class="thought-detail">
+            <button class="thought-detail-close" @click="selectedThought = null">&times;</button>
+            <div class="thought-header mb-16">
+              <span class="thought-title" x-text="thoughtTitle(selectedThought)" style="font-size:20px"></span>
+            </div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px">
+              <span :class="'badge badge-source-' + selectedThought.source" x-text="selectedThought.source"></span>
+              <span class="badge badge-type" x-show="selectedThought.thought_type"
+                    x-text="formatType(selectedThought.thought_type)"></span>
+              <span style="font-size:12px; color:var(--text-muted)" x-text="formatDate(selectedThought.created_at)"></span>
+            </div>
+            <div class="thought-summary mb-16" x-show="selectedThought.summary"
+                 x-text="selectedThought.summary" style="font-size:14px; color:var(--accent-sky)"></div>
+
+            <!-- Entities -->
+            <div class="thought-entities mb-16" x-show="selectedThought.entities && selectedThought.entities.length > 0">
+              <template x-for="e in (selectedThought.entities || [])" :key="e.id">
+                <span :class="'thought-entity-tag badge-entity-' + e.entity_type" x-text="e.name"></span>
+              </template>
+            </div>
+
+            <!-- Action items -->
+            <div class="action-items mb-16" x-show="selectedThought.action_items && selectedThought.action_items.length > 0">
+              <template x-for="(ai, idx) in (selectedThought.action_items || [])" :key="idx">
+                <div class="action-item" x-text="ai"></div>
+              </template>
+            </div>
+
+            <div class="full-content" x-text="selectedThought.content"></div>
+
+            <div class="thought-footer mt-16">
+              <span x-show="selectedThought.people && selectedThought.people.length > 0"
+                    x-text="'People: ' + (selectedThought.people || []).join(', ')"></span>
+              <span x-show="selectedThought.topics && selectedThought.topics.length > 0"
+                    x-text="'Topics: ' + (selectedThought.topics || []).join(', ')"></span>
+            </div>
+          </div>
+        </div>
+      </template>
+    </main>
+  </div>
+
+  <script>
+    function browseApp() {
+      return {
+        thoughts: [],
+        stats: null,
+        loading: false,
+        searchQuery: '',
+        filterSource: '',
+        filterType: '',
+        sortBy: 'newest',
+        page: 0,
+        pageSize: 25,
+        hasMore: false,
+        total: 0,
+        selectedThought: null,
+
+        async init() {
+          await Promise.all([this.loadStats(), this.loadThoughts()]);
+        },
+
+        async loadStats() {
+          try {
+            const res = await fetch('/admin/api/browse/stats');
+            this.stats = await res.json();
+          } catch (e) {
+            console.error('Stats error:', e);
+          }
+        },
+
+        async loadThoughts() {
+          this.loading = true;
+          try {
+            const params = new URLSearchParams();
+            params.set('limit', String(this.pageSize));
+            params.set('offset', String(this.page * this.pageSize));
+            if (this.searchQuery) params.set('search', this.searchQuery);
+            if (this.filterSource) params.set('source', this.filterSource);
+            if (this.filterType) params.set('thought_type', this.filterType);
+            params.set('sort', this.sortBy);
+
+            const res = await fetch('/admin/api/browse/thoughts?' + params.toString());
+            const data = await res.json();
+            this.thoughts = data.thoughts || [];
+            this.total = data.total || 0;
+            this.hasMore = (this.page + 1) * this.pageSize < this.total;
+          } catch (e) {
+            console.error('Load error:', e);
+            this.thoughts = [];
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        resetAndLoad() {
+          this.page = 0;
+          this.loadThoughts();
+        },
+
+        prevPage() {
+          if (this.page > 0) {
+            this.page--;
+            this.loadThoughts();
+          }
+        },
+
+        nextPage() {
+          if (this.hasMore) {
+            this.page++;
+            this.loadThoughts();
+          }
+        },
+
+        openDetail(t) {
+          this.selectedThought = t;
+        },
+
+        pageInfo() {
+          const start = this.page * this.pageSize + 1;
+          const end = Math.min(start + this.thoughts.length - 1, this.total);
+          return start + ' - ' + end + ' of ' + this.total;
+        },
+
+        thoughtTitle(t) {
+          if (t.summary) {
+            var s = t.summary;
+            return s.length > 80 ? s.slice(0, 80) + '...' : s;
+          }
+          if (t.source === 'fathom' && t.source_meta) {
+            try {
+              var meta = typeof t.source_meta === 'string' ? JSON.parse(t.source_meta) : t.source_meta;
+              if (meta.title) return meta.title;
+            } catch (e) {}
+          }
+          return t.thought_type ? this.formatType(t.thought_type) : 'Thought';
+        },
+
+        formatType(type) {
+          if (!type) return '';
+          return type.replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+        },
+
+        formatDate(dateStr) {
+          if (!dateStr) return '';
+          var d = new Date(dateStr);
+          var now = new Date();
+          var diff = now - d;
+          if (diff < 86400000) {
+            return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          }
+          if (diff < 604800000) {
+            return d.toLocaleDateString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+          }
+          return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+        },
+
+        truncate(str, len) {
+          if (!str) return '';
+          return str.length > len ? str.slice(0, len) + '...' : str;
+        }
+      };
+    }
+  </script>
+</body>
+</html>

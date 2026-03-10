@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Add Content - TopiaBrain</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>
+    .drop-zone {
+      border: 2px dashed var(--border-glass);
+      border-radius: var(--radius-lg);
+      padding: 32px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: all var(--transition);
+      margin-bottom: 16px;
+      position: relative;
+    }
+    .drop-zone:hover, .drop-zone.dragover {
+      border-color: var(--accent);
+      background: var(--accent-glow);
+    }
+    .drop-zone .drop-icon { font-size: 32px; margin-bottom: 8px; }
+    .drop-zone .drop-text { font-size: 14px; color: var(--text-secondary); }
+    .drop-zone .drop-hint { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+    .drop-zone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+    .file-list { margin-bottom: 16px; }
+    .file-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-md);
+      margin-bottom: 6px;
+      font-size: 13px;
+    }
+    .file-item .file-icon { font-size: 18px; }
+    .file-item .file-name { flex: 1; color: var(--text-primary); }
+    .file-item .file-size { color: var(--text-muted); font-size: 12px; }
+    .file-item .file-status { font-size: 12px; }
+    .file-item .file-remove {
+      background: none; border: none; cursor: pointer;
+      color: var(--text-muted); font-size: 16px; padding: 2px 6px;
+      border-radius: 4px; transition: all var(--transition);
+    }
+    .file-item .file-remove:hover { color: var(--accent-rose); background: var(--accent-rose-glow); }
+    .input-mode-toggle {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .mode-btn {
+      padding: 8px 16px;
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-pill);
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 13px;
+      font-family: var(--font);
+      font-weight: 500;
+      transition: all var(--transition);
+    }
+    .mode-btn:hover { border-color: var(--border-glass-hover); color: var(--text-primary); }
+    .mode-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <a href="index.html" class="sidebar-logo">
+        <span class="logo-icon">T</span>
+        TopiaBrain
+      </a>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Knowledge</div>
+        <a href="browse.html" class="sidebar-link">
+          <span class="link-icon">&#x1F4DA;</span> Browse
+        </a>
+        <a href="ingest.html" class="sidebar-link active">
+          <span class="link-icon">&#x2795;</span> Add Content
+        </a>
+        <a href="/chat" class="sidebar-link">
+          <span class="link-icon">&#x1F4AC;</span> Chat
+        </a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Manage</div>
+        <a href="entities.html" class="sidebar-link">
+          <span class="link-icon">&#x1F465;</span> Entities
+        </a>
+        <a href="approvals.html" class="sidebar-link">
+          <span class="link-icon">&#x2705;</span> Approvals
+        </a>
+        <a href="examples.html" class="sidebar-link">
+          <span class="link-icon">&#x1F4DD;</span> Examples
+        </a>
+      </div>
+      <div class="sidebar-spacer"></div>
+    </aside>
+
+    <main class="main-content" x-data="ingestApp()">
+      <div class="page-header">
+        <h1>Add Content</h1>
+        <p>Add notes, documents, or meeting transcripts to your brain</p>
+      </div>
+
+      <div id="flash"></div>
+
+      <div class="ingest-form">
+        <!-- Type selector cards -->
+        <div class="ingest-type-selector">
+          <button class="ingest-type-btn" :class="{ active: contentType === 'note' }"
+                  @click="contentType = 'note'">
+            <div class="type-icon">&#x1F4DD;</div>
+            <div class="type-label">Note</div>
+            <div class="type-desc">Quick thought or observation</div>
+          </button>
+          <button class="ingest-type-btn" :class="{ active: contentType === 'document' }"
+                  @click="contentType = 'document'">
+            <div class="type-icon">&#x1F4C4;</div>
+            <div class="type-label">Document</div>
+            <div class="type-desc">Long-form content or article</div>
+          </button>
+          <button class="ingest-type-btn" :class="{ active: contentType === 'meeting_transcript' }"
+                  @click="contentType = 'meeting_transcript'">
+            <div class="type-icon">&#x1F399;</div>
+            <div class="type-label">Transcript</div>
+            <div class="type-desc">Meeting or call transcript</div>
+          </button>
+          <button class="ingest-type-btn" :class="{ active: contentType === 'conversation' }"
+                  @click="contentType = 'conversation'">
+            <div class="type-icon">&#x1F4AC;</div>
+            <div class="type-label">Conversation</div>
+            <div class="type-desc">Chat or email thread</div>
+          </button>
+        </div>
+
+        <div class="form-section">
+          <!-- Title (optional) -->
+          <div class="form-row">
+            <label>Title (optional)</label>
+            <input type="text" x-model="title" placeholder="Give this content a title...">
+          </div>
+
+          <!-- Input mode toggle -->
+          <div class="form-row">
+            <label>Content</label>
+            <div style="flex:1">
+              <div class="input-mode-toggle">
+                <button class="mode-btn" :class="{ active: inputMode === 'write' }" @click="inputMode = 'write'">Write / Paste</button>
+                <button class="mode-btn" :class="{ active: inputMode === 'upload' }" @click="inputMode = 'upload'">Upload Files</button>
+              </div>
+
+              <!-- Write/paste mode -->
+              <div x-show="inputMode === 'write'">
+                <textarea x-model="content" class="content-area"
+                          :placeholder="contentPlaceholder()"></textarea>
+              </div>
+
+              <!-- Upload mode -->
+              <div x-show="inputMode === 'upload'">
+                <div class="drop-zone" :class="{ dragover: isDragging }"
+                     @dragover.prevent="isDragging = true"
+                     @dragleave.prevent="isDragging = false"
+                     @drop.prevent="handleDrop($event)">
+                  <input type="file" multiple
+                         accept=".txt,.md,.csv,.json,.log,.html,.xml,.rtf,.doc,.docx,.pdf"
+                         @change="handleFileSelect($event)">
+                  <div class="drop-icon">&#x1F4C1;</div>
+                  <div class="drop-text">Drop files here or click to browse</div>
+                  <div class="drop-hint">.txt, .md, .csv, .json, .log, .html, .xml — text files only</div>
+                </div>
+
+                <!-- File list -->
+                <div class="file-list" x-show="files.length > 0">
+                  <template x-for="(file, idx) in files" :key="idx">
+                    <div class="file-item">
+                      <span class="file-icon">&#x1F4C4;</span>
+                      <span class="file-name" x-text="file.name"></span>
+                      <span class="file-size" x-text="formatFileSize(file.size)"></span>
+                      <span class="file-status" :style="{ color: file.error ? 'var(--accent-rose)' : 'var(--accent-emerald)' }"
+                            x-text="file.error || (file.loaded ? 'Ready' : 'Reading...')"></span>
+                      <button class="file-remove" @click="removeFile(idx)">&times;</button>
+                    </div>
+                  </template>
+                </div>
+
+                <!-- Combined preview -->
+                <div x-show="content && inputMode === 'upload'" style="margin-top:12px">
+                  <div style="font-size:12px; color:var(--text-muted); margin-bottom:6px"
+                       x-text="'Preview (' + content.length + ' characters from ' + files.filter(f => f.loaded).length + ' file(s))'"></div>
+                  <textarea x-model="content" class="content-area" style="min-height:120px" readonly></textarea>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- People (optional) -->
+          <div class="form-row">
+            <label>People</label>
+            <input type="text" x-model="people" placeholder="Comma-separated names (optional)">
+          </div>
+
+          <!-- Topics (optional) -->
+          <div class="form-row">
+            <label>Topics</label>
+            <input type="text" x-model="topics" placeholder="Comma-separated topics (optional)">
+          </div>
+
+          <div class="form-actions">
+            <button class="btn btn-primary" @click="submit()" :disabled="submitting || !content.trim()">
+              <span x-show="!submitting">Save to Brain</span>
+              <span x-show="submitting">Saving...</span>
+            </button>
+            <button class="btn" @click="clear()">Clear</button>
+          </div>
+        </div>
+
+        <!-- Recent submissions -->
+        <div x-show="recentSubmissions.length > 0">
+          <h2>Recently Added</h2>
+          <template x-for="s in recentSubmissions" :key="s.id">
+            <div class="glass-card" style="margin-bottom: 10px">
+              <div class="card-header">
+                <h3 x-text="s.title || 'Untitled'"></h3>
+                <span class="badge badge-type" x-text="s.type"></span>
+                <span class="badge badge-approved">Saved</span>
+              </div>
+              <div class="card-description" x-text="s.preview"></div>
+              <div class="card-meta" x-text="formatDate(s.savedAt)"></div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    function ingestApp() {
+      return {
+        contentType: 'note',
+        inputMode: 'write',
+        title: '',
+        content: '',
+        people: '',
+        topics: '',
+        submitting: false,
+        isDragging: false,
+        files: [],
+        recentSubmissions: [],
+
+        contentPlaceholder() {
+          var placeholders = {
+            note: 'Write your note here...\n\nThis will be processed, embedded, and linked to entities automatically.',
+            document: 'Paste your document content here...\n\nLong documents will be automatically chunked for better retrieval.',
+            meeting_transcript: 'Paste the meeting transcript here...\n\nAction items, people, and topics will be extracted automatically.',
+            conversation: 'Paste the conversation here...\n\nPeople and topics will be extracted automatically.'
+          };
+          return placeholders[this.contentType] || 'Enter content...';
+        },
+
+        handleDrop(event) {
+          this.isDragging = false;
+          var droppedFiles = event.dataTransfer.files;
+          this.processFiles(droppedFiles);
+        },
+
+        handleFileSelect(event) {
+          this.processFiles(event.target.files);
+          event.target.value = '';
+        },
+
+        processFiles(fileList) {
+          for (var i = 0; i < fileList.length; i++) {
+            var file = fileList[i];
+            var entry = {
+              name: file.name,
+              size: file.size,
+              loaded: false,
+              text: '',
+              error: null,
+            };
+
+            // Check file type
+            var ext = file.name.split('.').pop().toLowerCase();
+            var textTypes = ['txt', 'md', 'csv', 'json', 'log', 'html', 'xml', 'rtf', 'tsv', 'yml', 'yaml', 'toml', 'ini', 'cfg', 'conf'];
+            if (!textTypes.includes(ext) && !file.type.startsWith('text/')) {
+              entry.error = 'Unsupported file type';
+              entry.loaded = true;
+              this.files.push(entry);
+              continue;
+            }
+
+            // Check size (max 5MB per file)
+            if (file.size > 5 * 1024 * 1024) {
+              entry.error = 'File too large (max 5MB)';
+              entry.loaded = true;
+              this.files.push(entry);
+              continue;
+            }
+
+            this.files.push(entry);
+            this.readFile(file, this.files.length - 1);
+          }
+        },
+
+        readFile(file, idx) {
+          var self = this;
+          var reader = new FileReader();
+          reader.onload = function(e) {
+            self.files[idx].text = e.target.result;
+            self.files[idx].loaded = true;
+            self.buildContentFromFiles();
+          };
+          reader.onerror = function() {
+            self.files[idx].error = 'Failed to read';
+            self.files[idx].loaded = true;
+          };
+          reader.readAsText(file);
+        },
+
+        buildContentFromFiles() {
+          var parts = [];
+          for (var i = 0; i < this.files.length; i++) {
+            var f = this.files[i];
+            if (f.loaded && f.text && !f.error) {
+              if (this.files.filter(function(x) { return x.loaded && x.text && !x.error; }).length > 1) {
+                parts.push('--- ' + f.name + ' ---\n' + f.text);
+              } else {
+                parts.push(f.text);
+              }
+              // Auto-set title from first file if empty
+              if (!this.title && i === 0) {
+                this.title = f.name.replace(/\.[^.]+$/, '');
+              }
+            }
+          }
+          this.content = parts.join('\n\n');
+        },
+
+        removeFile(idx) {
+          this.files.splice(idx, 1);
+          this.buildContentFromFiles();
+        },
+
+        formatFileSize(bytes) {
+          if (bytes < 1024) return bytes + ' B';
+          if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+          return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        },
+
+        async submit() {
+          if (!this.content.trim()) return;
+          this.submitting = true;
+
+          try {
+            var fullContent = this.content;
+            if (this.title && this.inputMode === 'write') {
+              fullContent = this.title + '\n\n' + fullContent;
+            }
+
+            var body = {
+              content: fullContent,
+              thought_type: this.contentType,
+              source: 'manual',
+            };
+
+            var meta = {};
+            if (this.title) meta.title = this.title;
+            if (this.people.trim()) {
+              meta.people = this.people.split(',').map(function(p) { return p.trim(); }).filter(Boolean);
+            }
+            if (this.topics.trim()) {
+              meta.topics = this.topics.split(',').map(function(t) { return t.trim(); }).filter(Boolean);
+            }
+            if (this.files.length > 0) {
+              meta.filenames = this.files.filter(function(f) { return f.loaded && !f.error; }).map(function(f) { return f.name; });
+            }
+            if (Object.keys(meta).length > 0) {
+              body.source_meta = meta;
+            }
+
+            var res = await fetch('/admin/api/ingest', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+
+            var data = await res.json();
+            if (res.ok) {
+              flash('Content saved successfully! It will be processed shortly.', 'success');
+              this.recentSubmissions.unshift({
+                id: data.id || Date.now(),
+                title: this.title || this.contentType,
+                type: this.contentType,
+                preview: this.content.slice(0, 150) + (this.content.length > 150 ? '...' : ''),
+                savedAt: new Date().toISOString(),
+              });
+              this.clear();
+            } else {
+              flash(data.error || 'Failed to save content.', 'error');
+            }
+          } catch (err) {
+            flash('Network error: ' + err.message, 'error');
+          } finally {
+            this.submitting = false;
+          }
+        },
+
+        clear() {
+          this.title = '';
+          this.content = '';
+          this.people = '';
+          this.topics = '';
+          this.files = [];
+        },
+
+        formatDate(dateStr) {
+          if (!dateStr) return '';
+          var d = new Date(dateStr);
+          return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+      };
+    }
+
+    function flash(message, type) {
+      var el = document.getElementById('flash');
+      el.innerHTML = '<div class="flash flash-' + type + '">' + escapeHtml(message) + '</div>';
+      setTimeout(function() { el.innerHTML = ''; }, 4000);
+    }
+
+    function escapeHtml(str) {
+      var div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+  </script>
+</body>
+</html>

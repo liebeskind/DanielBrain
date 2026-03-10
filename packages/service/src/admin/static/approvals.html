@@ -3,48 +3,76 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Approvals - DanielBrain Admin</title>
+  <title>Approvals - TopiaBrain</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <nav>
-    <a href="index.html" class="logo">DanielBrain</a>
-    <a href="approvals.html" class="active">Approvals</a>
-    <a href="entities.html">Entities</a>
-    <a href="examples.html">Examples</a>
-    <a href="/chat">Chat</a>
-  </nav>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <a href="index.html" class="sidebar-logo">
+        <span class="logo-icon">T</span>
+        TopiaBrain
+      </a>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Knowledge</div>
+        <a href="browse.html" class="sidebar-link">
+          <span class="link-icon">&#x1F4DA;</span> Browse
+        </a>
+        <a href="ingest.html" class="sidebar-link">
+          <span class="link-icon">&#x2795;</span> Add Content
+        </a>
+        <a href="/chat" class="sidebar-link">
+          <span class="link-icon">&#x1F4AC;</span> Chat
+        </a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Manage</div>
+        <a href="entities.html" class="sidebar-link">
+          <span class="link-icon">&#x1F465;</span> Entities
+        </a>
+        <a href="approvals.html" class="sidebar-link active">
+          <span class="link-icon">&#x2705;</span> Approvals
+        </a>
+        <a href="examples.html" class="sidebar-link">
+          <span class="link-icon">&#x1F4DD;</span> Examples
+        </a>
+      </div>
+      <div class="sidebar-spacer"></div>
+    </aside>
 
-  <div class="container">
-    <h1>Approvals Queue</h1>
+    <main class="main-content">
+      <div class="page-header">
+        <h1>Approvals Queue</h1>
+        <p>Review and approve pending proposals</p>
+      </div>
 
-    <div id="flash"></div>
+      <div id="flash"></div>
 
-    <div class="tabs" id="status-tabs">
-      <button class="tab active" data-status="">All <span class="count" id="count-all"></span></button>
-      <button class="tab" data-status="pending">Pending <span class="count" id="count-pending"></span></button>
-      <button class="tab" data-status="approved">Approved <span class="count" id="count-approved"></span></button>
-      <button class="tab" data-status="applied">Applied <span class="count" id="count-applied"></span></button>
-      <button class="tab" data-status="rejected">Rejected <span class="count" id="count-rejected"></span></button>
-      <button class="tab" data-status="needs_changes">Needs Changes <span class="count" id="count-needs_changes"></span></button>
-      <button class="tab" data-status="failed">Failed <span class="count" id="count-failed"></span></button>
-    </div>
+      <div class="tabs" id="status-tabs">
+        <button class="tab active" data-status="">All <span class="count" id="count-all"></span></button>
+        <button class="tab" data-status="pending">Pending <span class="count" id="count-pending"></span></button>
+        <button class="tab" data-status="approved">Approved <span class="count" id="count-approved"></span></button>
+        <button class="tab" data-status="applied">Applied <span class="count" id="count-applied"></span></button>
+        <button class="tab" data-status="rejected">Rejected <span class="count" id="count-rejected"></span></button>
+        <button class="tab" data-status="needs_changes">Needs Changes <span class="count" id="count-needs_changes"></span></button>
+        <button class="tab" data-status="failed">Failed <span class="count" id="count-failed"></span></button>
+      </div>
 
-    <div id="bulk-actions" style="margin-bottom:16px; display:none">
-      <button class="btn btn-changes" onclick="bulkReEnrich()" id="bulk-re-enrich-btn">Re-run All Rejected Enrichments</button>
-      <span id="bulk-re-enrich-info" style="font-size:12px; color:#888; margin-left:8px"></span>
-    </div>
+      <div id="bulk-actions" style="margin-bottom:16px; display:none">
+        <button class="btn btn-changes" onclick="bulkReEnrich()" id="bulk-re-enrich-btn">Re-run All Rejected Enrichments</button>
+        <span id="bulk-re-enrich-info" style="font-size:12px; color:var(--text-muted); margin-left:8px"></span>
+      </div>
 
-    <div id="proposals-list">
-      <div class="loading">Loading proposals...</div>
-    </div>
+      <div id="proposals-list">
+        <div class="loading">Loading proposals</div>
+      </div>
+    </main>
   </div>
 
   <script>
     let currentStatus = '';
     let proposals = [];
 
-    // Flash message
     function flash(message, type) {
       const el = document.getElementById('flash');
       el.innerHTML = '<div class="flash flash-' + type + '">' + escapeHtml(message) + '</div>';
@@ -57,39 +85,28 @@
       return div.innerHTML;
     }
 
-    // Simple markdown to HTML (bold, italic, links, lists, line breaks)
     function renderMarkdown(str) {
       if (!str) return '';
       let html = escapeHtml(str);
-      // Bold
       html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-      // Italic
       html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-      // Inline code
       html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-      // Links
       html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-      // Headings (### ## #)
       html = html.replace(/^### (.+)$/gm, '<strong style="font-size:14px">$1</strong>');
       html = html.replace(/^## (.+)$/gm, '<strong style="font-size:15px">$1</strong>');
       html = html.replace(/^# (.+)$/gm, '<strong style="font-size:16px">$1</strong>');
-      // Unordered list items
       html = html.replace(/^[-*] (.+)$/gm, '<li>$1</li>');
-      // Wrap consecutive <li> in <ul>
       html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul style="margin:4px 0 4px 16px;padding:0">$1</ul>');
-      // Line breaks
       html = html.replace(/\n/g, '<br>');
       return html;
     }
 
-    // Format date
     function formatDate(dateStr) {
       if (!dateStr) return '';
       const d = new Date(dateStr);
       return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
 
-    // Render proposed data in a human-friendly way
     function renderProposedData(data) {
       let html = '';
       for (const [key, value] of Object.entries(data)) {
@@ -105,7 +122,6 @@
       return html;
     }
 
-    // Render entity context section
     function renderEntityContext(ctx) {
       if (!ctx) return '';
       let html = '<div class="entity-context">';
@@ -130,7 +146,6 @@
       return html;
     }
 
-    // Render LinkedIn details from proposed_data
     function renderLinkedInDetails(data) {
       if (!data.linkedin_title && !data.linkedin_snippet) return '';
       let html = '<div class="linkedin-details">';
@@ -144,7 +159,6 @@
       return html;
     }
 
-    // Render a single proposal card
     function renderCard(p) {
       const autoTag = p.auto_applied ? '<span class="badge badge-auto">Auto-applied</span>' : '';
       const statusBadge = '<span class="badge badge-' + p.status + '">' + escapeHtml(p.status) + '</span>';
@@ -160,7 +174,6 @@
           '<button class="btn" id="submit-' + p.id + '" style="display:none" onclick="submitWithNotes(\'' + p.id + '\')">Submit</button>' +
           '</div>';
       } else if (p.status === 'needs_changes') {
-        // Try to extract a LinkedIn URL from reviewer notes first, fall back to proposed_data
         var urlFromNotes = (p.reviewer_notes || '').match(/https?:\/\/(?:www\.)?linkedin\.com\/in\/[^\s,)]+/);
         var currentUrl = urlFromNotes ? urlFromNotes[0] : ((p.proposed_data && p.proposed_data.linkedin_url) || '');
         actions = '<div class="card-actions-correction">' +
@@ -171,18 +184,35 @@
           '</div>';
       }
 
-      // Re-enrich button for rejected/applied/failed enrichment proposals
-      if (p.proposal_type === 'entity_enrichment' && (p.status === 'rejected' || p.status === 'applied' || p.status === 'failed')) {
-        actions += '<div class="card-actions" style="margin-top:8px">' +
+      // Rejected: delete + re-enrich
+      if (p.status === 'rejected') {
+        actions += '<div class="card-actions mt-8">';
+        if (p.proposal_type === 'entity_enrichment') {
+          actions += '<button class="btn btn-changes" onclick="reEnrich(\'' + p.id + '\')">Re-enrich</button>';
+        }
+        actions += '<button class="btn btn-reject btn-sm" onclick="deleteProposal(\'' + p.id + '\')">Delete</button>';
+        actions += '</div>';
+      }
+
+      // Applied/failed enrichments: re-enrich
+      if (p.proposal_type === 'entity_enrichment' && (p.status === 'applied' || p.status === 'failed')) {
+        actions += '<div class="card-actions mt-8">' +
           '<button class="btn btn-changes" onclick="reEnrich(\'' + p.id + '\')">Re-enrich</button>' +
           '</div>';
       }
 
-      if (p.reviewer_notes) {
-        actions += '<div class="card-meta" style="margin-top:8px"><strong>Notes:</strong> ' + escapeHtml(p.reviewer_notes) + '</div>';
+      // Editable notes for rejected and needs_changes
+      if (p.status === 'rejected' || p.status === 'needs_changes') {
+        actions += '<div class="card-actions mt-8" id="notes-section-' + p.id + '">' +
+          '<strong style="font-size:12px;color:var(--text-secondary)">Notes:</strong>' +
+          '<input type="text" class="notes-input visible" id="edit-notes-' + p.id + '" value="' + escapeHtml(p.reviewer_notes || '') + '" placeholder="Add notes..." style="flex:1">' +
+          '<button class="btn btn-sm" onclick="saveNotes(\'' + p.id + '\')">Save</button>' +
+          '</div>';
+      } else if (p.reviewer_notes) {
+        actions += '<div class="card-meta mt-8"><strong>Notes:</strong> ' + escapeHtml(p.reviewer_notes) + '</div>';
       }
 
-      return '<div class="card" id="card-' + p.id + '">' +
+      return '<div class="glass-card" id="card-' + p.id + '">' +
         '<div class="card-header">' +
           '<h3>' + escapeHtml(p.title) + '</h3>' +
           typeBadge + statusBadge + autoTag +
@@ -198,7 +228,6 @@
       '</div>';
     }
 
-    // Track pending action for notes flow
     let pendingAction = {};
 
     function showNotes(id, action) {
@@ -232,13 +261,7 @@
         var data = await res.json();
         if (res.ok) {
           flash('Proposal approved with corrected URL.', 'success');
-          var card = document.getElementById('card-' + id);
-          if (card) {
-            card.style.opacity = '0';
-            card.style.transform = 'translateX(20px)';
-            card.style.transition = 'all 0.3s ease';
-            setTimeout(function() { card.remove(); }, 300);
-          }
+          animateRemove(id);
           loadCounts();
         } else {
           flash(data.error || 'Action failed.', 'error');
@@ -248,7 +271,55 @@
       }
     }
 
-    // API calls
+    async function saveNotes(id) {
+      var input = document.getElementById('edit-notes-' + id);
+      var notes = input ? input.value.trim() : '';
+      try {
+        var res = await fetch('/api/proposals/' + id + '/notes', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reviewer_notes: notes || null }),
+        });
+        var data = await res.json();
+        if (res.ok) {
+          flash('Notes saved.', 'success');
+        } else {
+          flash(data.error || 'Failed to save notes.', 'error');
+        }
+      } catch (err) {
+        flash('Network error: ' + err.message, 'error');
+      }
+    }
+
+    async function deleteProposal(id) {
+      if (!confirm('Permanently delete this rejected proposal?')) return;
+      try {
+        var res = await fetch('/api/proposals/' + id, {
+          method: 'DELETE',
+        });
+        var data = await res.json();
+        if (res.ok) {
+          flash('Proposal deleted.', 'success');
+          animateRemove(id);
+          loadCounts();
+        } else {
+          flash(data.error || 'Delete failed.', 'error');
+        }
+      } catch (err) {
+        flash('Network error: ' + err.message, 'error');
+      }
+    }
+
+    function animateRemove(id) {
+      var card = document.getElementById('card-' + id);
+      if (card) {
+        card.style.opacity = '0';
+        card.style.transform = 'translateX(20px)';
+        card.style.transition = 'all 0.3s ease';
+        setTimeout(function() { card.remove(); }, 300);
+      }
+    }
+
     async function loadProposals() {
       const params = new URLSearchParams();
       if (currentStatus) params.set('status', currentStatus);
@@ -277,7 +348,6 @@
         const data = await res.json();
         document.getElementById('count-all').textContent = data.total || '';
 
-        // Load counts per status
         for (const status of ['pending', 'approved', 'applied', 'rejected', 'needs_changes', 'failed']) {
           const sRes = await fetch('/api/proposals?status=' + status + '&limit=0');
           const sData = await sRes.json();
@@ -285,9 +355,7 @@
           if (el) el.textContent = sData.total || '';
         }
         updateBulkActions();
-      } catch (err) {
-        // Ignore count errors
-      }
+      } catch (err) {}
     }
 
     async function reviewProposal(id, action, notes) {
@@ -303,14 +371,7 @@
 
         if (res.ok) {
           flash('Proposal ' + (data.status || action) + ' successfully.', 'success');
-          // Remove card with animation
-          const card = document.getElementById('card-' + id);
-          if (card) {
-            card.style.opacity = '0';
-            card.style.transform = 'translateX(20px)';
-            card.style.transition = 'all 0.3s ease';
-            setTimeout(() => card.remove(), 300);
-          }
+          animateRemove(id);
           loadCounts();
         } else {
           flash(data.error || 'Action failed.', 'error');
@@ -330,12 +391,7 @@
         var data = await res.json();
         if (res.ok) {
           flash(data.message || 'Reset for re-enrichment.', 'success');
-          var card = document.getElementById('card-' + id);
-          if (card) {
-            card.style.opacity = '0';
-            card.style.transition = 'opacity 0.3s ease';
-            setTimeout(function() { card.remove(); }, 300);
-          }
+          animateRemove(id);
           loadCounts();
         } else {
           flash(data.error || 'Re-enrich failed.', 'error');
@@ -347,7 +403,7 @@
 
     async function bulkReEnrich() {
       var count = document.getElementById('count-rejected').textContent;
-      if (!confirm('Reset all ' + (count || '') + ' rejected enrichment proposals and re-run with corrections? This will consume SerpAPI quota over the next few poll cycles.')) return;
+      if (!confirm('Reset all ' + (count || '') + ' rejected enrichment proposals and re-run with corrections?')) return;
 
       var btn = document.getElementById('bulk-re-enrich-btn');
       btn.disabled = true;
@@ -386,7 +442,6 @@
       }
     }
 
-    // Tab switching
     document.getElementById('status-tabs').addEventListener('click', (e) => {
       const tab = e.target.closest('.tab');
       if (!tab) return;
@@ -397,7 +452,6 @@
       loadProposals();
     });
 
-    // Initial load
     loadProposals();
     loadCounts();
   </script>

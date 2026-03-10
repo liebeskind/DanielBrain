@@ -5,12 +5,18 @@ interface ChatMessage {
   content: string;
 }
 
+export interface StreamResult {
+  fullResponse: string;
+}
+
 export async function streamChat(
   messages: ChatMessage[],
   model: string,
   ollamaBaseUrl: string,
   res: Response,
-): Promise<void> {
+): Promise<StreamResult> {
+  let fullResponse = '';
+
   const response = await fetch(`${ollamaBaseUrl}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -21,13 +27,13 @@ export async function streamChat(
     const errorText = await response.text();
     res.write(`data: ${JSON.stringify({ error: `Ollama error: ${response.status} ${errorText}` })}\n\n`);
     res.end();
-    return;
+    return { fullResponse };
   }
 
   if (!response.body) {
     res.write(`data: ${JSON.stringify({ error: 'No response body from Ollama' })}\n\n`);
     res.end();
-    return;
+    return { fullResponse };
   }
 
   const reader = response.body.getReader();
@@ -50,6 +56,7 @@ export async function streamChat(
         try {
           const chunk = JSON.parse(line);
           if (chunk.message?.content) {
+            fullResponse += chunk.message.content;
             res.write(`data: ${JSON.stringify({ token: chunk.message.content })}\n\n`);
           }
           if (chunk.done) {
@@ -66,6 +73,7 @@ export async function streamChat(
       try {
         const chunk = JSON.parse(buffer);
         if (chunk.message?.content) {
+          fullResponse += chunk.message.content;
           res.write(`data: ${JSON.stringify({ token: chunk.message.content })}\n\n`);
         }
         if (chunk.done) {
@@ -80,4 +88,5 @@ export async function streamChat(
   }
 
   res.end();
+  return { fullResponse };
 }

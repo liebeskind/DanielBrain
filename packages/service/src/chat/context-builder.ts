@@ -1,6 +1,13 @@
 import type pg from 'pg';
 import { handleSemanticSearch } from '../mcp/tools/semantic-search.js';
-import { CHAT_CONTEXT_SEARCH_LIMIT, CHAT_CONTEXT_SEARCH_THRESHOLD } from '@danielbrain/shared';
+import {
+  CHAT_CONTEXT_SEARCH_LIMIT,
+  CHAT_CONTEXT_SEARCH_THRESHOLD,
+  CHAT_CONTEXT_SNIPPET_LENGTH,
+  CHAT_CONTEXT_SHORT_SUMMARY_THRESHOLD,
+  CHAT_CONTEXT_CONTENT_EXCERPT_LENGTH,
+  CHAT_CONTEXT_ENTITY_RELATIONSHIP_LIMIT,
+} from '@danielbrain/shared';
 
 interface ContextConfig {
   ollamaBaseUrl: string;
@@ -16,10 +23,43 @@ export interface ContextResult {
     similarity: number;
   }>;
   entities: Array<{
+    id: string;
     name: string;
     entity_type: string;
     profile_summary: string | null;
   }>;
+}
+
+interface SearchResult {
+  id: string;
+  content: string;
+  summary: string | null;
+  source: string;
+  similarity: number;
+  created_at: string;
+  thought_type: string | null;
+  people: string[];
+  topics: string[];
+  action_items: string[];
+  sentiment: string;
+  parent_id: string | null;
+  parent_context?: {
+    summary?: string;
+    people?: string[];
+    topics?: string[];
+  };
+}
+
+export function deduplicateResults(results: SearchResult[]): SearchResult[] {
+  const groups = new Map<string, SearchResult>();
+  for (const r of results) {
+    const key = r.parent_id || r.id;
+    const existing = groups.get(key);
+    if (!existing || r.similarity > existing.similarity) {
+      groups.set(key, r);
+    }
+  }
+  return Array.from(groups.values());
 }
 
 export async function buildContext(
@@ -37,26 +77,72 @@ export async function buildContext(
     findMatchingEntities(userMessage, pool),
   ]);
 
-  const sources = searchResults.map((r) => ({
+  // Deduplicate chunks from the same parent thought
+  const dedupedResults = deduplicateResults(searchResults as SearchResult[]);
+
+  const sources = dedupedResults.map((r) => ({
     id: r.id,
     summary: r.summary,
     source: r.source,
     similarity: r.similarity,
   }));
 
-  const entities = entityResults;
+  // Fetch entity relationships if we found entities
+  const entityIds = entityResults.map((e) => e.id);
+  const relationships = entityIds.length > 0
+    ? await fetchEntityRelationships(entityIds, pool)
+    : new Map<string, Array<{ name: string; entity_type: string; weight: number }>>();
 
   // Build context text block
   const parts: string[] = [];
 
-  if (searchResults.length > 0) {
+  if (dedupedResults.length > 0) {
     parts.push('RELEVANT THOUGHTS:');
-    for (const r of searchResults) {
+    for (const r of dedupedResults) {
       const date = r.created_at ? new Date(r.created_at).toLocaleDateString() : 'unknown date';
       const source = r.source || 'unknown';
-      const summary = r.parent_context?.summary || r.summary || '';
-      const snippet = r.content.length > 300 ? r.content.slice(0, 300) + '...' : r.content;
-      parts.push(`- [${date}, ${source}] ${summary ? summary + ' — ' : ''}${snippet}`);
+      const thoughtType = r.thought_type || null;
+
+      // Build bracket label: [date, source, thought_type]
+      const bracketParts = [date, source];
+      if (thoughtType) bracketParts.push(thoughtType);
+      const bracket = bracketParts.join(', ');
+
+      // Prefer summary over raw content (shorter, more focused)
+      const summary = r.parent_context?.summary || r.summary;
+      let snippet: string;
+      if (summary) {
+        snippet = summary;
+        // Short summary: append content excerpt for detail
+        if (summary.length < CHAT_CONTEXT_SHORT_SUMMARY_THRESHOLD && r.content && r.content !== summary) {
+          const excerpt = r.content.length > CHAT_CONTEXT_CONTENT_EXCERPT_LENGTH
+            ? r.content.slice(0, CHAT_CONTEXT_CONTENT_EXCERPT_LENGTH) + '...'
+            : r.content;
+          snippet += `\n  DETAIL: ${excerpt}`;
+        }
+      } else {
+        snippet = r.content.length > CHAT_CONTEXT_SNIPPET_LENGTH
+          ? r.content.slice(0, CHAT_CONTEXT_SNIPPET_LENGTH) + '...'
+          : r.content;
+      }
+
+      // Metadata line: people, topics
+      const people = r.parent_context?.people || r.people || [];
+      const topics = r.parent_context?.topics || r.topics || [];
+      const meta: string[] = [];
+      if (people.length > 0) meta.push(`people: ${people.join(', ')}`);
+      if (topics.length > 0) meta.push(`topics: ${topics.join(', ')}`);
+      const metaStr = meta.length > 0 ? ` (${meta.join('; ')})` : '';
+
+      parts.push(`- [${bracket}]${metaStr} ${snippet}`);
+
+      // Surface action items (high value for "what should I do" queries)
+      const actionItems = r.action_items || [];
+      if (actionItems.length > 0) {
+        for (const ai of actionItems) {
+          parts.push(`  ACTION: ${ai}`);
+        }
+      }
     }
   }
 
@@ -65,21 +151,30 @@ export async function buildContext(
     parts.push('KNOWN ENTITIES:');
     for (const e of entityResults) {
       const profile = e.profile_summary ? ` — ${e.profile_summary}` : '';
-      parts.push(`- ${e.name} (${e.entity_type})${profile}`);
+      let line = `- ${e.name} (${e.entity_type})${profile}`;
+
+      // Add relationship connections
+      const rels = relationships.get(e.id);
+      if (rels && rels.length > 0) {
+        const connParts = rels.map((r) => `${r.name} (${r.entity_type}, ${r.weight}x)`);
+        line += `\n  Connected: ${connParts.join(', ')}`;
+      }
+
+      parts.push(line);
     }
   }
 
   return {
     contextText: parts.join('\n'),
     sources,
-    entities,
+    entities: entityResults,
   };
 }
 
 async function findMatchingEntities(
   message: string,
   pool: pg.Pool,
-): Promise<Array<{ name: string; entity_type: string; profile_summary: string | null }>> {
+): Promise<Array<{ id: string; name: string; entity_type: string; profile_summary: string | null }>> {
   // Extract meaningful words (3+ chars) and search against entity names
   const words = message
     .toLowerCase()
@@ -91,7 +186,7 @@ async function findMatchingEntities(
 
   // Check if any words match entity canonical_name or appear in aliases
   const { rows } = await pool.query(
-    `SELECT DISTINCT name, entity_type, profile_summary
+    `SELECT DISTINCT id, name, entity_type, profile_summary
      FROM entities
      WHERE canonical_name = ANY($1)
         OR canonical_name LIKE ANY(SELECT w || ' %' FROM unnest($1::text[]) w)
@@ -102,4 +197,31 @@ async function findMatchingEntities(
   return rows;
 }
 
-export { findMatchingEntities };
+async function fetchEntityRelationships(
+  entityIds: string[],
+  pool: pg.Pool,
+): Promise<Map<string, Array<{ name: string; entity_type: string; weight: number }>>> {
+  const { rows } = await pool.query(
+    `SELECT
+       CASE WHEN er.source_id = ANY($1) THEN er.source_id ELSE er.target_id END as entity_id,
+       e.name, e.entity_type, er.weight
+     FROM entity_relationships er
+     JOIN entities e ON e.id = CASE WHEN er.source_id = ANY($1) THEN er.target_id ELSE er.source_id END
+     WHERE (er.source_id = ANY($1) OR er.target_id = ANY($1))
+       AND er.invalid_at IS NULL
+     ORDER BY er.weight DESC`,
+    [entityIds],
+  );
+
+  const result = new Map<string, Array<{ name: string; entity_type: string; weight: number }>>();
+  for (const row of rows) {
+    const list = result.get(row.entity_id) || [];
+    if (list.length < CHAT_CONTEXT_ENTITY_RELATIONSHIP_LIMIT) {
+      list.push({ name: row.name, entity_type: row.entity_type, weight: row.weight });
+      result.set(row.entity_id, list);
+    }
+  }
+  return result;
+}
+
+export { findMatchingEntities, fetchEntityRelationships };

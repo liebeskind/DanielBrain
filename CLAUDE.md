@@ -48,6 +48,7 @@ packages/service/        # MCP server, processing pipeline, Slack + Telegram int
   src/fathom/            # Webhook handler + svix signature verification + transcript fetcher
   src/proposals/          # Approvals queue: applier, reverter, helpers, REST routes
   src/enrichers/          # Background enrichment pollers (LinkedIn via Google CSE)
+  src/chat/               # Chat interface: routes, context builder, ollama streaming, conversation/project CRUD
   src/admin/              # Admin dashboard routes + static HTML/CSS/JS
   src/auth.ts            # API key verification (timing-safe)
   src/config.ts          # Zod-validated config from env vars
@@ -69,6 +70,9 @@ migrations/              # 15 SQL migration files
   014 create_proposals   # Proposals table for approvals queue
   015 add_queue_source_id # Add source_id to queue for dedup (Fathom etc.)
   ...
+  021 add_tsvector        # tsvector column, trigger, GIN index, backfill
+  022 create_hybrid_search # hybrid_search() RRF function replacing match_thoughts()
+  023 create_conversations  # conversations, chat_messages, projects tables
   020 add_relationship_columns # weight, description, valid_at/invalid_at, source_thought_ids
 scripts/migrate.ts       # Migration runner
 docker/                  # docker-compose.yml (prod) + docker-compose.test.yml (test)
@@ -205,6 +209,13 @@ General-purpose, confidence-gated proposal system. Any operation where confidenc
 - **Contradiction detection → proposals queue**: uncertain contradictions get human review (HITL moat)
 - **Entity merge cascading**: `applyEntityMerge` updates both `thought_entities` and `entity_relationships`
 - **Dual-model architecture**: 8B for extraction/chat, 70B for relationship description/contradiction (opt-in via RELATIONSHIP_MODEL)
+- **Hybrid retrieval (RRF)**: `hybrid_search()` SQL function combines vector cosine similarity + BM25 full-text search via Reciprocal Rank Fusion (k=60). 3x oversampling from each source, FULL OUTER JOIN for dedup. Graceful degradation: empty/stop-word tsquery → vector-only
+- **tsvector trigger**: `search_vector` column auto-computed on INSERT/UPDATE via trigger — no application code changes needed
+- **Chat context sizing**: 15 results (up from 5), summary-first (use thought summary when available, content truncated at 1000 chars as fallback), action items surfaced, people/topics metadata included. llama4:scout has 10M token context
+- **Chat persistence**: conversations + chat_messages tables. Messages persisted server-side, client loads from API. Auto-title on first exchange (truncation, no LLM call). Soft delete via `is_deleted` flag.
+- **Chat projects**: lightweight folder system — `projects` table with FK from conversations. Filter sidebar by project.
+- **Anti-hallucination system prompt**: explicit grounding rules ("ONLY state facts from context", "do not fabricate", "flag inferences"). Replaced permissive v1 prompt.
+- **streamChat returns fullResponse**: accumulated text returned so caller can persist assistant messages with context_data JSONB
 
 ## Environment Variables
 
@@ -230,7 +241,8 @@ See `.env.example` for all required/optional vars. Key ones:
 - [x] Phase 4e: Fathom Meeting Transcript Integration
 - [x] Phase 4f: Chat v1 + Correction Examples
 - [x] Phase 5: Entity Relationships + Temporal Edges (co-occurrence edges, 70B descriptions, contradiction detection, proposals)
-- [ ] Phase 6: Hybrid Retrieval (BM25 + tsvector + RRF, query routing, intent detection)
+- [x] Phase 6: Hybrid Retrieval (BM25 + tsvector + RRF, upgraded chat context)
+- [x] Phase 6b: Chat v2 — conversation persistence, projects, anti-hallucination
 - [ ] Phase 7: Community Detection + Global Search (Louvain via graphology, community summaries, simplified global search)
 - [ ] Phase 8: Agent Interface Enhancement (new MCP tools, agent personas, research mode, dual-level keywords)
 - [ ] Phase 9: Permissions + Multi-User (visibility scoping, access_keys, selective sharing)

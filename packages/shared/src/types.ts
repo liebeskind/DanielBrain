@@ -173,6 +173,32 @@ export interface EntityRelationship {
   updated_at: Date;
 }
 
+export interface Conversation {
+  id: string;
+  title: string | null;
+  project_id: string | null;
+  is_deleted: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface ChatMessage {
+  id: string;
+  conversation_id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  context_data: { sources: any[]; entities: any[] } | null;
+  created_at: Date;
+}
+
+export interface ChatProject {
+  id: string;
+  name: string;
+  is_deleted: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+
 export interface SearchResult {
   id: string;
   content: string;

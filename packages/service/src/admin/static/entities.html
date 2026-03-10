@@ -3,49 +3,78 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Entities - DanielBrain Admin</title>
+  <title>Entities - TopiaBrain</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <nav>
-    <a href="index.html" class="logo">DanielBrain</a>
-    <a href="approvals.html">Approvals</a>
-    <a href="entities.html" class="active">Entities</a>
-    <a href="examples.html">Examples</a>
-    <a href="/chat">Chat</a>
-  </nav>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <a href="index.html" class="sidebar-logo">
+        <span class="logo-icon">T</span>
+        TopiaBrain
+      </a>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Knowledge</div>
+        <a href="browse.html" class="sidebar-link">
+          <span class="link-icon">&#x1F4DA;</span> Browse
+        </a>
+        <a href="ingest.html" class="sidebar-link">
+          <span class="link-icon">&#x2795;</span> Add Content
+        </a>
+        <a href="/chat" class="sidebar-link">
+          <span class="link-icon">&#x1F4AC;</span> Chat
+        </a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Manage</div>
+        <a href="entities.html" class="sidebar-link active">
+          <span class="link-icon">&#x1F465;</span> Entities
+        </a>
+        <a href="approvals.html" class="sidebar-link">
+          <span class="link-icon">&#x2705;</span> Approvals
+        </a>
+        <a href="examples.html" class="sidebar-link">
+          <span class="link-icon">&#x1F4DD;</span> Examples
+        </a>
+      </div>
+      <div class="sidebar-spacer"></div>
+    </aside>
 
-  <div class="container">
-    <h1>Entity Overview</h1>
+    <main class="main-content">
+      <div class="page-header">
+        <h1>Entity Overview</h1>
+        <p>People, companies, topics, and other entities in your knowledge graph</p>
+      </div>
 
-    <div class="stats-grid" id="type-counts">
-      <div class="loading">Loading stats...</div>
-    </div>
+      <div class="stats-grid" id="type-counts">
+        <div class="loading">Loading stats</div>
+      </div>
 
-    <h2 style="margin-bottom:12px">Top Entities by Mentions</h2>
-    <table class="entity-table" id="top-table">
-      <thead>
-        <tr><th>Name</th><th>Type</th><th>Mentions</th></tr>
-      </thead>
-      <tbody>
-        <tr><td colspan="3" class="loading">Loading...</td></tr>
-      </tbody>
-    </table>
+      <h2>Top Entities by Mentions</h2>
+      <table class="entity-table" id="top-table">
+        <thead>
+          <tr><th>Name</th><th>Type</th><th>Mentions</th></tr>
+        </thead>
+        <tbody>
+          <tr><td colspan="3" class="loading">Loading</td></tr>
+        </tbody>
+      </table>
 
-    <h2 style="margin-bottom:12px">Recently Active</h2>
-    <table class="entity-table" id="recent-table">
-      <thead>
-        <tr><th>Name</th><th>Type</th><th>Mentions</th><th>Last Seen</th></tr>
-      </thead>
-      <tbody>
-        <tr><td colspan="4" class="loading">Loading...</td></tr>
-      </tbody>
-    </table>
+      <h2>Recently Active</h2>
+      <table class="entity-table" id="recent-table">
+        <thead>
+          <tr><th>Name</th><th>Type</th><th>Mentions</th><th>Last Seen</th></tr>
+        </thead>
+        <tbody>
+          <tr><td colspan="4" class="loading">Loading</td></tr>
+        </tbody>
+      </table>
 
-    <h2 style="margin-bottom:12px">Proposal Status</h2>
-    <div class="stats-grid" id="proposal-counts">
-      <div class="loading">Loading...</div>
-    </div>
+      <h2>Proposal Status</h2>
+      <div class="stats-grid" id="proposal-counts">
+        <div class="loading">Loading</div>
+      </div>
+    </main>
   </div>
 
   <script>
@@ -66,7 +95,6 @@
         const res = await fetch('/admin/api/entities/stats');
         const data = await res.json();
 
-        // Type counts
         const countsEl = document.getElementById('type-counts');
         if (data.type_counts.length === 0) {
           countsEl.innerHTML = '<div class="empty-state">No entities yet.</div>';
@@ -77,32 +105,29 @@
           ).join('');
         }
 
-        // Top entities
         const topBody = document.querySelector('#top-table tbody');
         if (data.top_entities.length === 0) {
           topBody.innerHTML = '<tr><td colspan="3" class="empty-state">No entities yet.</td></tr>';
         } else {
           topBody.innerHTML = data.top_entities.map(e =>
             '<tr><td>' + escapeHtml(e.name) + '</td>' +
-            '<td><span class="badge badge-type">' + escapeHtml(e.entity_type) + '</span></td>' +
+            '<td><span class="badge badge-entity-' + e.entity_type + '">' + escapeHtml(e.entity_type) + '</span></td>' +
             '<td>' + e.mention_count + '</td></tr>'
           ).join('');
         }
 
-        // Recent entities
         const recentBody = document.querySelector('#recent-table tbody');
         if (data.recent_entities.length === 0) {
           recentBody.innerHTML = '<tr><td colspan="4" class="empty-state">No entities yet.</td></tr>';
         } else {
           recentBody.innerHTML = data.recent_entities.map(e =>
             '<tr><td>' + escapeHtml(e.name) + '</td>' +
-            '<td><span class="badge badge-type">' + escapeHtml(e.entity_type) + '</span></td>' +
+            '<td><span class="badge badge-entity-' + e.entity_type + '">' + escapeHtml(e.entity_type) + '</span></td>' +
             '<td>' + e.mention_count + '</td>' +
             '<td>' + formatDate(e.last_seen_at) + '</td></tr>'
           ).join('');
         }
 
-        // Proposal counts
         const proposalEl = document.getElementById('proposal-counts');
         if (data.proposal_counts.length === 0) {
           proposalEl.innerHTML = '<div class="empty-state">No proposals yet.</div>';

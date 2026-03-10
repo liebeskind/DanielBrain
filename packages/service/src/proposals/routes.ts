@@ -460,5 +460,60 @@ export function createProposalRoutes(pool: pg.Pool): Router {
     }
   });
 
+  // Update notes on any proposal
+  router.patch('/:id/notes', async (req, res) => {
+    try {
+      const notes = req.body?.reviewer_notes ?? null;
+
+      const { rows } = await pool.query(
+        `UPDATE proposals
+         SET reviewer_notes = $2, updated_at = NOW()
+         WHERE id = $1
+         RETURNING id, status, reviewer_notes`,
+        [req.params.id, notes]
+      );
+
+      if (rows.length === 0) {
+        res.status(404).json({ error: 'Proposal not found' });
+        return;
+      }
+
+      res.json({ ok: true, proposal_id: rows[0].id, reviewer_notes: rows[0].reviewer_notes });
+    } catch (err) {
+      console.error('Update notes error:', err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Delete a rejected proposal
+  router.delete('/:id', async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `DELETE FROM proposals
+         WHERE id = $1 AND status = 'rejected'
+         RETURNING id`,
+        [req.params.id]
+      );
+
+      if (rows.length === 0) {
+        const { rows: existing } = await pool.query(
+          `SELECT status FROM proposals WHERE id = $1`,
+          [req.params.id]
+        );
+        if (existing.length === 0) {
+          res.status(404).json({ error: 'Proposal not found' });
+        } else {
+          res.status(409).json({ error: `Can only delete rejected proposals (current: ${existing[0].status})` });
+        }
+        return;
+      }
+
+      res.json({ ok: true, deleted: rows[0].id });
+    } catch (err) {
+      console.error('Delete proposal error:', err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   return router;
 }

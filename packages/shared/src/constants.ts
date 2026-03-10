@@ -28,10 +28,21 @@ export const LINKEDIN_ENRICHMENT_INTERVAL_MS = 60_000;
 export const LINKEDIN_ENRICHMENT_BATCH_SIZE = 5;
 export const SERPAPI_DAILY_LIMIT = 33; // ~1000/month on Starter plan
 
+// Hybrid retrieval (RRF)
+export const RRF_K = 60;
+export const HYBRID_VECTOR_WEIGHT = 1.0;
+export const HYBRID_BM25_WEIGHT = 1.0;
+
 // Chat RAG settings
-export const CHAT_CONTEXT_SEARCH_LIMIT = 5;
-export const CHAT_CONTEXT_SEARCH_THRESHOLD = 0.3;
+export const CHAT_CONTEXT_SEARCH_LIMIT = 15;
+export const CHAT_CONTEXT_SEARCH_THRESHOLD = 0.2;
+export const CHAT_CONTEXT_SNIPPET_LENGTH = 1000;
+export const CHAT_CONTEXT_SHORT_SUMMARY_THRESHOLD = 200;
+export const CHAT_CONTEXT_CONTENT_EXCERPT_LENGTH = 500;
+export const CHAT_CONTEXT_ENTITY_RELATIONSHIP_LIMIT = 5;
 export const CHAT_MAX_HISTORY_MESSAGES = 20;
+export const CONVERSATION_TITLE_MAX_LENGTH = 60;
+export const CONVERSATION_LIST_LIMIT = 50;
 
 // Correction examples
 export const CORRECTION_CATEGORIES = ['linkedin_search', 'entity_extraction', 'entity_link', 'profile_generation'] as const;

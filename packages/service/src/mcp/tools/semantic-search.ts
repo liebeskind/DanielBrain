@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import { embedQuery } from '../../processor/embedder.js';
+import { RRF_K, HYBRID_VECTOR_WEIGHT, HYBRID_BM25_WEIGHT } from '@danielbrain/shared';
 import type { SearchResult } from '@danielbrain/shared';
 
 interface SemanticSearchInput {
@@ -35,15 +36,19 @@ export async function handleSemanticSearch(
   const vectorStr = `[${queryEmbedding.join(',')}]`;
 
   const { rows } = await pool.query(
-    `SELECT * FROM match_thoughts($1::vector, $2, $3, $4, $5, $6, $7)`,
+    `SELECT * FROM hybrid_search($1::vector, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
     [
       vectorStr,
+      input.query,
       input.threshold,
       input.limit,
       input.thought_type ?? null,
       input.person ?? null,
       input.topic ?? null,
       input.days_back ?? null,
+      RRF_K,
+      HYBRID_VECTOR_WEIGHT,
+      HYBRID_BM25_WEIGHT,
     ]
   );
 

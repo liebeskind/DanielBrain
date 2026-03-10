@@ -53,6 +53,26 @@ describe('streamChat', () => {
     expect(res.end).toHaveBeenCalled();
   });
 
+  it('returns accumulated full response', async () => {
+    const body = makeStream([
+      JSON.stringify({ message: { content: 'Hello' }, done: false }),
+      JSON.stringify({ message: { content: ' world' }, done: false }),
+      JSON.stringify({ message: { content: '' }, done: true }),
+    ]);
+
+    mockFetch.mockResolvedValue({ ok: true, body });
+    const res = mockRes();
+
+    const result = await streamChat(
+      [{ role: 'user', content: 'hi' }],
+      'llama4:scout',
+      'http://localhost:11434',
+      res,
+    );
+
+    expect(result.fullResponse).toBe('Hello world');
+  });
+
   it('sends error on non-ok response', async () => {
     mockFetch.mockResolvedValue({
       ok: false,

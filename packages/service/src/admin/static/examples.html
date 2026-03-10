@@ -3,247 +3,192 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Correction Examples - DanielBrain Admin</title>
+  <title>Correction Examples - TopiaBrain</title>
   <link rel="stylesheet" href="style.css">
-  <style>
-    .form-section {
-      background: #fff;
-      border: 1px solid #e0e0e0;
-      border-radius: 8px;
-      padding: 20px;
-      margin-bottom: 24px;
-    }
-    .form-section h2 {
-      font-size: 16px;
-      margin-bottom: 12px;
-    }
-    .form-row {
-      display: flex;
-      gap: 12px;
-      margin-bottom: 10px;
-      align-items: start;
-    }
-    .form-row label {
-      min-width: 120px;
-      font-size: 13px;
-      font-weight: 500;
-      color: #555;
-      padding-top: 6px;
-    }
-    .form-row input,
-    .form-row textarea,
-    .form-row select {
-      flex: 1;
-      padding: 6px 10px;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      font-size: 13px;
-      font-family: inherit;
-    }
-    .form-row textarea {
-      min-height: 60px;
-      resize: vertical;
-    }
-    .form-actions {
-      display: flex;
-      gap: 8px;
-      margin-top: 12px;
-    }
-    .toggle-raw {
-      font-size: 12px;
-      color: #6c63ff;
-      cursor: pointer;
-      text-decoration: underline;
-      margin-bottom: 8px;
-      display: inline-block;
-    }
-    .raw-fields { display: none; }
-    .raw-fields.visible { display: block; }
-    .structured-fields.hidden { display: none; }
-    .example-row {
-      display: flex;
-      align-items: start;
-      gap: 12px;
-      padding: 12px;
-      border-bottom: 1px solid #f0f0f0;
-    }
-    .example-row:last-child { border-bottom: none; }
-    .example-info { flex: 1; }
-    .example-meta {
-      font-size: 11px;
-      color: #999;
-      margin-top: 4px;
-    }
-    .example-detail {
-      font-size: 12px;
-      color: #555;
-      margin-top: 4px;
-    }
-    .example-detail strong {
-      color: #333;
-    }
-    .diff-wrong { color: #c5221f; text-decoration: line-through; }
-    .diff-correct { color: #137333; font-weight: 500; }
-    .btn-sm {
-      padding: 4px 10px;
-      font-size: 12px;
-    }
-  </style>
 </head>
 <body>
-  <nav>
-    <a href="index.html" class="logo">DanielBrain</a>
-    <a href="approvals.html">Approvals</a>
-    <a href="entities.html">Entities</a>
-    <a href="examples.html" class="active">Examples</a>
-    <a href="/chat">Chat</a>
-  </nav>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <a href="index.html" class="sidebar-logo">
+        <span class="logo-icon">T</span>
+        TopiaBrain
+      </a>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Knowledge</div>
+        <a href="browse.html" class="sidebar-link">
+          <span class="link-icon">&#x1F4DA;</span> Browse
+        </a>
+        <a href="ingest.html" class="sidebar-link">
+          <span class="link-icon">&#x2795;</span> Add Content
+        </a>
+        <a href="/chat" class="sidebar-link">
+          <span class="link-icon">&#x1F4AC;</span> Chat
+        </a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Manage</div>
+        <a href="entities.html" class="sidebar-link">
+          <span class="link-icon">&#x1F465;</span> Entities
+        </a>
+        <a href="approvals.html" class="sidebar-link">
+          <span class="link-icon">&#x2705;</span> Approvals
+        </a>
+        <a href="examples.html" class="sidebar-link active">
+          <span class="link-icon">&#x1F4DD;</span> Examples
+        </a>
+      </div>
+      <div class="sidebar-spacer"></div>
+    </aside>
 
-  <div class="container">
-    <h1>Correction Examples</h1>
-
-    <div id="flash"></div>
-
-    <!-- Filters -->
-    <div class="tabs" id="category-tabs">
-      <button class="tab active" data-category="">All</button>
-      <button class="tab" data-category="linkedin_search">LinkedIn Search</button>
-      <button class="tab" data-category="entity_extraction">Entity Extraction</button>
-      <button class="tab" data-category="entity_link">Entity Link</button>
-      <button class="tab" data-category="profile_generation">Profile Generation</button>
-    </div>
-
-    <!-- Add Example Form -->
-    <div class="form-section" id="add-form-section">
-      <h2>Add Correction Example</h2>
-      <div class="form-row">
-        <label>Category:</label>
-        <select id="form-category" onchange="onCategoryChange()">
-          <option value="linkedin_search">LinkedIn Search</option>
-          <option value="entity_extraction">Entity Extraction</option>
-          <option value="entity_link">Entity Link</option>
-          <option value="profile_generation">Profile Generation</option>
-        </select>
+    <main class="main-content">
+      <div class="page-header">
+        <h1>Correction Examples</h1>
+        <p>Train the AI by providing examples of correct and incorrect outputs</p>
       </div>
 
-      <!-- Structured fields for linkedin_search -->
-      <div id="structured-linkedin" class="structured-fields">
-        <div class="form-row">
-          <label>Entity Name:</label>
-          <input type="text" id="s-entity-name" placeholder="Jamie Farrell">
-        </div>
-        <div class="form-row">
-          <label>Wrong URL:</label>
-          <input type="text" id="s-wrong-url" placeholder="https://linkedin.com/in/wrong-person">
-        </div>
-        <div class="form-row">
-          <label>Correct URL:</label>
-          <input type="text" id="s-correct-url" placeholder="https://linkedin.com/in/correct-person">
-        </div>
-        <div class="form-row">
-          <label>Company Used:</label>
-          <input type="text" id="s-company" placeholder="Company name that led to wrong result">
-        </div>
-        <div class="form-row">
-          <label>Explanation:</label>
-          <input type="text" id="s-explanation" placeholder="Pearson was a customer, not Jamie's employer">
-        </div>
+      <div id="flash"></div>
+
+      <!-- Filters -->
+      <div class="tabs" id="category-tabs">
+        <button class="tab active" data-category="">All</button>
+        <button class="tab" data-category="linkedin_search">LinkedIn Search</button>
+        <button class="tab" data-category="entity_extraction">Entity Extraction</button>
+        <button class="tab" data-category="entity_link">Entity Link</button>
+        <button class="tab" data-category="profile_generation">Profile Generation</button>
       </div>
 
-      <!-- Structured fields for entity_extraction -->
-      <div id="structured-extraction" class="structured-fields hidden">
+      <!-- Add Example Form -->
+      <div class="form-section" id="add-form-section">
+        <h2>Add Correction Example</h2>
         <div class="form-row">
-          <label>Input Text:</label>
-          <textarea id="s-ext-input" placeholder="Text snippet that was analyzed"></textarea>
-        </div>
-        <div class="form-row">
-          <label>Wrong Extraction:</label>
-          <textarea id="s-ext-wrong" placeholder='{"people": ["wrong name"]}'></textarea>
-        </div>
-        <div class="form-row">
-          <label>Correct Extraction:</label>
-          <textarea id="s-ext-correct" placeholder='{"people": ["correct name"]}'></textarea>
-        </div>
-        <div class="form-row">
-          <label>Explanation:</label>
-          <input type="text" id="s-ext-explanation" placeholder="Why the extraction was wrong">
-        </div>
-      </div>
-
-      <!-- Structured fields for entity_link -->
-      <div id="structured-link" class="structured-fields hidden">
-        <div class="form-row">
-          <label>Entity Name:</label>
-          <input type="text" id="s-link-entity" placeholder="Chris">
-        </div>
-        <div class="form-row">
-          <label>Thought Excerpt:</label>
-          <textarea id="s-link-thought" placeholder="Relevant text from the thought"></textarea>
-        </div>
-        <div class="form-row">
-          <label>Link Correct?</label>
-          <select id="s-link-correct">
-            <option value="no">No (wrong link)</option>
-            <option value="yes">Yes (correct link)</option>
+          <label>Category:</label>
+          <select id="form-category" onchange="onCategoryChange()">
+            <option value="linkedin_search">LinkedIn Search</option>
+            <option value="entity_extraction">Entity Extraction</option>
+            <option value="entity_link">Entity Link</option>
+            <option value="profile_generation">Profile Generation</option>
           </select>
         </div>
-        <div class="form-row">
-          <label>Explanation:</label>
-          <input type="text" id="s-link-explanation" placeholder="Why the link was wrong">
+
+        <!-- Structured fields for linkedin_search -->
+        <div id="structured-linkedin" class="structured-fields">
+          <div class="form-row">
+            <label>Entity Name:</label>
+            <input type="text" id="s-entity-name" placeholder="Jamie Farrell">
+          </div>
+          <div class="form-row">
+            <label>Wrong URL:</label>
+            <input type="text" id="s-wrong-url" placeholder="https://linkedin.com/in/wrong-person">
+          </div>
+          <div class="form-row">
+            <label>Correct URL:</label>
+            <input type="text" id="s-correct-url" placeholder="https://linkedin.com/in/correct-person">
+          </div>
+          <div class="form-row">
+            <label>Company Used:</label>
+            <input type="text" id="s-company" placeholder="Company name that led to wrong result">
+          </div>
+          <div class="form-row">
+            <label>Explanation:</label>
+            <input type="text" id="s-explanation" placeholder="Pearson was a customer, not Jamie's employer">
+          </div>
+        </div>
+
+        <!-- Structured fields for entity_extraction -->
+        <div id="structured-extraction" class="structured-fields hidden">
+          <div class="form-row">
+            <label>Input Text:</label>
+            <textarea id="s-ext-input" placeholder="Text snippet that was analyzed"></textarea>
+          </div>
+          <div class="form-row">
+            <label>Wrong Extraction:</label>
+            <textarea id="s-ext-wrong" placeholder='{"people": ["wrong name"]}'></textarea>
+          </div>
+          <div class="form-row">
+            <label>Correct Extraction:</label>
+            <textarea id="s-ext-correct" placeholder='{"people": ["correct name"]}'></textarea>
+          </div>
+          <div class="form-row">
+            <label>Explanation:</label>
+            <input type="text" id="s-ext-explanation" placeholder="Why the extraction was wrong">
+          </div>
+        </div>
+
+        <!-- Structured fields for entity_link -->
+        <div id="structured-link" class="structured-fields hidden">
+          <div class="form-row">
+            <label>Entity Name:</label>
+            <input type="text" id="s-link-entity" placeholder="Chris">
+          </div>
+          <div class="form-row">
+            <label>Thought Excerpt:</label>
+            <textarea id="s-link-thought" placeholder="Relevant text from the thought"></textarea>
+          </div>
+          <div class="form-row">
+            <label>Link Correct?</label>
+            <select id="s-link-correct">
+              <option value="no">No (wrong link)</option>
+              <option value="yes">Yes (correct link)</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Explanation:</label>
+            <input type="text" id="s-link-explanation" placeholder="Why the link was wrong">
+          </div>
+        </div>
+
+        <!-- Structured fields for profile_generation -->
+        <div id="structured-profile" class="structured-fields hidden">
+          <div class="form-row">
+            <label>Entity Name:</label>
+            <input type="text" id="s-prof-entity" placeholder="Alice Smith">
+          </div>
+          <div class="form-row">
+            <label>Wrong Profile:</label>
+            <textarea id="s-prof-wrong" placeholder="The incorrect profile text"></textarea>
+          </div>
+          <div class="form-row">
+            <label>Correct Profile:</label>
+            <textarea id="s-prof-correct" placeholder="What the profile should say"></textarea>
+          </div>
+          <div class="form-row">
+            <label>Explanation:</label>
+            <input type="text" id="s-prof-explanation" placeholder="Why the profile was wrong">
+          </div>
+        </div>
+
+        <span class="toggle-raw" onclick="toggleRaw()">Toggle Raw JSON</span>
+
+        <!-- Raw JSON fields -->
+        <div id="raw-fields" class="raw-fields">
+          <div class="form-row">
+            <label>input_context:</label>
+            <textarea id="raw-input" placeholder='{"entity_name": "..."}'></textarea>
+          </div>
+          <div class="form-row">
+            <label>actual_output:</label>
+            <textarea id="raw-actual" placeholder='{"linkedin_url": "..."}'></textarea>
+          </div>
+          <div class="form-row">
+            <label>expected_output:</label>
+            <textarea id="raw-expected" placeholder='{"linkedin_url": "..."}'></textarea>
+          </div>
+          <div class="form-row">
+            <label>explanation:</label>
+            <input type="text" id="raw-explanation" placeholder="Why this correction matters">
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button class="btn btn-primary" onclick="submitExample()">Add Example</button>
         </div>
       </div>
 
-      <!-- Structured fields for profile_generation -->
-      <div id="structured-profile" class="structured-fields hidden">
-        <div class="form-row">
-          <label>Entity Name:</label>
-          <input type="text" id="s-prof-entity" placeholder="Alice Smith">
-        </div>
-        <div class="form-row">
-          <label>Wrong Profile:</label>
-          <textarea id="s-prof-wrong" placeholder="The incorrect profile text"></textarea>
-        </div>
-        <div class="form-row">
-          <label>Correct Profile:</label>
-          <textarea id="s-prof-correct" placeholder="What the profile should say"></textarea>
-        </div>
-        <div class="form-row">
-          <label>Explanation:</label>
-          <input type="text" id="s-prof-explanation" placeholder="Why the profile was wrong">
-        </div>
+      <!-- Examples list -->
+      <div id="examples-list">
+        <div class="loading">Loading examples</div>
       </div>
-
-      <span class="toggle-raw" onclick="toggleRaw()">Toggle Raw JSON</span>
-
-      <!-- Raw JSON fields -->
-      <div id="raw-fields" class="raw-fields">
-        <div class="form-row">
-          <label>input_context:</label>
-          <textarea id="raw-input" placeholder='{"entity_name": "..."}'></textarea>
-        </div>
-        <div class="form-row">
-          <label>actual_output:</label>
-          <textarea id="raw-actual" placeholder='{"linkedin_url": "..."}'></textarea>
-        </div>
-        <div class="form-row">
-          <label>expected_output:</label>
-          <textarea id="raw-expected" placeholder='{"linkedin_url": "..."}'></textarea>
-        </div>
-        <div class="form-row">
-          <label>explanation:</label>
-          <input type="text" id="raw-explanation" placeholder="Why this correction matters">
-        </div>
-      </div>
-
-      <div class="form-actions">
-        <button class="btn btn-approve" onclick="submitExample()">Add Example</button>
-      </div>
-    </div>
-
-    <!-- Examples list -->
-    <div id="examples-list">
-      <div class="loading">Loading examples...</div>
-    </div>
+    </main>
   </div>
 
   <script>
@@ -270,11 +215,9 @@
 
     function onCategoryChange() {
       var cat = document.getElementById('form-category').value;
-      // Hide all structured
       document.querySelectorAll('.structured-fields').forEach(function(el) {
         el.classList.add('hidden');
       });
-      // Show matching
       var map = {
         linkedin_search: 'structured-linkedin',
         entity_extraction: 'structured-extraction',
@@ -444,7 +387,7 @@
         if (!data.examples || data.examples.length === 0) {
           list.innerHTML = '<div class="empty-state">No correction examples yet.</div>';
         } else {
-          list.innerHTML = '<div class="card">' + data.examples.map(renderExample).join('') + '</div>';
+          list.innerHTML = '<div class="glass-card">' + data.examples.map(renderExample).join('') + '</div>';
         }
       } catch (err) {
         document.getElementById('examples-list').innerHTML =
@@ -469,7 +412,6 @@
       }
     }
 
-    // Tab switching
     document.getElementById('category-tabs').addEventListener('click', function(e) {
       var tab = e.target.closest('.tab');
       if (!tab) return;
@@ -479,7 +421,6 @@
       loadExamples();
     });
 
-    // Init
     onCategoryChange();
     loadExamples();
   </script>
