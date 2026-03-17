@@ -68,6 +68,8 @@
         </tbody>
       </table>
 
+      <div class="pagination" id="pagination"></div>
+
       <h2>Proposal Status</h2>
       <div class="stats-grid" id="proposal-counts">
         <div class="loading">Loading</div>
@@ -93,86 +95,95 @@
       return d.toLocaleDateString();
     }
 
-    let entities = [];
     let currentSort = 'mentions';
-    let sortDesc = true;
+    let currentOffset = 0;
+    const PAGE_SIZE = 50;
+    let totalEntities = 0;
 
-    function renderEntities() {
-      const sorted = [...entities].sort((a, b) => {
-        if (currentSort === 'mentions') {
-          return sortDesc ? b.mention_count - a.mention_count : a.mention_count - b.mention_count;
-        } else {
-          const da = new Date(a.last_seen_at || 0).getTime();
-          const db = new Date(b.last_seen_at || 0).getTime();
-          return sortDesc ? db - da : da - db;
-        }
-      });
-
+    function renderEntities(entities) {
       const tbody = document.querySelector('#entities-table tbody');
-      if (sorted.length === 0) {
+      if (entities.length === 0) {
         tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No entities yet.</td></tr>';
+        document.getElementById('pagination').innerHTML = '';
         return;
       }
-      tbody.innerHTML = sorted.map(e =>
-        '<tr><td>' + escapeHtml(e.name) + '</td>' +
-        '<td><span class="badge badge-entity-' + e.entity_type + '">' + escapeHtml(e.entity_type) + '</span></td>' +
-        '<td>' + e.mention_count + '</td>' +
-        '<td>' + formatDate(e.last_seen_at) + '</td></tr>'
-      ).join('');
+      tbody.innerHTML = entities.map(function(e) {
+        return '<tr><td>' + escapeHtml(e.name) + '</td>' +
+          '<td><span class="badge badge-entity-' + e.entity_type + '">' + escapeHtml(e.entity_type) + '</span></td>' +
+          '<td>' + e.mention_count + '</td>' +
+          '<td>' + formatDate(e.last_seen_at) + '</td></tr>';
+      }).join('');
 
       // Update title
       document.getElementById('entities-title').textContent =
         currentSort === 'mentions' ? 'Top Entities by Mentions' : 'Recently Active Entities';
 
       // Update arrows
-      const mentionsHeader = document.getElementById('sort-mentions');
-      const lastSeenHeader = document.getElementById('sort-last_seen');
+      var mentionsHeader = document.getElementById('sort-mentions');
+      var lastSeenHeader = document.getElementById('sort-last_seen');
       mentionsHeader.classList.toggle('active', currentSort === 'mentions');
       lastSeenHeader.classList.toggle('active', currentSort === 'last_seen');
-      const arrow = sortDesc ? ' \u25BC' : ' \u25B2';
-      mentionsHeader.textContent = 'Mentions' + (currentSort === 'mentions' ? arrow : '');
-      lastSeenHeader.textContent = 'Last Seen' + (currentSort === 'last_seen' ? arrow : '');
+      mentionsHeader.textContent = 'Mentions' + (currentSort === 'mentions' ? ' \u25BC' : '');
+      lastSeenHeader.textContent = 'Last Seen' + (currentSort === 'last_seen' ? ' \u25BC' : '');
+
+      // Pagination
+      var pag = document.getElementById('pagination');
+      var page = Math.floor(currentOffset / PAGE_SIZE) + 1;
+      var totalPages = Math.ceil(totalEntities / PAGE_SIZE);
+      if (totalPages <= 1) {
+        pag.innerHTML = '<span class="page-info">' + totalEntities + ' entities</span>';
+      } else {
+        pag.innerHTML =
+          '<button class="btn btn-sm" ' + (currentOffset === 0 ? 'disabled' : '') + ' onclick="changePage(-1)">&laquo; Prev</button>' +
+          '<span class="page-info">Page ' + page + ' of ' + totalPages + ' (' + totalEntities + ' entities)</span>' +
+          '<button class="btn btn-sm" ' + (currentOffset + PAGE_SIZE >= totalEntities ? 'disabled' : '') + ' onclick="changePage(1)">Next &raquo;</button>';
+      }
     }
 
-    document.querySelectorAll('.sortable').forEach(th => {
-      th.addEventListener('click', () => {
-        const sort = th.dataset.sort;
-        if (currentSort === sort) {
-          sortDesc = !sortDesc;
-        } else {
+    function changePage(dir) {
+      currentOffset += dir * PAGE_SIZE;
+      if (currentOffset < 0) currentOffset = 0;
+      loadEntities();
+    }
+
+    document.querySelectorAll('.sortable').forEach(function(th) {
+      th.addEventListener('click', function() {
+        var sort = th.dataset.sort;
+        if (currentSort !== sort) {
           currentSort = sort;
-          sortDesc = true;
+          currentOffset = 0;
+          loadEntities();
         }
-        renderEntities();
       });
     });
 
-    async function loadStats() {
+    async function loadEntities() {
+      var sortParam = currentSort === 'last_seen' ? 'last_seen' : 'mentions';
       try {
-        const res = await fetch('/admin/api/entities/stats');
-        const data = await res.json();
+        var res = await fetch('/admin/api/entities/stats?sort=' + sortParam + '&limit=' + PAGE_SIZE + '&offset=' + currentOffset);
+        var data = await res.json();
 
-        const countsEl = document.getElementById('type-counts');
+        var countsEl = document.getElementById('type-counts');
         if (data.type_counts.length === 0) {
           countsEl.innerHTML = '<div class="empty-state">No entities yet.</div>';
         } else {
-          countsEl.innerHTML = data.type_counts.map(tc =>
-            '<div class="stat-card"><div class="number">' + tc.count + '</div>' +
-            '<div class="label">' + escapeHtml(tc.entity_type) + '</div></div>'
-          ).join('');
+          countsEl.innerHTML = data.type_counts.map(function(tc) {
+            return '<div class="stat-card"><div class="number">' + tc.count + '</div>' +
+              '<div class="label">' + escapeHtml(tc.entity_type) + '</div></div>';
+          }).join('');
         }
 
-        entities = data.entities || [];
-        renderEntities();
+        totalEntities = data.total || 0;
+        renderEntities(data.entities || []);
 
-        const proposalEl = document.getElementById('proposal-counts');
+        var proposalEl = document.getElementById('proposal-counts');
         if (data.proposal_counts.length === 0) {
           proposalEl.innerHTML = '<div class="empty-state">No proposals yet.</div>';
         } else {
-          proposalEl.innerHTML = data.proposal_counts.map(pc =>
-            '<div class="stat-card"><div class="number">' + pc.count + '</div>' +
-            '<div class="label">' + escapeHtml(pc.status) + '</div></div>'
-          ).join('');
+          proposalEl.innerHTML = data.proposal_counts.map(function(pc) {
+            return '<div class="stat-card"><div class="number">' + pc.count + '</div>' +
+              '<div class="label">' + escapeHtml(pc.status) + '</div></div>';
+          }).join('');
         }
       } catch (err) {
         document.getElementById('type-counts').innerHTML =
@@ -180,7 +191,7 @@
       }
     }
 
-    loadStats();
+    loadEntities();
   </script>
 </body>
 </html>

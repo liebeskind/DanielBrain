@@ -32,26 +32,29 @@ describe('Admin Routes', () => {
   });
 
   describe('GET /api/entities/stats', () => {
-    it('returns entity stats', async () => {
+    it('returns entity stats with pagination', async () => {
       mockPool.query
         .mockResolvedValueOnce({ rows: [{ entity_type: 'person', count: '5' }] })
         .mockResolvedValueOnce({ rows: [{ id: 'e1', name: 'Alice', entity_type: 'person', mention_count: 10, last_seen_at: '2025-01-01' }] })
+        .mockResolvedValueOnce({ rows: [{ total: '1' }] })
         .mockResolvedValueOnce({ rows: [{ status: 'pending', count: '3' }] });
 
       const router = createAdminRoutes(mockPool as any, baseConfig as any);
       const handler = getHandler(router, 'get', '/api/entities/stats');
 
+      const req = { query: {} };
       const res = {
         json: vi.fn(),
         status: vi.fn().mockReturnThis(),
       };
 
-      await handler({} as any, res as any);
+      await handler(req as any, res as any);
 
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({
           type_counts: [{ entity_type: 'person', count: '5' }],
           entities: expect.any(Array),
+          total: 1,
           proposal_counts: expect.any(Array),
         })
       );
@@ -63,12 +66,13 @@ describe('Admin Routes', () => {
       const router = createAdminRoutes(mockPool as any, baseConfig as any);
       const handler = getHandler(router, 'get', '/api/entities/stats');
 
+      const req = { query: {} };
       const res = {
         json: vi.fn(),
         status: vi.fn().mockReturnThis(),
       };
 
-      await handler({} as any, res as any);
+      await handler(req as any, res as any);
 
       expect(res.status).toHaveBeenCalledWith(500);
     });

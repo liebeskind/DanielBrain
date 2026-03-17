@@ -153,14 +153,22 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
   });
 
   // ---- Entity stats API for dashboard ----
-  router.get('/api/entities/stats', async (_req, res) => {
+  router.get('/api/entities/stats', async (req, res) => {
     try {
+      const sort = req.query.sort === 'last_seen' ? 'last_seen' : 'mentions';
+      const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 200);
+      const offset = parseInt(req.query.offset as string, 10) || 0;
+
       const { rows: typeCounts } = await pool.query(
         `SELECT entity_type, COUNT(*) as count
          FROM entities
          GROUP BY entity_type
          ORDER BY count DESC`
       );
+
+      const orderClause = sort === 'last_seen'
+        ? 'ORDER BY last_seen_at DESC NULLS LAST'
+        : 'ORDER BY e.mention_count DESC';
 
       const { rows: entities } = await pool.query(
         `SELECT e.id, e.name, e.entity_type, e.mention_count,
@@ -172,8 +180,13 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
                 ) as last_seen_at
          FROM entities e
          WHERE e.mention_count > 0
-         ORDER BY e.mention_count DESC
-         LIMIT 50`
+         ${orderClause}
+         LIMIT $1 OFFSET $2`,
+        [limit, offset]
+      );
+
+      const { rows: [totalRow] } = await pool.query(
+        `SELECT COUNT(*) as total FROM entities WHERE mention_count > 0`
       );
 
       const { rows: proposalCounts } = await pool.query(
@@ -185,6 +198,9 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
       res.json({
         type_counts: typeCounts,
         entities,
+        total: parseInt(totalRow.total, 10),
+        limit,
+        offset,
         proposal_counts: proposalCounts,
       });
     } catch (err) {
