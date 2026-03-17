@@ -49,6 +49,10 @@
         <p>Train the AI by providing examples of correct and incorrect outputs</p>
       </div>
 
+      <div class="stats-grid" id="examples-summary">
+        <div class="loading">Loading stats</div>
+      </div>
+
       <div id="flash"></div>
 
       <!-- Filters -->
@@ -424,8 +428,30 @@
       loadExamples();
     });
 
+    async function loadExamplesSummary() {
+      try {
+        var res = await fetch('/admin/api/corrections/stats');
+        var data = await res.json();
+        var el = document.getElementById('examples-summary');
+        if (data.total === 0) {
+          el.innerHTML = '<div class="empty-state">No correction examples yet.</div>';
+        } else {
+          var html = '<div class="stat-card"><div class="number">' + data.total + '</div><div class="label">Total</div></div>';
+          html += data.category_counts.map(function(cc) {
+            return '<div class="stat-card"><div class="number">' + cc.count + '</div>' +
+              '<div class="label">' + escapeHtml(cc.category.replace(/_/g, ' ')) + '</div></div>';
+          }).join('');
+          el.innerHTML = html;
+        }
+      } catch (err) {
+        document.getElementById('examples-summary').innerHTML =
+          '<div class="empty-state">Failed to load stats.</div>';
+      }
+    }
+
     onCategoryChange();
     loadExamples();
+    loadExamplesSummary();
   </script>
 </body>
 </html>

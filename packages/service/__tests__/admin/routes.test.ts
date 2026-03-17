@@ -162,4 +162,45 @@ describe('Admin Routes', () => {
       expect(res.json).toHaveBeenCalledWith({ error: "Integration 'slack' does not support pull" });
     });
   });
+
+  describe('GET /api/proposals/stats', () => {
+    it('returns proposal status and type counts', async () => {
+      mockPool.query
+        .mockResolvedValueOnce({ rows: [{ status: 'pending', count: '5' }, { status: 'applied', count: '3' }] })
+        .mockResolvedValueOnce({ rows: [{ proposal_type: 'entity_enrichment', count: '6' }] })
+        .mockResolvedValueOnce({ rows: [{ total: '8', pending: '5' }] });
+
+      const router = createAdminRoutes(mockPool as any, baseConfig as any);
+      const handler = getHandler(router, 'get', '/api/proposals/stats');
+
+      const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+      await handler({} as any, res as any);
+
+      expect(res.json).toHaveBeenCalledWith({
+        status_counts: [{ status: 'pending', count: '5' }, { status: 'applied', count: '3' }],
+        type_counts: [{ proposal_type: 'entity_enrichment', count: '6' }],
+        total: 8,
+        pending: 5,
+      });
+    });
+  });
+
+  describe('GET /api/corrections/stats', () => {
+    it('returns correction category counts', async () => {
+      mockPool.query
+        .mockResolvedValueOnce({ rows: [{ category: 'linkedin_search', count: '4' }] })
+        .mockResolvedValueOnce({ rows: [{ total: '4' }] });
+
+      const router = createAdminRoutes(mockPool as any, baseConfig as any);
+      const handler = getHandler(router, 'get', '/api/corrections/stats');
+
+      const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+      await handler({} as any, res as any);
+
+      expect(res.json).toHaveBeenCalledWith({
+        category_counts: [{ category: 'linkedin_search', count: '4' }],
+        total: 4,
+      });
+    });
+  });
 });

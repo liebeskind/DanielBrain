@@ -163,10 +163,16 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
       );
 
       const { rows: entities } = await pool.query(
-        `SELECT id, name, entity_type, mention_count, last_seen_at
-         FROM entities
-         WHERE mention_count > 0
-         ORDER BY mention_count DESC
+        `SELECT e.id, e.name, e.entity_type, e.mention_count,
+                COALESCE(
+                  (SELECT MAX(t.created_at) FROM thought_entities te
+                   JOIN thoughts t ON t.id = te.thought_id
+                   WHERE te.entity_id = e.id),
+                  e.last_seen_at
+                ) as last_seen_at
+         FROM entities e
+         WHERE e.mention_count > 0
+         ORDER BY e.mention_count DESC
          LIMIT 50`
       );
 
@@ -183,6 +189,64 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
       });
     } catch (err) {
       console.error('Entity stats error:', err);
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  // ---- Proposal stats API ----
+  router.get('/api/proposals/stats', async (_req, res) => {
+    try {
+      const { rows: statusCounts } = await pool.query(
+        `SELECT status, COUNT(*) as count
+         FROM proposals
+         GROUP BY status`
+      );
+
+      const { rows: typeCounts } = await pool.query(
+        `SELECT proposal_type, COUNT(*) as count
+         FROM proposals
+         GROUP BY proposal_type
+         ORDER BY count DESC`
+      );
+
+      const { rows: [totals] } = await pool.query(
+        `SELECT COUNT(*) as total,
+                COUNT(*) FILTER (WHERE status = 'pending') as pending
+         FROM proposals`
+      );
+
+      res.json({
+        status_counts: statusCounts,
+        type_counts: typeCounts,
+        total: parseInt(totals.total, 10),
+        pending: parseInt(totals.pending, 10),
+      });
+    } catch (err) {
+      console.error('Proposal stats error:', err);
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  // ---- Correction examples stats API ----
+  router.get('/api/corrections/stats', async (_req, res) => {
+    try {
+      const { rows: categoryCounts } = await pool.query(
+        `SELECT category, COUNT(*) as count
+         FROM correction_examples
+         GROUP BY category
+         ORDER BY count DESC`
+      );
+
+      const { rows: [totals] } = await pool.query(
+        `SELECT COUNT(*) as total FROM correction_examples`
+      );
+
+      res.json({
+        category_counts: categoryCounts,
+        total: parseInt(totals.total, 10),
+      });
+    } catch (err) {
+      console.error('Correction stats error:', err);
       res.status(500).json({ error: 'Internal error' });
     }
   });

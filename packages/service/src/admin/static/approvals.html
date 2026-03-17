@@ -49,6 +49,10 @@
         <p>Review and approve pending proposals</p>
       </div>
 
+      <div class="stats-grid" id="proposal-summary">
+        <div class="loading">Loading stats</div>
+      </div>
+
       <div id="flash"></div>
 
       <div class="tabs" id="status-tabs">
@@ -455,8 +459,28 @@
       loadProposals();
     });
 
+    async function loadProposalSummary() {
+      try {
+        const res = await fetch('/admin/api/proposals/stats');
+        const data = await res.json();
+        const el = document.getElementById('proposal-summary');
+        if (data.status_counts.length === 0) {
+          el.innerHTML = '<div class="empty-state">No proposals yet.</div>';
+        } else {
+          el.innerHTML = data.status_counts.map(function(sc) {
+            return '<div class="stat-card"><div class="number">' + sc.count + '</div>' +
+              '<div class="label">' + escapeHtml(sc.status) + '</div></div>';
+          }).join('');
+        }
+      } catch (err) {
+        document.getElementById('proposal-summary').innerHTML =
+          '<div class="empty-state">Failed to load stats.</div>';
+      }
+    }
+
     loadProposals();
     loadCounts();
+    loadProposalSummary();
   </script>
 </body>
 </html>
