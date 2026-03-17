@@ -27,6 +27,9 @@
       </div>
       <div class="sidebar-section">
         <div class="sidebar-section-label">Manage</div>
+        <a href="integrations.html" class="sidebar-link">
+          <span class="link-icon">&#x1F50C;</span> Integrations
+        </a>
         <a href="entities.html" class="sidebar-link active">
           <span class="link-icon">&#x1F465;</span> Entities
         </a>
@@ -50,20 +53,15 @@
         <div class="loading">Loading stats</div>
       </div>
 
-      <h2>Top Entities by Mentions</h2>
-      <table class="entity-table" id="top-table">
+      <h2 id="entities-title">Top Entities by Mentions</h2>
+      <table class="entity-table" id="entities-table">
         <thead>
-          <tr><th>Name</th><th>Type</th><th>Mentions</th></tr>
-        </thead>
-        <tbody>
-          <tr><td colspan="3" class="loading">Loading</td></tr>
-        </tbody>
-      </table>
-
-      <h2>Recently Active</h2>
-      <table class="entity-table" id="recent-table">
-        <thead>
-          <tr><th>Name</th><th>Type</th><th>Mentions</th><th>Last Seen</th></tr>
+          <tr>
+            <th>Name</th>
+            <th>Type</th>
+            <th class="sortable active" data-sort="mentions" id="sort-mentions">Mentions &#x25BC;</th>
+            <th class="sortable" data-sort="last_seen" id="sort-last_seen">Last Seen</th>
+          </tr>
         </thead>
         <tbody>
           <tr><td colspan="4" class="loading">Loading</td></tr>
@@ -77,6 +75,11 @@
     </main>
   </div>
 
+  <style>
+    .sortable { cursor: pointer; user-select: none; }
+    .sortable:hover { color: #4f8ff7; }
+    .sortable.active { color: #4f8ff7; }
+  </style>
   <script>
     function escapeHtml(str) {
       const div = document.createElement('div');
@@ -89,6 +92,60 @@
       const d = new Date(dateStr);
       return d.toLocaleDateString();
     }
+
+    let entities = [];
+    let currentSort = 'mentions';
+    let sortDesc = true;
+
+    function renderEntities() {
+      const sorted = [...entities].sort((a, b) => {
+        if (currentSort === 'mentions') {
+          return sortDesc ? b.mention_count - a.mention_count : a.mention_count - b.mention_count;
+        } else {
+          const da = new Date(a.last_seen_at || 0).getTime();
+          const db = new Date(b.last_seen_at || 0).getTime();
+          return sortDesc ? db - da : da - db;
+        }
+      });
+
+      const tbody = document.querySelector('#entities-table tbody');
+      if (sorted.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No entities yet.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = sorted.map(e =>
+        '<tr><td>' + escapeHtml(e.name) + '</td>' +
+        '<td><span class="badge badge-entity-' + e.entity_type + '">' + escapeHtml(e.entity_type) + '</span></td>' +
+        '<td>' + e.mention_count + '</td>' +
+        '<td>' + formatDate(e.last_seen_at) + '</td></tr>'
+      ).join('');
+
+      // Update title
+      document.getElementById('entities-title').textContent =
+        currentSort === 'mentions' ? 'Top Entities by Mentions' : 'Recently Active Entities';
+
+      // Update arrows
+      const mentionsHeader = document.getElementById('sort-mentions');
+      const lastSeenHeader = document.getElementById('sort-last_seen');
+      mentionsHeader.classList.toggle('active', currentSort === 'mentions');
+      lastSeenHeader.classList.toggle('active', currentSort === 'last_seen');
+      const arrow = sortDesc ? ' \u25BC' : ' \u25B2';
+      mentionsHeader.textContent = 'Mentions' + (currentSort === 'mentions' ? arrow : '');
+      lastSeenHeader.textContent = 'Last Seen' + (currentSort === 'last_seen' ? arrow : '');
+    }
+
+    document.querySelectorAll('.sortable').forEach(th => {
+      th.addEventListener('click', () => {
+        const sort = th.dataset.sort;
+        if (currentSort === sort) {
+          sortDesc = !sortDesc;
+        } else {
+          currentSort = sort;
+          sortDesc = true;
+        }
+        renderEntities();
+      });
+    });
 
     async function loadStats() {
       try {
@@ -105,28 +162,8 @@
           ).join('');
         }
 
-        const topBody = document.querySelector('#top-table tbody');
-        if (data.top_entities.length === 0) {
-          topBody.innerHTML = '<tr><td colspan="3" class="empty-state">No entities yet.</td></tr>';
-        } else {
-          topBody.innerHTML = data.top_entities.map(e =>
-            '<tr><td>' + escapeHtml(e.name) + '</td>' +
-            '<td><span class="badge badge-entity-' + e.entity_type + '">' + escapeHtml(e.entity_type) + '</span></td>' +
-            '<td>' + e.mention_count + '</td></tr>'
-          ).join('');
-        }
-
-        const recentBody = document.querySelector('#recent-table tbody');
-        if (data.recent_entities.length === 0) {
-          recentBody.innerHTML = '<tr><td colspan="4" class="empty-state">No entities yet.</td></tr>';
-        } else {
-          recentBody.innerHTML = data.recent_entities.map(e =>
-            '<tr><td>' + escapeHtml(e.name) + '</td>' +
-            '<td><span class="badge badge-entity-' + e.entity_type + '">' + escapeHtml(e.entity_type) + '</span></td>' +
-            '<td>' + e.mention_count + '</td>' +
-            '<td>' + formatDate(e.last_seen_at) + '</td></tr>'
-          ).join('');
-        }
+        entities = data.entities || [];
+        renderEntities();
 
         const proposalEl = document.getElementById('proposal-counts');
         if (data.proposal_counts.length === 0) {

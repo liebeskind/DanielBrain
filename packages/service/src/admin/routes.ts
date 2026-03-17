@@ -3,10 +3,66 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type pg from 'pg';
+import type { Config } from '../config.js';
+import { syncFathomMeetings } from '../fathom/sync.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export function createAdminRoutes(pool: pg.Pool): Router {
+interface IntegrationDef {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  source: string; // source value in thoughts table
+  can_pull: boolean;
+  webhook_path: string | null;
+  isEnabled: (config: Config) => boolean;
+}
+
+const INTEGRATIONS: IntegrationDef[] = [
+  {
+    id: 'fathom',
+    name: 'Fathom',
+    description: 'Meeting transcripts and call recordings',
+    category: 'meetings',
+    source: 'fathom',
+    can_pull: true,
+    webhook_path: '/fathom/events',
+    isEnabled: (c) => !!(c.fathomApiKey && c.fathomWebhookSecret),
+  },
+  {
+    id: 'slack',
+    name: 'Slack',
+    description: 'Channel messages and conversations',
+    category: 'messaging',
+    source: 'slack',
+    can_pull: false,
+    webhook_path: '/slack/events',
+    isEnabled: (c) => !!(c.slackBotToken && c.slackSigningSecret),
+  },
+  {
+    id: 'telegram',
+    name: 'Telegram',
+    description: 'Bot messages and group chats',
+    category: 'messaging',
+    source: 'telegram',
+    can_pull: false,
+    webhook_path: '/telegram/updates',
+    isEnabled: (c) => !!(c.telegramBotToken && c.telegramWebhookSecret),
+  },
+  {
+    id: 'manual',
+    name: 'Manual',
+    description: 'Content added via the admin dashboard or MCP tools',
+    category: 'manual',
+    source: 'manual',
+    can_pull: false,
+    webhook_path: null,
+    isEnabled: () => true,
+  },
+];
+
+export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
   const router = Router();
 
   // JSON body parsing for API routes
@@ -14,6 +70,87 @@ export function createAdminRoutes(pool: pg.Pool): Router {
 
   // Serve static files
   router.use(express.static(path.join(__dirname, 'static')));
+
+  // ---- Integration stats API ----
+  router.get('/api/integrations/stats', async (_req, res) => {
+    try {
+      const results = await Promise.all(
+        INTEGRATIONS.map(async (def) => {
+          const { rows: [stats] } = await pool.query(
+            `SELECT
+              COUNT(DISTINCT t.id) as thought_count,
+              COUNT(DISTINCT e.id) as entity_count,
+              COUNT(DISTINCT e.id) FILTER (WHERE e.entity_type = 'person') as people_count,
+              COUNT(DISTINCT e.id) FILTER (WHERE e.entity_type = 'company') as company_count,
+              MIN(t.created_at) as first_pulled,
+              MAX(t.created_at) as last_pulled
+            FROM thoughts t
+            LEFT JOIN thought_entities te ON te.thought_id = t.id
+            LEFT JOIN entities e ON e.id = te.entity_id
+            WHERE t.source = $1 AND t.parent_id IS NULL`,
+            [def.source],
+          );
+
+          // Count action items separately (thoughts with non-empty action_items arrays)
+          const { rows: [aiRow] } = await pool.query(
+            `SELECT COUNT(*) as action_item_count
+            FROM thoughts
+            WHERE source = $1 AND parent_id IS NULL
+              AND action_items IS NOT NULL
+              AND array_length(action_items, 1) > 0`,
+            [def.source],
+          );
+
+          return {
+            id: def.id,
+            name: def.name,
+            description: def.description,
+            category: def.category,
+            enabled: def.isEnabled(config),
+            can_pull: def.can_pull,
+            webhook_path: def.webhook_path,
+            stats: {
+              thought_count: parseInt(stats.thought_count, 10),
+              entity_count: parseInt(stats.entity_count, 10),
+              people_count: parseInt(stats.people_count, 10),
+              company_count: parseInt(stats.company_count, 10),
+              action_item_count: parseInt(aiRow.action_item_count, 10),
+              first_pulled: stats.first_pulled,
+              last_pulled: stats.last_pulled,
+            },
+          };
+        }),
+      );
+
+      res.json(results);
+    } catch (err) {
+      console.error('Integration stats error:', err);
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  // ---- Pull latest for an integration ----
+  router.post('/api/integrations/:id/pull', async (req, res) => {
+    const { id } = req.params;
+
+    if (id === 'fathom') {
+      if (!config.fathomApiKey) {
+        res.status(400).json({ error: 'Fathom API key not configured' });
+        return;
+      }
+
+      try {
+        const result = await syncFathomMeetings(pool, { fathomApiKey: config.fathomApiKey });
+        res.json({ ok: true, ...result });
+      } catch (err) {
+        console.error('Fathom pull error:', err);
+        res.status(500).json({ error: 'Pull failed' });
+      }
+      return;
+    }
+
+    res.status(400).json({ error: `Integration '${id}' does not support pull` });
+  });
 
   // ---- Entity stats API for dashboard ----
   router.get('/api/entities/stats', async (_req, res) => {
@@ -25,18 +162,12 @@ export function createAdminRoutes(pool: pg.Pool): Router {
          ORDER BY count DESC`
       );
 
-      const { rows: recentEntities } = await pool.query(
+      const { rows: entities } = await pool.query(
         `SELECT id, name, entity_type, mention_count, last_seen_at
          FROM entities
-         ORDER BY last_seen_at DESC
-         LIMIT 20`
-      );
-
-      const { rows: topEntities } = await pool.query(
-        `SELECT id, name, entity_type, mention_count
-         FROM entities
+         WHERE mention_count > 0
          ORDER BY mention_count DESC
-         LIMIT 10`
+         LIMIT 50`
       );
 
       const { rows: proposalCounts } = await pool.query(
@@ -47,8 +178,7 @@ export function createAdminRoutes(pool: pg.Pool): Router {
 
       res.json({
         type_counts: typeCounts,
-        recent_entities: recentEntities,
-        top_entities: topEntities,
+        entities,
         proposal_counts: proposalCounts,
       });
     } catch (err) {

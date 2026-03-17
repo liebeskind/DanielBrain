@@ -20,6 +20,7 @@ import { verifyFathomSignature } from './fathom/verify.js';
 import { handleFathomEvent } from './fathom/webhook.js';
 import { createCorrectionRoutes } from './corrections/routes.js';
 import { describeUndescribedRelationships } from './processor/relationship-describer.js';
+import { isOllamaBusy } from './ollama-mutex.js';
 
 const config = loadConfig();
 const pool = new pg.Pool({ connectionString: config.databaseUrl });
@@ -130,7 +131,7 @@ app.use('/api/proposals', express.json(), createProposalRoutes(pool));
 app.use('/api/corrections', express.json(), createCorrectionRoutes(pool));
 
 // --- Admin dashboard ---
-app.use('/admin', createAdminRoutes(pool));
+app.use('/admin', createAdminRoutes(pool, config));
 
 // --- Chat interface ---
 app.use('/chat', createChatRoutes(pool, config));
@@ -179,6 +180,7 @@ let pollInterval: ReturnType<typeof setInterval>;
 
 function startPoller() {
   pollInterval = setInterval(async () => {
+    if (isOllamaBusy()) return;
     try {
       await pollQueue(pool, config);
     } catch (err) {
@@ -192,6 +194,7 @@ let profileInterval: ReturnType<typeof setInterval>;
 
 function startProfileRefresher() {
   profileInterval = setInterval(async () => {
+    if (isOllamaBusy()) return;
     try {
       const count = await refreshStaleProfiles(pool, config);
       if (count > 0) {
@@ -230,6 +233,7 @@ function startRelationshipDescriber() {
   if (!config.relationshipModel) return;
 
   relationshipInterval = setInterval(async () => {
+    if (isOllamaBusy()) return;
     try {
       const count = await describeUndescribedRelationships(pool, {
         ollamaBaseUrl: config.ollamaBaseUrl,
@@ -242,6 +246,41 @@ function startRelationshipDescriber() {
       console.error('Relationship description error:', err);
     }
   }, RELATIONSHIP_DESCRIPTION_INTERVAL_MS);
+}
+
+// --- Model preloading ---
+async function preloadModels() {
+  const models = new Map<string, 'embed' | 'llm'>();
+  models.set(config.embeddingModel, 'embed');
+  models.set(config.extractionModel, 'llm');
+  models.set(config.chatModel, 'llm');
+  if (config.relationshipModel && !models.has(config.relationshipModel)) {
+    models.set(config.relationshipModel, 'llm');
+  }
+
+  for (const [model, type] of models) {
+    try {
+      const start = Date.now();
+      if (type === 'embed') {
+        await fetch(`${config.ollamaBaseUrl}/api/embed`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model, input: 'warmup' }),
+          signal: AbortSignal.timeout(300_000),
+        });
+      } else {
+        await fetch(`${config.ollamaBaseUrl}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model, messages: [{ role: 'user', content: 'hi' }], stream: false, options: { num_predict: 1 } }),
+          signal: AbortSignal.timeout(300_000),
+        });
+      }
+      console.log(`  Preloaded ${model} (${((Date.now() - start) / 1000).toFixed(1)}s)`);
+    } catch (err) {
+      console.warn(`  Failed to preload ${model}:`, (err as Error).message);
+    }
+  }
 }
 
 // --- Graceful shutdown ---
@@ -262,7 +301,9 @@ process.on('SIGTERM', shutdown);
 
 // --- Start ---
 app.listen(config.mcpPort, () => {
+  const uniqueModels = [...new Set([config.embeddingModel, config.extractionModel, config.chatModel, config.relationshipModel].filter(Boolean))];
   console.log(`DanielBrain running on port ${config.mcpPort}`);
+  console.log(`  Models: ${uniqueModels.join(', ')}`);
   console.log(`  MCP SSE: http://localhost:${config.mcpPort}/mcp/sse`);
   if (config.slackBotToken) {
     console.log(`  Slack webhook: http://localhost:${config.mcpPort}/slack/events`);
@@ -289,6 +330,8 @@ app.listen(config.mcpPort, () => {
   if (config.relationshipModel) {
     console.log(`  Relationship describer: every ${RELATIONSHIP_DESCRIPTION_INTERVAL_MS / 1000}s (model: ${config.relationshipModel})`);
   }
+  // Preload models into VRAM (async, non-blocking)
+  preloadModels().catch(err => console.error('Model preload error:', err));
 });
 
 export { app, pool };

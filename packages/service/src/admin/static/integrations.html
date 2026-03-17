@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Integrations - TopiaBrain</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <a href="index.html" class="sidebar-logo">
+        <span class="logo-icon">T</span>
+        TopiaBrain
+      </a>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Knowledge</div>
+        <a href="browse.html" class="sidebar-link">
+          <span class="link-icon">&#x1F4DA;</span> Browse
+        </a>
+        <a href="ingest.html" class="sidebar-link">
+          <span class="link-icon">&#x2795;</span> Add Content
+        </a>
+        <a href="/chat" class="sidebar-link">
+          <span class="link-icon">&#x1F4AC;</span> Chat
+        </a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Manage</div>
+        <a href="integrations.html" class="sidebar-link active">
+          <span class="link-icon">&#x1F50C;</span> Integrations
+        </a>
+        <a href="entities.html" class="sidebar-link">
+          <span class="link-icon">&#x1F465;</span> Entities
+        </a>
+        <a href="approvals.html" class="sidebar-link">
+          <span class="link-icon">&#x2705;</span> Approvals
+        </a>
+        <a href="examples.html" class="sidebar-link">
+          <span class="link-icon">&#x1F4DD;</span> Examples
+        </a>
+      </div>
+      <div class="sidebar-spacer"></div>
+    </aside>
+
+    <main class="main-content">
+      <div class="page-header">
+        <h1>Integrations</h1>
+        <p>Data sources connected to your knowledge graph</p>
+      </div>
+
+      <div id="flash-container"></div>
+      <div id="integrations-list">
+        <div class="loading">Loading integrations</div>
+      </div>
+    </main>
+  </div>
+
+  <style>
+    .integration-card {
+      background: var(--bg-surface);
+      backdrop-filter: blur(var(--blur));
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      transition: border-color var(--transition), box-shadow var(--transition);
+    }
+
+    .integration-card:hover {
+      border-color: var(--border-glass-hover);
+      box-shadow: var(--shadow-card-hover);
+    }
+
+    .integration-card + .integration-card {
+      margin-top: 12px;
+    }
+
+    .integration-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 6px;
+    }
+
+    .integration-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .integration-icon-fathom {
+      background: rgba(168, 85, 247, 0.2);
+      color: #c084fc;
+    }
+
+    .integration-icon-slack {
+      background: rgba(74, 21, 75, 0.3);
+      color: #e879a8;
+    }
+
+    .integration-icon-telegram {
+      background: rgba(0, 136, 204, 0.2);
+      color: #38bdf8;
+    }
+
+    .integration-icon-manual {
+      background: rgba(99, 102, 241, 0.2);
+      color: #a5b4fc;
+    }
+
+    .integration-title-row {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .integration-name {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .integration-description {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-bottom: 16px;
+      padding-left: 54px;
+    }
+
+    .badge-connected {
+      background: var(--accent-emerald-glow);
+      color: var(--accent-emerald);
+    }
+
+    .badge-disconnected {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-muted);
+    }
+
+    .integration-stats {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+      padding-left: 54px;
+    }
+
+    .stat-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+    }
+
+    .stat-pill .stat-value {
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .stat-pill .stat-label {
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+
+    .integration-footer {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding-left: 54px;
+      font-size: 12px;
+      color: var(--text-muted);
+      flex-wrap: wrap;
+    }
+
+    .integration-footer .pull-btn {
+      margin-left: auto;
+    }
+
+    .pull-btn .spinner {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border: 2px solid var(--border-glass);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+
+    .empty-stats {
+      color: var(--text-muted);
+      font-size: 13px;
+      padding-left: 54px;
+      margin-bottom: 16px;
+    }
+  </style>
+
+  <script>
+    function escapeHtml(str) {
+      const d = document.createElement('div');
+      d.textContent = str;
+      return d.innerHTML;
+    }
+
+    function formatDate(dateStr) {
+      if (!dateStr) return null;
+      const d = new Date(dateStr);
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+
+    function formatNumber(n) {
+      return n.toLocaleString();
+    }
+
+    const ICON_LETTERS = {
+      fathom: 'F',
+      slack: 'S',
+      telegram: 'T',
+      manual: 'M',
+    };
+
+    function renderIntegration(item) {
+      const iconClass = 'integration-icon-' + item.id;
+      const letter = ICON_LETTERS[item.id] || item.name[0];
+      const statusBadge = item.enabled
+        ? '<span class="badge badge-connected">Connected</span>'
+        : '<span class="badge badge-disconnected">Not Configured</span>';
+
+      const s = item.stats;
+      const hasData = s.thought_count > 0;
+
+      let statsHtml = '';
+      if (hasData) {
+        statsHtml = '<div class="integration-stats">';
+        statsHtml += '<div class="stat-pill"><span class="stat-value">' + formatNumber(s.thought_count) + '</span><span class="stat-label">Items</span></div>';
+        statsHtml += '<div class="stat-pill"><span class="stat-value">' + formatNumber(s.entity_count) + '</span><span class="stat-label">Entities</span></div>';
+        statsHtml += '<div class="stat-pill"><span class="stat-value">' + formatNumber(s.people_count) + '</span><span class="stat-label">People</span></div>';
+        statsHtml += '<div class="stat-pill"><span class="stat-value">' + formatNumber(s.company_count) + '</span><span class="stat-label">Companies</span></div>';
+        if (s.action_item_count > 0) {
+          statsHtml += '<div class="stat-pill"><span class="stat-value">' + formatNumber(s.action_item_count) + '</span><span class="stat-label">Action Items</span></div>';
+        }
+        statsHtml += '</div>';
+      } else {
+        statsHtml = '<div class="empty-stats">No data yet</div>';
+      }
+
+      let footerHtml = '<div class="integration-footer">';
+      if (s.first_pulled) {
+        footerHtml += '<span>First synced: ' + formatDate(s.first_pulled) + '</span>';
+      }
+      if (s.last_pulled) {
+        footerHtml += '<span>Last synced: ' + formatDate(s.last_pulled) + '</span>';
+      }
+      if (item.webhook_path && item.enabled) {
+        footerHtml += '<span>Webhook: <code>' + escapeHtml(item.webhook_path) + '</code></span>';
+      }
+      if (item.can_pull && item.enabled) {
+        footerHtml += '<span class="pull-btn"><button class="btn btn-sm btn-primary" onclick="pullLatest(\'' + item.id + '\', this)">Pull Latest</button></span>';
+      }
+      footerHtml += '</div>';
+
+      return '<div class="integration-card">' +
+        '<div class="integration-header">' +
+          '<div class="integration-icon ' + iconClass + '">' + letter + '</div>' +
+          '<div class="integration-title-row">' +
+            '<span class="integration-name">' + escapeHtml(item.name) + '</span>' +
+            statusBadge +
+          '</div>' +
+        '</div>' +
+        '<div class="integration-description">' + escapeHtml(item.description) + '</div>' +
+        statsHtml +
+        footerHtml +
+      '</div>';
+    }
+
+    function showFlash(message, type) {
+      const container = document.getElementById('flash-container');
+      const flash = document.createElement('div');
+      flash.className = 'flash flash-' + type;
+      flash.textContent = message;
+      container.innerHTML = '';
+      container.appendChild(flash);
+      setTimeout(function() { flash.remove(); }, 6000);
+    }
+
+    async function pullLatest(id, btn) {
+      const origText = btn.textContent;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span>Pulling...';
+
+      try {
+        const res = await fetch('/admin/api/integrations/' + id + '/pull', { method: 'POST' });
+        const data = await res.json();
+
+        if (!res.ok) {
+          showFlash('Pull failed: ' + (data.error || 'Unknown error'), 'error');
+          return;
+        }
+
+        const parts = [];
+        if (data.queued > 0) parts.push(data.queued + ' new meeting(s) queued');
+        if (data.skipped > 0) parts.push(data.skipped + ' already imported');
+        if (data.errors > 0) parts.push(data.errors + ' error(s)');
+
+        showFlash(parts.length > 0 ? parts.join(', ') : 'No new meetings found', data.queued > 0 ? 'success' : 'success');
+
+        // Reload stats
+        loadIntegrations();
+      } catch (err) {
+        showFlash('Pull failed: ' + err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = origText;
+      }
+    }
+
+    async function loadIntegrations() {
+      try {
+        const res = await fetch('/admin/api/integrations/stats');
+        const integrations = await res.json();
+        const container = document.getElementById('integrations-list');
+        container.innerHTML = integrations.map(renderIntegration).join('');
+      } catch (err) {
+        document.getElementById('integrations-list').innerHTML =
+          '<div class="empty-state">Failed to load integrations</div>';
+      }
+    }
+
+    loadIntegrations();
+  </script>
+</body>
+</html>
