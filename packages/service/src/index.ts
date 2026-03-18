@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import fs from 'fs';
 import express from 'express';
 import pg from 'pg';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
@@ -20,12 +21,15 @@ import { verifyFathomSignature } from './fathom/verify.js';
 import { handleFathomEvent } from './fathom/webhook.js';
 import { createCorrectionRoutes } from './corrections/routes.js';
 import { describeUndescribedRelationships } from './processor/relationship-describer.js';
-import { isOllamaBusy } from './ollama-mutex.js';
+import { acquireOllama, releaseOllama } from './ollama-mutex.js';
 
 const config = loadConfig();
 const pool = new pg.Pool({ connectionString: config.databaseUrl });
 
 const app = express();
+
+// --- Ensure raw files directory exists ---
+fs.mkdirSync(config.rawFilesDir, { recursive: true });
 
 // --- Health check ---
 app.get('/health', (_req, res) => {
@@ -180,11 +184,13 @@ let pollInterval: ReturnType<typeof setInterval>;
 
 function startPoller() {
   pollInterval = setInterval(async () => {
-    if (isOllamaBusy()) return;
+    if (!acquireOllama('ingestion')) return;
     try {
       await pollQueue(pool, config);
     } catch (err) {
       console.error('Queue poll error:', err);
+    } finally {
+      releaseOllama('ingestion');
     }
   }, config.pollIntervalMs);
 }
@@ -194,7 +200,7 @@ let profileInterval: ReturnType<typeof setInterval>;
 
 function startProfileRefresher() {
   profileInterval = setInterval(async () => {
-    if (isOllamaBusy()) return;
+    if (!acquireOllama('background')) return;
     try {
       const count = await refreshStaleProfiles(pool, config);
       if (count > 0) {
@@ -202,6 +208,8 @@ function startProfileRefresher() {
       }
     } catch (err) {
       console.error('Profile refresh error:', err);
+    } finally {
+      releaseOllama('background');
     }
   }, PROFILE_REFRESH_INTERVAL_MS);
 }
@@ -233,7 +241,7 @@ function startRelationshipDescriber() {
   if (!config.relationshipModel) return;
 
   relationshipInterval = setInterval(async () => {
-    if (isOllamaBusy()) return;
+    if (!acquireOllama('background')) return;
     try {
       const count = await describeUndescribedRelationships(pool, {
         ollamaBaseUrl: config.ollamaBaseUrl,
@@ -244,6 +252,8 @@ function startRelationshipDescriber() {
       }
     } catch (err) {
       console.error('Relationship description error:', err);
+    } finally {
+      releaseOllama('background');
     }
   }, RELATIONSHIP_DESCRIPTION_INTERVAL_MS);
 }

@@ -1,10 +1,14 @@
 import { Router } from 'express';
 import express from 'express';
+import crypto from 'crypto';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import multer from 'multer';
 import type pg from 'pg';
 import type { Config } from '../config.js';
 import { syncFathomMeetings } from '../fathom/sync.js';
+import { parseFile } from '../parsers/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -101,6 +105,14 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
             [def.source],
           );
 
+          // Count pending queue items for this source
+          const { rows: [queueRow] } = await pool.query(
+            `SELECT COUNT(*) as pending_count
+            FROM queue
+            WHERE source = $1 AND processed_at IS NULL`,
+            [def.source],
+          );
+
           return {
             id: def.id,
             name: def.name,
@@ -117,6 +129,7 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
               action_item_count: parseInt(aiRow.action_item_count, 10),
               first_pulled: stats.first_pulled,
               last_pulled: stats.last_pulled,
+              pending_count: parseInt(queueRow.pending_count, 10),
             },
           };
         }),
@@ -153,21 +166,44 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
   });
 
   // ---- Entity stats API for dashboard ----
+  const VALID_ENTITY_TYPES = ['person', 'company', 'topic', 'product', 'project', 'place'];
+  const VALID_ENTITY_SORTS = ['mentions', 'last_seen', 'relationships', 'inputs'];
+
   router.get('/api/entities/stats', async (req, res) => {
     try {
-      const sort = req.query.sort === 'last_seen' ? 'last_seen' : 'mentions';
-      const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 200);
+      const sortParam = (req.query.sort as string) || 'mentions';
+      const sort = VALID_ENTITY_SORTS.includes(sortParam) ? sortParam : 'mentions';
+      const limit = Math.min(parseInt(req.query.limit as string, 10) || 30, 200);
       const offset = parseInt(req.query.offset as string, 10) || 0;
+      const entityType = (req.query.entity_type as string) || '';
 
       const { rows: typeCounts } = await pool.query(
         `SELECT entity_type, COUNT(*) as count
          FROM entities
+         WHERE mention_count > 0
          GROUP BY entity_type
          ORDER BY count DESC`
       );
 
+      // Build conditions
+      const conditions: string[] = ['e.mention_count > 0'];
+      const params: (string | number)[] = [];
+      let paramIdx = 1;
+
+      if (entityType && VALID_ENTITY_TYPES.includes(entityType)) {
+        conditions.push(`e.entity_type = $${paramIdx}`);
+        params.push(entityType);
+        paramIdx++;
+      }
+
+      const whereClause = 'WHERE ' + conditions.join(' AND ');
+
       const orderClause = sort === 'last_seen'
         ? 'ORDER BY last_seen_at DESC NULLS LAST'
+        : sort === 'relationships'
+        ? 'ORDER BY relationship_count DESC'
+        : sort === 'inputs'
+        ? 'ORDER BY input_count DESC'
         : 'ORDER BY e.mention_count DESC';
 
       const { rows: entities } = await pool.query(
@@ -177,16 +213,28 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
                    JOIN thoughts t ON t.id = te.thought_id
                    WHERE te.entity_id = e.id),
                   e.last_seen_at
-                ) as last_seen_at
+                ) as last_seen_at,
+                COALESCE(
+                  (SELECT COUNT(*) FROM entity_relationships er
+                   WHERE (er.source_id = e.id OR er.target_id = e.id)
+                   AND er.invalid_at IS NULL),
+                  0
+                )::int as relationship_count,
+                COALESCE(
+                  (SELECT COUNT(DISTINCT te2.thought_id) FROM thought_entities te2
+                   WHERE te2.entity_id = e.id),
+                  0
+                )::int as input_count
          FROM entities e
-         WHERE e.mention_count > 0
+         ${whereClause}
          ${orderClause}
-         LIMIT $1 OFFSET $2`,
-        [limit, offset]
+         LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
+        [...params, limit, offset]
       );
 
       const { rows: [totalRow] } = await pool.query(
-        `SELECT COUNT(*) as total FROM entities WHERE mention_count > 0`
+        `SELECT COUNT(*) as total FROM entities e ${whereClause}`,
+        params
       );
 
       const { rows: proposalCounts } = await pool.query(
@@ -367,6 +415,106 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
     }
   });
 
+  // ---- Health stats API ----
+  router.get('/api/health/stats', async (_req, res) => {
+    try {
+      // Queue status counts
+      const { rows: statusCounts } = await pool.query(
+        `SELECT status, COUNT(*) as count FROM queue GROUP BY status`
+      );
+
+      // Extraction gaps: parent thoughts with no metadata (no embedding = not processed)
+      const { rows: [gapRow] } = await pool.query(
+        `SELECT COUNT(*) as count FROM thoughts
+         WHERE parent_id IS NULL AND embedding IS NULL AND source != 'manual'`
+      );
+
+      // Recent failed items
+      const { rows: failedItems } = await pool.query(
+        `SELECT id, source, source_id, error, attempts, created_at, processed_at
+         FROM queue
+         WHERE status = 'failed'
+         ORDER BY COALESCE(processed_at, created_at) DESC
+         LIMIT 20`
+      );
+
+      // Pending retries in backoff
+      const { rows: pendingRetries } = await pool.query(
+        `SELECT id, source, source_id, error, attempts, retry_after, created_at
+         FROM queue
+         WHERE status = 'pending' AND retry_after IS NOT NULL AND retry_after > NOW()
+         ORDER BY retry_after ASC
+         LIMIT 20`
+      );
+
+      // Ollama availability check
+      let ollamaAvailable = false;
+      try {
+        const ctrl = new AbortController();
+        const timeout = setTimeout(() => ctrl.abort(), 3000);
+        const resp = await fetch(`${config.ollamaBaseUrl}/api/tags`, { signal: ctrl.signal });
+        ollamaAvailable = resp.ok;
+        clearTimeout(timeout);
+      } catch {
+        ollamaAvailable = false;
+      }
+
+      const counts: Record<string, number> = {};
+      for (const row of statusCounts) {
+        counts[row.status] = parseInt(row.count, 10);
+      }
+
+      res.json({
+        queue: {
+          pending: counts['pending'] || 0,
+          processing: counts['processing'] || 0,
+          completed: counts['completed'] || 0,
+          failed: counts['failed'] || 0,
+        },
+        extraction_gaps: parseInt(gapRow.count, 10),
+        failed_items: failedItems,
+        pending_retries: pendingRetries,
+        ollama_available: ollamaAvailable,
+      });
+    } catch (err) {
+      console.error('Health stats error:', err);
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  // ---- Retry all failed queue items ----
+  router.post('/api/health/retry-all', async (_req, res) => {
+    try {
+      const { rowCount } = await pool.query(
+        `UPDATE queue SET status = 'pending', error = NULL, retry_after = NULL, processed_at = NULL
+         WHERE status = 'failed'`
+      );
+      res.json({ ok: true, count: rowCount });
+    } catch (err) {
+      console.error('Retry all error:', err);
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  // ---- Retry single failed queue item ----
+  router.post('/api/health/retry/:id', async (req, res) => {
+    try {
+      const { rowCount } = await pool.query(
+        `UPDATE queue SET status = 'pending', error = NULL, retry_after = NULL, processed_at = NULL
+         WHERE id = $1 AND status = 'failed'`,
+        [req.params.id]
+      );
+      if (rowCount === 0) {
+        res.status(404).json({ error: 'Item not found or not in failed state' });
+        return;
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      console.error('Retry error:', err);
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
   // ---- Ingest: save content to the brain ----
   router.post('/api/ingest', async (req, res) => {
     try {
@@ -393,6 +541,121 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
       res.json({ id: row.id, status: 'queued' });
     } catch (err) {
       console.error('Ingest error:', err);
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  // ---- File upload ingest ----
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 20 * 1024 * 1024 },
+  });
+
+  router.post('/api/ingest/file', upload.single('file'), async (req, res) => {
+    try {
+      if (!req.file) {
+        res.status(400).json({ error: 'No file provided' });
+        return;
+      }
+
+      const parsed = await parseFile(req.file.buffer, req.file.originalname, req.file.mimetype);
+      let text = parsed.text.trim();
+
+      if (!text) {
+        res.status(400).json({ error: 'No text content extracted from file' });
+        return;
+      }
+
+      // Prepend context note if provided
+      const contextNote = (req.body?.context_note || '').trim();
+      if (contextNote) {
+        text = `[Context: ${contextNote}]\n\n${text}`;
+      }
+
+      // Save raw file for future reprocessing (best-effort)
+      const fileId = crypto.randomUUID();
+      const ext = path.extname(req.file.originalname).slice(1).toLowerCase();
+      const rawFilePath = path.join(config.rawFilesDir, `${fileId}.${ext}`);
+      try {
+        await fs.promises.writeFile(rawFilePath, req.file.buffer);
+      } catch (err) {
+        console.warn('Failed to save raw file:', (err as Error).message);
+      }
+
+      const meta: Record<string, unknown> = {
+        title: parsed.title || req.file.originalname,
+        file_type: ext,
+        original_filename: req.file.originalname,
+        file_size: req.file.size,
+        raw_file_path: rawFilePath,
+        thought_type: req.body?.category || 'document',
+      };
+
+      if (parsed.pageCount) meta.page_count = parsed.pageCount;
+      if (parsed.author) meta.author = parsed.author;
+      if (parsed.creationDate) meta.creation_date = parsed.creationDate;
+      if (parsed.keywords) meta.keywords = parsed.keywords;
+      if (contextNote) meta.context_note = contextNote;
+
+      const attribution = (req.body?.attribution || '').trim();
+      if (attribution) meta.attribution = attribution;
+
+      if (req.body?.related_entity_ids) {
+        try {
+          meta.related_entity_ids = JSON.parse(req.body.related_entity_ids);
+        } catch { /* ignore bad JSON */ }
+      }
+
+      const { rows: [row] } = await pool.query(
+        `INSERT INTO queue (content, source, source_meta) VALUES ($1, 'manual', $2) RETURNING id`,
+        [text, JSON.stringify(meta)]
+      );
+
+      res.json({
+        id: row.id,
+        status: 'queued',
+        title: meta.title,
+        pageCount: parsed.pageCount,
+        textLength: text.length,
+      });
+    } catch (err) {
+      const message = (err as Error).message || 'Failed to parse file';
+      // Parser errors (scanned PDF, magic byte mismatch, unsupported type) → 400
+      if (message.includes('scanned') || message.includes('magic byte') || message.includes('Unsupported')) {
+        res.status(400).json({ error: message });
+      } else {
+        console.error('File ingest error:', err);
+        res.status(500).json({ error: message });
+      }
+    }
+  });
+
+  // Handle multer size limit errors
+  router.use('/api/ingest/file', (err: any, _req: any, res: any, next: any) => {
+    if (err?.code === 'LIMIT_FILE_SIZE') {
+      res.status(413).json({ error: 'File too large (max 20MB)' });
+      return;
+    }
+    next(err);
+  });
+
+  // ---- Entity autocomplete search ----
+  router.get('/api/entities/search', async (req, res) => {
+    try {
+      const q = (req.query.q as string || '').trim();
+      if (q.length < 2) {
+        res.json([]);
+        return;
+      }
+      const { rows } = await pool.query(
+        `SELECT id, name, entity_type FROM entities
+         WHERE name ILIKE $1 AND mention_count > 0
+         ORDER BY mention_count DESC LIMIT 10`,
+        [`%${q}%`]
+      );
+      res.json(rows);
+    } catch (err) {
+      console.error('Entity search error:', err);
       res.status(500).json({ error: 'Internal error' });
     }
   });

@@ -71,6 +71,98 @@
     }
     .mode-btn:hover { border-color: var(--border-glass-hover); color: var(--text-primary); }
     .mode-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .context-section {
+      margin-top: 16px;
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+    }
+    .context-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      background: var(--bg-surface);
+      border: none;
+      width: 100%;
+      cursor: pointer;
+      font-size: 13px;
+      font-family: var(--font);
+      color: var(--text-secondary);
+      transition: all var(--transition);
+    }
+    .context-toggle:hover { color: var(--text-primary); }
+    .context-toggle .chevron { transition: transform 0.2s; font-size: 10px; }
+    .context-toggle .chevron.open { transform: rotate(90deg); }
+    .context-body { padding: 0 14px 14px; }
+    .context-body .form-row { margin-bottom: 12px; }
+    .context-body label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 4px; font-weight: 500; }
+    .context-body textarea, .context-body input, .context-body select {
+      width: 100%;
+      font-size: 13px;
+      font-family: var(--font);
+      box-sizing: border-box;
+    }
+    .entity-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .entity-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-pill);
+      font-size: 12px;
+      color: var(--text-primary);
+    }
+    .entity-tag .tag-type {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+    .entity-tag button {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text-muted);
+      font-size: 14px;
+      padding: 0 2px;
+      line-height: 1;
+    }
+    .entity-tag button:hover { color: var(--accent-rose); }
+    .entity-dropdown {
+      position: absolute;
+      z-index: 10;
+      background: var(--bg-card);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-md);
+      max-height: 200px;
+      overflow-y: auto;
+      width: 100%;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    .entity-dropdown-item {
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 13px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .entity-dropdown-item:hover { background: var(--bg-surface); }
+    .entity-dropdown-item .entity-type-badge {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      padding: 1px 6px;
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-pill);
+    }
   </style>
 </head>
 <body>
@@ -105,6 +197,9 @@
         </a>
         <a href="examples.html" class="sidebar-link">
           <span class="link-icon">&#x1F4DD;</span> Examples
+        </a>
+        <a href="health.html" class="sidebar-link">
+          <span class="link-icon">&#x1F527;</span> Health
         </a>
       </div>
       <div class="sidebar-spacer"></div>
@@ -180,47 +275,81 @@
                          @change="handleFileSelect($event)">
                   <div class="drop-icon">&#x1F4C1;</div>
                   <div class="drop-text">Drop files here or click to browse</div>
-                  <div class="drop-hint">.txt, .md, .csv, .json, .log, .html, .xml — text files only</div>
+                  <div class="drop-hint">.txt, .md, .csv, .json, .pdf, .docx — up to 20MB</div>
                 </div>
 
                 <!-- File list -->
                 <div class="file-list" x-show="files.length > 0">
                   <template x-for="(file, idx) in files" :key="idx">
                     <div class="file-item">
-                      <span class="file-icon">&#x1F4C4;</span>
+                      <span class="file-icon" x-text="fileIcon(file.name)"></span>
                       <span class="file-name" x-text="file.name"></span>
                       <span class="file-size" x-text="formatFileSize(file.size)"></span>
-                      <span class="file-status" :style="{ color: file.error ? 'var(--accent-rose)' : 'var(--accent-emerald)' }"
-                            x-text="file.error || (file.loaded ? 'Ready' : 'Reading...')"></span>
-                      <button class="file-remove" @click="removeFile(idx)">&times;</button>
+                      <span class="file-status" :style="{ color: file.error ? 'var(--accent-rose)' : file.uploaded ? 'var(--accent-emerald)' : 'var(--text-muted)' }"
+                            x-text="file.error || (file.uploaded ? ('Queued — ' + file.textLength + ' chars') : file.uploading ? 'Uploading...' : 'Ready')"></span>
+                      <button class="file-remove" @click="removeFile(idx)" x-show="!file.uploading">&times;</button>
                     </div>
                   </template>
                 </div>
 
-                <!-- Combined preview -->
-                <div x-show="content && inputMode === 'upload'" style="margin-top:12px">
-                  <div style="font-size:12px; color:var(--text-muted); margin-bottom:6px"
-                       x-text="'Preview (' + content.length + ' characters from ' + files.filter(f => f.loaded).length + ' file(s))'"></div>
-                  <textarea x-model="content" class="content-area" style="min-height:120px" readonly></textarea>
+                <!-- Context section for file uploads -->
+                <div class="context-section" x-show="files.length > 0">
+                  <button class="context-toggle" @click="showContext = !showContext">
+                    <span class="chevron" :class="{ open: showContext }">&#x25B6;</span>
+                    Add Context (optional)
+                  </button>
+                  <div class="context-body" x-show="showContext">
+                    <div class="form-row">
+                      <label>Context note — what is this document about?</label>
+                      <textarea x-model="contextNote" rows="2" placeholder="e.g., Q4 board deck from Chris, covers revenue targets and hiring plan"></textarea>
+                    </div>
+                    <div class="form-row">
+                      <label>Source attribution — who sent this / where is it from?</label>
+                      <input type="text" x-model="attribution" placeholder="e.g., From Chris Psiaki via email">
+                    </div>
+                    <div class="form-row" style="position:relative">
+                      <label>Related entities</label>
+                      <input type="text" x-model="entitySearch" @input="searchEntities()" @focus="searchEntities()"
+                             @blur="setTimeout(() => entityResults = [], 200)"
+                             placeholder="Search for people, companies, projects...">
+                      <div class="entity-dropdown" x-show="entityResults.length > 0">
+                        <template x-for="ent in entityResults" :key="ent.id">
+                          <div class="entity-dropdown-item" @mousedown.prevent="addEntity(ent)">
+                            <span x-text="ent.name"></span>
+                            <span class="entity-type-badge" x-text="ent.entity_type"></span>
+                          </div>
+                        </template>
+                      </div>
+                      <div class="entity-tags" x-show="selectedEntities.length > 0">
+                        <template x-for="(ent, idx) in selectedEntities" :key="ent.id">
+                          <span class="entity-tag">
+                            <span x-text="ent.name"></span>
+                            <span class="tag-type" x-text="ent.entity_type"></span>
+                            <button @click="selectedEntities.splice(idx, 1)">&times;</button>
+                          </span>
+                        </template>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
 
-          <!-- People (optional) -->
-          <div class="form-row">
+          <!-- People (optional, write mode only) -->
+          <div class="form-row" x-show="inputMode === 'write'">
             <label>People</label>
             <input type="text" x-model="people" placeholder="Comma-separated names (optional)">
           </div>
 
-          <!-- Topics (optional) -->
-          <div class="form-row">
+          <!-- Topics (optional, write mode only) -->
+          <div class="form-row" x-show="inputMode === 'write'">
             <label>Topics</label>
             <input type="text" x-model="topics" placeholder="Comma-separated topics (optional)">
           </div>
 
           <div class="form-actions">
-            <button class="btn btn-primary" @click="submit()" :disabled="submitting || !content.trim()">
+            <button class="btn btn-primary" @click="submit()" :disabled="submitting || (!content.trim() && !hasUploadableFiles())">
               <span x-show="!submitting">Save to Brain</span>
               <span x-show="submitting">Saving...</span>
             </button>
@@ -249,6 +378,10 @@
 
   <script>
     function ingestApp() {
+      var BINARY_TYPES = ['pdf', 'docx', 'doc'];
+      var TEXT_TYPES = ['txt', 'md', 'csv', 'json', 'log', 'html', 'xml', 'rtf', 'tsv', 'yml', 'yaml', 'toml', 'ini', 'cfg', 'conf'];
+      var ALL_TYPES = TEXT_TYPES.concat(BINARY_TYPES);
+
       return {
         contentType: 'note',
         inputMode: 'write',
@@ -260,6 +393,12 @@
         isDragging: false,
         files: [],
         recentSubmissions: [],
+        showContext: false,
+        contextNote: '',
+        attribution: '',
+        entitySearch: '',
+        entityResults: [],
+        selectedEntities: [],
 
         contentPlaceholder() {
           var placeholders = {
@@ -269,6 +408,18 @@
             conversation: 'Paste the conversation here...\n\nPeople and topics will be extracted automatically.'
           };
           return placeholders[this.contentType] || 'Enter content...';
+        },
+
+        fileIcon(name) {
+          var ext = name.split('.').pop().toLowerCase();
+          if (ext === 'pdf') return '\u{1F4D5}';
+          if (ext === 'docx' || ext === 'doc') return '\u{1F4D8}';
+          return '\u{1F4C4}';
+        },
+
+        isBinaryFile(name) {
+          var ext = name.split('.').pop().toLowerCase();
+          return BINARY_TYPES.includes(ext);
         },
 
         handleDrop(event) {
@@ -289,30 +440,41 @@
               name: file.name,
               size: file.size,
               loaded: false,
+              uploaded: false,
+              uploading: false,
               text: '',
+              textLength: 0,
               error: null,
+              nativeFile: file,
+              isBinary: this.isBinaryFile(file.name),
             };
 
             // Check file type
             var ext = file.name.split('.').pop().toLowerCase();
-            var textTypes = ['txt', 'md', 'csv', 'json', 'log', 'html', 'xml', 'rtf', 'tsv', 'yml', 'yaml', 'toml', 'ini', 'cfg', 'conf'];
-            if (!textTypes.includes(ext) && !file.type.startsWith('text/')) {
+            if (!ALL_TYPES.includes(ext) && !file.type.startsWith('text/')) {
               entry.error = 'Unsupported file type';
               entry.loaded = true;
               this.files.push(entry);
               continue;
             }
 
-            // Check size (max 5MB per file)
-            if (file.size > 5 * 1024 * 1024) {
-              entry.error = 'File too large (max 5MB)';
+            // Check size (max 20MB)
+            if (file.size > 20 * 1024 * 1024) {
+              entry.error = 'File too large (max 20MB)';
               entry.loaded = true;
               this.files.push(entry);
               continue;
             }
 
             this.files.push(entry);
-            this.readFile(file, this.files.length - 1);
+
+            if (entry.isBinary) {
+              // Binary files: marked as ready, will be uploaded server-side
+              entry.loaded = true;
+            } else {
+              // Text files: read client-side
+              this.readFile(file, this.files.length - 1);
+            }
           }
         },
 
@@ -333,21 +495,23 @@
 
         buildContentFromFiles() {
           var parts = [];
-          for (var i = 0; i < this.files.length; i++) {
-            var f = this.files[i];
-            if (f.loaded && f.text && !f.error) {
-              if (this.files.filter(function(x) { return x.loaded && x.text && !x.error; }).length > 1) {
-                parts.push('--- ' + f.name + ' ---\n' + f.text);
-              } else {
-                parts.push(f.text);
-              }
-              // Auto-set title from first file if empty
-              if (!this.title && i === 0) {
-                this.title = f.name.replace(/\.[^.]+$/, '');
-              }
+          var textFiles = this.files.filter(function(f) { return f.loaded && f.text && !f.error && !f.isBinary; });
+          for (var i = 0; i < textFiles.length; i++) {
+            var f = textFiles[i];
+            if (textFiles.length > 1) {
+              parts.push('--- ' + f.name + ' ---\n' + f.text);
+            } else {
+              parts.push(f.text);
+            }
+            if (!this.title && i === 0) {
+              this.title = f.name.replace(/\.[^.]+$/, '');
             }
           }
           this.content = parts.join('\n\n');
+        },
+
+        hasUploadableFiles() {
+          return this.files.some(function(f) { return f.loaded && !f.error && !f.uploaded; });
         },
 
         removeFile(idx) {
@@ -361,56 +525,135 @@
           return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
         },
 
-        async submit() {
-          if (!this.content.trim()) return;
-          this.submitting = true;
-
+        async searchEntities() {
+          var q = this.entitySearch.trim();
+          if (q.length < 2) { this.entityResults = []; return; }
           try {
-            var fullContent = this.content;
-            if (this.title && this.inputMode === 'write') {
-              fullContent = this.title + '\n\n' + fullContent;
-            }
-
-            var body = {
-              content: fullContent,
-              thought_type: this.contentType,
-              source: 'manual',
-            };
-
-            var meta = {};
-            if (this.title) meta.title = this.title;
-            if (this.people.trim()) {
-              meta.people = this.people.split(',').map(function(p) { return p.trim(); }).filter(Boolean);
-            }
-            if (this.topics.trim()) {
-              meta.topics = this.topics.split(',').map(function(t) { return t.trim(); }).filter(Boolean);
-            }
-            if (this.files.length > 0) {
-              meta.filenames = this.files.filter(function(f) { return f.loaded && !f.error; }).map(function(f) { return f.name; });
-            }
-            if (Object.keys(meta).length > 0) {
-              body.source_meta = meta;
-            }
-
-            var res = await fetch('/admin/api/ingest', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(body),
-            });
-
+            var res = await fetch('/admin/api/entities/search?q=' + encodeURIComponent(q));
             var data = await res.json();
-            if (res.ok) {
-              flash('Content saved successfully! It will be processed shortly.', 'success');
-              this.recentSubmissions.unshift({
-                id: data.id || Date.now(),
-                title: this.title || this.contentType,
-                type: this.contentType,
-                preview: this.content.slice(0, 150) + (this.content.length > 150 ? '...' : ''),
-                savedAt: new Date().toISOString(),
+            // Filter out already selected
+            var selectedIds = this.selectedEntities.map(function(e) { return e.id; });
+            this.entityResults = data.filter(function(e) { return !selectedIds.includes(e.id); });
+          } catch (e) {
+            this.entityResults = [];
+          }
+        },
+
+        addEntity(ent) {
+          if (!this.selectedEntities.find(function(e) { return e.id === ent.id; })) {
+            this.selectedEntities.push(ent);
+          }
+          this.entitySearch = '';
+          this.entityResults = [];
+        },
+
+        async submit() {
+          this.submitting = true;
+          try {
+            // Upload binary files server-side
+            var binaryFiles = this.files.filter(function(f) { return f.isBinary && f.loaded && !f.error && !f.uploaded; });
+            for (var i = 0; i < binaryFiles.length; i++) {
+              var bf = binaryFiles[i];
+              bf.uploading = true;
+              try {
+                var formData = new FormData();
+                formData.append('file', bf.nativeFile);
+                formData.append('category', this.contentType);
+                if (this.contextNote.trim()) formData.append('context_note', this.contextNote.trim());
+                if (this.attribution.trim()) formData.append('attribution', this.attribution.trim());
+                if (this.selectedEntities.length > 0) {
+                  formData.append('related_entity_ids', JSON.stringify(this.selectedEntities.map(function(e) { return e.id; })));
+                }
+
+                var res = await fetch('/admin/api/ingest/file', {
+                  method: 'POST',
+                  body: formData,
+                });
+                var data = await res.json();
+                if (res.ok) {
+                  bf.uploaded = true;
+                  bf.textLength = data.textLength || 0;
+                  this.recentSubmissions.unshift({
+                    id: data.id || Date.now(),
+                    title: data.title || bf.name,
+                    type: this.contentType,
+                    preview: (data.pageCount ? data.pageCount + ' pages, ' : '') + (data.textLength || 0) + ' characters extracted',
+                    savedAt: new Date().toISOString(),
+                  });
+                } else {
+                  bf.error = data.error || 'Upload failed';
+                }
+              } catch (err) {
+                bf.error = 'Network error: ' + err.message;
+              } finally {
+                bf.uploading = false;
+              }
+            }
+
+            // Submit text content (from write mode or text file uploads)
+            var textContent = this.content.trim();
+            if (textContent) {
+              var fullContent = textContent;
+              if (this.title && this.inputMode === 'write') {
+                fullContent = this.title + '\n\n' + fullContent;
+              }
+
+              var body = {
+                content: fullContent,
+                thought_type: this.contentType,
+              };
+
+              var meta = {};
+              if (this.title) meta.title = this.title;
+              if (this.people.trim()) {
+                meta.people = this.people.split(',').map(function(p) { return p.trim(); }).filter(Boolean);
+              }
+              if (this.topics.trim()) {
+                meta.topics = this.topics.split(',').map(function(t) { return t.trim(); }).filter(Boolean);
+              }
+              if (this.files.length > 0) {
+                meta.filenames = this.files.filter(function(f) { return f.loaded && !f.error && !f.isBinary; }).map(function(f) { return f.name; });
+              }
+              if (Object.keys(meta).length > 0) {
+                body.source_meta = meta;
+              }
+
+              var res = await fetch('/admin/api/ingest', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
               });
-              this.clear();
-            } else {
-              flash(data.error || 'Failed to save content.', 'error');
+
+              var data = await res.json();
+              if (res.ok) {
+                this.recentSubmissions.unshift({
+                  id: data.id || Date.now(),
+                  title: this.title || this.contentType,
+                  type: this.contentType,
+                  preview: textContent.slice(0, 150) + (textContent.length > 150 ? '...' : ''),
+                  savedAt: new Date().toISOString(),
+                });
+              } else {
+                flash(data.error || 'Failed to save content.', 'error');
+                return;
+              }
+            }
+
+            // If we got here with something submitted, show success
+            var totalSubmitted = binaryFiles.filter(function(f) { return f.uploaded; }).length + (textContent ? 1 : 0);
+            if (totalSubmitted > 0) {
+              flash(totalSubmitted + ' item(s) saved successfully! They will be processed shortly.', 'success');
+              // Clear text fields but keep files visible with status
+              this.title = '';
+              this.content = '';
+              this.people = '';
+              this.topics = '';
+              this.contextNote = '';
+              this.attribution = '';
+              this.selectedEntities = [];
+              this.entitySearch = '';
+            } else if (binaryFiles.length === 0 && !textContent) {
+              flash('Nothing to save. Add content or upload a file first.', 'error');
             }
           } catch (err) {
             flash('Network error: ' + err.message, 'error');
@@ -425,6 +668,11 @@
           this.people = '';
           this.topics = '';
           this.files = [];
+          this.contextNote = '';
+          this.attribution = '';
+          this.selectedEntities = [];
+          this.entitySearch = '';
+          this.entityResults = [];
         },
 
         formatDate(dateStr) {

@@ -12,12 +12,19 @@
     "test:coverage": "vitest run --coverage",
     "migrate": "tsx scripts/migrate.ts",
     "build": "npm run build --workspaces",
-    "dev": "tsx packages/service/src/index.ts"
+    "dev": "tsx watch packages/service/src/index.ts"
   },
   "devDependencies": {
-    "typescript": "^5.4.0",
+    "@types/multer": "^2.1.0",
+    "dotenv": "^16.4.0",
     "tsx": "^4.7.0",
-    "vitest": "^2.0.0",
-    "dotenv": "^16.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^2.0.0"
+  },
+  "dependencies": {
+    "file-type": "^21.3.3",
+    "mammoth": "^1.12.0",
+    "multer": "^2.1.1",
+    "pdf-parse": "^1.1.1"
   }
 }

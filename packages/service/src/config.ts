@@ -12,13 +12,14 @@ const configSchema = z.object({
   fathomWebhookSecret: z.string().min(1).optional(),
   ollamaBaseUrl: z.string().default('http://localhost:11434'),
   embeddingModel: z.string().default('nomic-embed-text'),
-  extractionModel: z.string().default('llama3.1:8b'),
-  chatModel: z.string().default('llama4:scout'),
+  extractionModel: z.string().default('llama3.3:70b'),
+  chatModel: z.string().default('llama3.3:70b'),
   relationshipModel: z.string().min(1).optional(),
   mcpPort: z.number().int().default(3000),
   pollIntervalMs: z.number().int().default(5000),
   batchSize: z.number().int().default(5),
   maxRetries: z.number().int().default(3),
+  rawFilesDir: z.string().default('./data/raw-files'),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -43,5 +44,6 @@ export function loadConfig(): Config {
     pollIntervalMs: process.env.POLL_INTERVAL_MS ? parseInt(process.env.POLL_INTERVAL_MS, 10) : undefined,
     batchSize: process.env.BATCH_SIZE ? parseInt(process.env.BATCH_SIZE, 10) : undefined,
     maxRetries: process.env.MAX_RETRIES ? parseInt(process.env.MAX_RETRIES, 10) : undefined,
+    rawFilesDir: process.env.RAW_FILES_DIR || undefined,
   });
 }
