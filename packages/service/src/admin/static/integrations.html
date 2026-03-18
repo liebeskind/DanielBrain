@@ -26,6 +26,12 @@
         </a>
       </div>
       <div class="sidebar-section">
+        <div class="sidebar-section-label">Tools</div>
+        <a href="tools.html" class="sidebar-link">
+          <span class="link-icon">&#x1F3A4;</span> Transcribe
+        </a>
+      </div>
+      <div class="sidebar-section">
         <div class="sidebar-section-label">Manage</div>
         <a href="integrations.html" class="sidebar-link active">
           <span class="link-icon">&#x1F50C;</span> Integrations
@@ -38,6 +44,9 @@
         </a>
         <a href="examples.html" class="sidebar-link">
           <span class="link-icon">&#x1F4DD;</span> Examples
+        </a>
+        <a href="health.html" class="sidebar-link">
+          <span class="link-icon">&#x1F527;</span> Health
         </a>
       </div>
       <div class="sidebar-spacer"></div>
@@ -240,7 +249,7 @@
       let statsHtml = '';
       if (hasData) {
         statsHtml = '<div class="integration-stats">';
-        statsHtml += '<div class="stat-pill"><span class="stat-value">' + formatNumber(s.thought_count) + '</span><span class="stat-label">Items</span></div>';
+        statsHtml += '<div class="stat-pill"><span class="stat-value">' + formatNumber(s.thought_count) + '</span><span class="stat-label">Inputs</span></div>';
         statsHtml += '<div class="stat-pill"><span class="stat-value">' + formatNumber(s.entity_count) + '</span><span class="stat-label">Entities</span></div>';
         statsHtml += '<div class="stat-pill"><span class="stat-value">' + formatNumber(s.people_count) + '</span><span class="stat-label">People</span></div>';
         statsHtml += '<div class="stat-pill"><span class="stat-value">' + formatNumber(s.company_count) + '</span><span class="stat-label">Companies</span></div>';
@@ -263,7 +272,11 @@
         footerHtml += '<span>Webhook: <code>' + escapeHtml(item.webhook_path) + '</code></span>';
       }
       if (item.can_pull && item.enabled) {
-        footerHtml += '<span class="pull-btn"><button class="btn btn-sm btn-primary" onclick="pullLatest(\'' + item.id + '\', this)">Pull Latest</button></span>';
+        if (s.pending_count > 0) {
+          footerHtml += '<span class="pull-btn"><button class="btn btn-sm btn-primary" disabled title="' + s.pending_count + ' item(s) still processing in the queue">' + s.pending_count + ' in queue</button></span>';
+        } else {
+          footerHtml += '<span class="pull-btn"><button class="btn btn-sm btn-primary" onclick="pullLatest(\'' + item.id + '\', this)">Pull Latest</button></span>';
+        }
       }
       footerHtml += '</div>';
 
@@ -322,12 +335,23 @@
       }
     }
 
+    var pollTimer = null;
+
     async function loadIntegrations() {
       try {
         const res = await fetch('/admin/api/integrations/stats');
         const integrations = await res.json();
         const container = document.getElementById('integrations-list');
         container.innerHTML = integrations.map(renderIntegration).join('');
+
+        // Auto-poll while any source has pending queue items
+        var hasPending = integrations.some(function(i) { return i.stats.pending_count > 0; });
+        if (hasPending && !pollTimer) {
+          pollTimer = setInterval(loadIntegrations, 5000);
+        } else if (!hasPending && pollTimer) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+        }
       } catch (err) {
         document.getElementById('integrations-list').innerHTML =
           '<div class="empty-state">Failed to load integrations</div>';

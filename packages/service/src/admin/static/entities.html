@@ -26,6 +26,12 @@
         </a>
       </div>
       <div class="sidebar-section">
+        <div class="sidebar-section-label">Tools</div>
+        <a href="tools.html" class="sidebar-link">
+          <span class="link-icon">&#x1F3A4;</span> Transcribe
+        </a>
+      </div>
+      <div class="sidebar-section">
         <div class="sidebar-section-label">Manage</div>
         <a href="integrations.html" class="sidebar-link">
           <span class="link-icon">&#x1F50C;</span> Integrations
@@ -39,6 +45,9 @@
         <a href="examples.html" class="sidebar-link">
           <span class="link-icon">&#x1F4DD;</span> Examples
         </a>
+        <a href="health.html" class="sidebar-link">
+          <span class="link-icon">&#x1F527;</span> Health
+        </a>
       </div>
       <div class="sidebar-spacer"></div>
     </aside>
@@ -49,9 +58,7 @@
         <p>People, companies, topics, and other entities in your knowledge graph</p>
       </div>
 
-      <div class="stats-grid" id="type-counts">
-        <div class="loading">Loading stats</div>
-      </div>
+      <div class="tabs" id="type-filter"></div>
 
       <h2 id="entities-title">Top Entities by Mentions</h2>
       <table class="entity-table" id="entities-table">
@@ -60,15 +67,19 @@
             <th>Name</th>
             <th>Type</th>
             <th class="sortable active" data-sort="mentions" id="sort-mentions">Mentions &#x25BC;</th>
+            <th class="sortable" data-sort="relationships" id="sort-relationships">Relationships</th>
+            <th class="sortable" data-sort="inputs" id="sort-inputs">Inputs</th>
             <th class="sortable" data-sort="last_seen" id="sort-last_seen">Last Seen</th>
           </tr>
         </thead>
         <tbody>
-          <tr><td colspan="4" class="loading">Loading</td></tr>
+          <tr><td colspan="6" class="loading">Loading</td></tr>
         </tbody>
       </table>
 
-      <div class="pagination" id="pagination"></div>
+      <div id="scroll-sentinel" style="height: 1px;"></div>
+      <div class="loading" id="load-more" style="display: none; text-align: center; padding: 1rem;">Loading more...</div>
+      <div id="all-loaded" style="display: none; text-align: center; padding: 1rem; color: #888;">All entities loaded</div>
 
       <h2>Proposal Status</h2>
       <div class="stats-grid" id="proposal-counts">
@@ -81,69 +92,115 @@
     .sortable { cursor: pointer; user-select: none; }
     .sortable:hover { color: #4f8ff7; }
     .sortable.active { color: #4f8ff7; }
+    .tabs { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
+    .tab { padding: 0.4rem 0.8rem; border-radius: 4px; border: 1px solid #ddd; background: transparent; cursor: pointer; font-size: 0.85rem; color: #666; }
+    .tab:hover { border-color: #4f8ff7; color: #4f8ff7; }
+    .tab.active { background: #4f8ff7; color: #fff; border-color: #4f8ff7; }
   </style>
   <script>
     function escapeHtml(str) {
-      const div = document.createElement('div');
+      var div = document.createElement('div');
       div.textContent = str;
       return div.innerHTML;
     }
 
     function formatDate(dateStr) {
       if (!dateStr) return '';
-      const d = new Date(dateStr);
+      var d = new Date(dateStr);
       return d.toLocaleDateString();
     }
 
-    let currentSort = 'mentions';
-    let currentOffset = 0;
-    const PAGE_SIZE = 50;
-    let totalEntities = 0;
+    var currentSort = 'mentions';
+    var currentOffset = 0;
+    var PAGE_SIZE = 30;
+    var totalEntities = 0;
+    var currentTypeFilter = '';
+    var isLoading = false;
+    var typeCounts = [];
 
-    function renderEntities(entities) {
-      const tbody = document.querySelector('#entities-table tbody');
-      if (entities.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No entities yet.</td></tr>';
-        document.getElementById('pagination').innerHTML = '';
+    var SORT_LABELS = {
+      mentions: 'Mentions',
+      relationships: 'Relationships',
+      inputs: 'Inputs',
+      last_seen: 'Last Seen'
+    };
+
+    var SORT_TITLES = {
+      mentions: 'Top Entities by Mentions',
+      relationships: 'Top Entities by Relationships',
+      inputs: 'Top Entities by Inputs',
+      last_seen: 'Recently Active Entities'
+    };
+
+    function appendEntities(entities) {
+      var tbody = document.querySelector('#entities-table tbody');
+      if (currentOffset === 0) {
+        tbody.innerHTML = '';
+      }
+      if (entities.length === 0 && currentOffset === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No entities found.</td></tr>';
         return;
       }
-      tbody.innerHTML = entities.map(function(e) {
-        return '<tr><td>' + escapeHtml(e.name) + '</td>' +
+      entities.forEach(function(e) {
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td>' + escapeHtml(e.name) + '</td>' +
           '<td><span class="badge badge-entity-' + e.entity_type + '">' + escapeHtml(e.entity_type) + '</span></td>' +
           '<td>' + e.mention_count + '</td>' +
-          '<td>' + formatDate(e.last_seen_at) + '</td></tr>';
-      }).join('');
+          '<td>' + (e.relationship_count || 0) + '</td>' +
+          '<td>' + (e.input_count || 0) + '</td>' +
+          '<td>' + formatDate(e.last_seen_at) + '</td>';
+        tbody.appendChild(tr);
+      });
+    }
 
-      // Update title
-      document.getElementById('entities-title').textContent =
-        currentSort === 'mentions' ? 'Top Entities by Mentions' : 'Recently Active Entities';
+    function updateSortHeaders() {
+      document.querySelectorAll('.sortable').forEach(function(th) {
+        var sort = th.dataset.sort;
+        th.classList.toggle('active', sort === currentSort);
+        th.textContent = SORT_LABELS[sort] + (sort === currentSort ? ' \u25BC' : '');
+      });
+      document.getElementById('entities-title').textContent = SORT_TITLES[currentSort] || 'Entities';
+    }
 
-      // Update arrows
-      var mentionsHeader = document.getElementById('sort-mentions');
-      var lastSeenHeader = document.getElementById('sort-last_seen');
-      mentionsHeader.classList.toggle('active', currentSort === 'mentions');
-      lastSeenHeader.classList.toggle('active', currentSort === 'last_seen');
-      mentionsHeader.textContent = 'Mentions' + (currentSort === 'mentions' ? ' \u25BC' : '');
-      lastSeenHeader.textContent = 'Last Seen' + (currentSort === 'last_seen' ? ' \u25BC' : '');
+    function renderTypeFilter() {
+      var el = document.getElementById('type-filter');
+      var html = '<span class="tab' + (currentTypeFilter === '' ? ' active' : '') + '" data-type="">All</span>';
+      typeCounts.forEach(function(tc) {
+        html += '<span class="tab' + (currentTypeFilter === tc.entity_type ? ' active' : '') +
+          '" data-type="' + escapeHtml(tc.entity_type) + '">' +
+          escapeHtml(tc.entity_type) + ' (' + tc.count + ')</span>';
+      });
+      el.innerHTML = html;
 
-      // Pagination
-      var pag = document.getElementById('pagination');
-      var page = Math.floor(currentOffset / PAGE_SIZE) + 1;
-      var totalPages = Math.ceil(totalEntities / PAGE_SIZE);
-      if (totalPages <= 1) {
-        pag.innerHTML = '<span class="page-info">' + totalEntities + ' entities</span>';
+      el.querySelectorAll('.tab').forEach(function(tab) {
+        tab.addEventListener('click', function() {
+          var type = tab.dataset.type;
+          if (currentTypeFilter !== type) {
+            currentTypeFilter = type;
+            resetAndLoad();
+          }
+        });
+      });
+    }
+
+    function updateScrollState() {
+      var loadMore = document.getElementById('load-more');
+      var allLoaded = document.getElementById('all-loaded');
+      if (currentOffset >= totalEntities) {
+        loadMore.style.display = 'none';
+        allLoaded.style.display = totalEntities > 0 ? 'block' : 'none';
       } else {
-        pag.innerHTML =
-          '<button class="btn btn-sm" ' + (currentOffset === 0 ? 'disabled' : '') + ' onclick="changePage(-1)">&laquo; Prev</button>' +
-          '<span class="page-info">Page ' + page + ' of ' + totalPages + ' (' + totalEntities + ' entities)</span>' +
-          '<button class="btn btn-sm" ' + (currentOffset + PAGE_SIZE >= totalEntities ? 'disabled' : '') + ' onclick="changePage(1)">Next &raquo;</button>';
+        loadMore.style.display = 'none';
+        allLoaded.style.display = 'none';
       }
     }
 
-    function changePage(dir) {
-      currentOffset += dir * PAGE_SIZE;
-      if (currentOffset < 0) currentOffset = 0;
-      loadEntities();
+    function resetAndLoad() {
+      currentOffset = 0;
+      document.querySelector('#entities-table tbody').innerHTML = '';
+      document.getElementById('all-loaded').style.display = 'none';
+      loadEntities(true);
     }
 
     document.querySelectorAll('.sortable').forEach(function(th) {
@@ -151,47 +208,71 @@
         var sort = th.dataset.sort;
         if (currentSort !== sort) {
           currentSort = sort;
-          currentOffset = 0;
-          loadEntities();
+          updateSortHeaders();
+          resetAndLoad();
         }
       });
     });
 
-    async function loadEntities() {
-      var sortParam = currentSort === 'last_seen' ? 'last_seen' : 'mentions';
+    async function loadEntities(isReset) {
+      if (isLoading) return;
+      isLoading = true;
+
+      if (!isReset && currentOffset > 0) {
+        document.getElementById('load-more').style.display = 'block';
+      }
+
+      var url = '/admin/api/entities/stats?sort=' + currentSort +
+        '&limit=' + PAGE_SIZE + '&offset=' + currentOffset;
+      if (currentTypeFilter) {
+        url += '&entity_type=' + encodeURIComponent(currentTypeFilter);
+      }
+
       try {
-        var res = await fetch('/admin/api/entities/stats?sort=' + sortParam + '&limit=' + PAGE_SIZE + '&offset=' + currentOffset);
+        var res = await fetch(url);
         var data = await res.json();
 
-        var countsEl = document.getElementById('type-counts');
-        if (data.type_counts.length === 0) {
-          countsEl.innerHTML = '<div class="empty-state">No entities yet.</div>';
-        } else {
-          countsEl.innerHTML = data.type_counts.map(function(tc) {
-            return '<div class="stat-card"><div class="number">' + tc.count + '</div>' +
-              '<div class="label">' + escapeHtml(tc.entity_type) + '</div></div>';
-          }).join('');
+        // Filter pills — only on reset
+        if (isReset || currentOffset === 0) {
+          typeCounts = data.type_counts;
+          renderTypeFilter();
+
+          var proposalEl = document.getElementById('proposal-counts');
+          if (data.proposal_counts.length === 0) {
+            proposalEl.innerHTML = '<div class="empty-state">No proposals yet.</div>';
+          } else {
+            proposalEl.innerHTML = data.proposal_counts.map(function(pc) {
+              return '<div class="stat-card"><div class="number">' + pc.count + '</div>' +
+                '<div class="label">' + escapeHtml(pc.status) + '</div></div>';
+            }).join('');
+          }
         }
 
         totalEntities = data.total || 0;
-        renderEntities(data.entities || []);
-
-        var proposalEl = document.getElementById('proposal-counts');
-        if (data.proposal_counts.length === 0) {
-          proposalEl.innerHTML = '<div class="empty-state">No proposals yet.</div>';
-        } else {
-          proposalEl.innerHTML = data.proposal_counts.map(function(pc) {
-            return '<div class="stat-card"><div class="number">' + pc.count + '</div>' +
-              '<div class="label">' + escapeHtml(pc.status) + '</div></div>';
-          }).join('');
-        }
+        appendEntities(data.entities || []);
+        currentOffset += (data.entities || []).length;
+        updateScrollState();
       } catch (err) {
-        document.getElementById('type-counts').innerHTML =
-          '<div class="empty-state">Failed to load stats.</div>';
+        if (currentOffset === 0) {
+          document.getElementById('type-filter').innerHTML =
+            '<span class="tab active">Failed to load</span>';
+        }
+      } finally {
+        isLoading = false;
+        document.getElementById('load-more').style.display = 'none';
       }
     }
 
-    loadEntities();
+    // IntersectionObserver for infinite scroll
+    var sentinel = document.getElementById('scroll-sentinel');
+    var observer = new IntersectionObserver(function(entries) {
+      if (entries[0].isIntersecting && !isLoading && currentOffset < totalEntities) {
+        loadEntities(false);
+      }
+    }, { rootMargin: '200px' });
+    observer.observe(sentinel);
+
+    loadEntities(true);
   </script>
 </body>
 </html>

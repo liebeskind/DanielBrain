@@ -28,8 +28,9 @@ const pool = new pg.Pool({ connectionString: config.databaseUrl });
 
 const app = express();
 
-// --- Ensure raw files directory exists ---
+// --- Ensure data directories exist ---
 fs.mkdirSync(config.rawFilesDir, { recursive: true });
+fs.mkdirSync(config.transcribeDir, { recursive: true });
 
 // --- Health check ---
 app.get('/health', (_req, res) => {

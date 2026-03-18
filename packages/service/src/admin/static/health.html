@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Health - TopiaBrain</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <a href="index.html" class="sidebar-logo">
+        <span class="logo-icon">T</span>
+        TopiaBrain
+      </a>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Knowledge</div>
+        <a href="browse.html" class="sidebar-link">
+          <span class="link-icon">&#x1F4DA;</span> Browse
+        </a>
+        <a href="ingest.html" class="sidebar-link">
+          <span class="link-icon">&#x2795;</span> Add Content
+        </a>
+        <a href="/chat" class="sidebar-link">
+          <span class="link-icon">&#x1F4AC;</span> Chat
+        </a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Tools</div>
+        <a href="tools.html" class="sidebar-link">
+          <span class="link-icon">&#x1F3A4;</span> Transcribe
+        </a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Manage</div>
+        <a href="integrations.html" class="sidebar-link">
+          <span class="link-icon">&#x1F50C;</span> Integrations
+        </a>
+        <a href="entities.html" class="sidebar-link">
+          <span class="link-icon">&#x1F465;</span> Entities
+        </a>
+        <a href="approvals.html" class="sidebar-link">
+          <span class="link-icon">&#x2705;</span> Approvals
+        </a>
+        <a href="examples.html" class="sidebar-link">
+          <span class="link-icon">&#x1F4DD;</span> Examples
+        </a>
+        <a href="health.html" class="sidebar-link active">
+          <span class="link-icon">&#x1F527;</span> Health
+        </a>
+      </div>
+      <div class="sidebar-spacer"></div>
+    </aside>
+
+    <main class="main-content" x-data="healthApp()" x-init="init()">
+      <div class="page-header">
+        <h1>System Health</h1>
+        <p>Queue status, failed items, and retry management</p>
+      </div>
+
+      <!-- Stats grid -->
+      <div class="stats-grid" x-show="stats">
+        <div class="stat-card" :style="stats?.queue?.pending > 0 ? 'border-color: var(--accent-amber)' : ''">
+          <div class="number" x-text="stats?.queue?.pending || 0"></div>
+          <div class="label">Pending</div>
+        </div>
+        <div class="stat-card" :style="stats?.queue?.processing > 0 ? 'border-color: var(--accent-sky)' : ''">
+          <div class="number" x-text="stats?.queue?.processing || 0"></div>
+          <div class="label">Processing</div>
+        </div>
+        <div class="stat-card" :style="stats?.queue?.failed > 0 ? 'border-color: var(--accent-red, #ef4444)' : ''">
+          <div class="number" style="color: var(--accent-red, #ef4444)" x-text="stats?.queue?.failed || 0"></div>
+          <div class="label">Failed</div>
+        </div>
+        <div class="stat-card" :style="stats?.extraction_gaps > 0 ? 'border-color: var(--accent-amber)' : ''">
+          <div class="number" x-text="stats?.extraction_gaps || 0"></div>
+          <div class="label">Extraction Gaps</div>
+        </div>
+        <div class="stat-card">
+          <div class="number" x-text="stats?.queue?.completed || 0"></div>
+          <div class="label">Completed</div>
+        </div>
+        <div class="stat-card" :style="stats?.ollama_available ? 'border-color: var(--accent-green, #22c55e)' : 'border-color: var(--accent-red, #ef4444)'">
+          <div class="number" :style="stats?.ollama_available ? 'color: var(--accent-green, #22c55e)' : 'color: var(--accent-red, #ef4444)'"
+               x-text="stats?.ollama_available ? 'Online' : 'Offline'"></div>
+          <div class="label">Ollama</div>
+        </div>
+      </div>
+
+      <!-- Retry All button -->
+      <div style="margin: 24px 0; display: flex; gap: 12px; align-items: center;">
+        <button class="btn btn-primary" @click="retryAll()" :disabled="!stats?.queue?.failed || retrying">
+          <span x-text="retrying ? 'Retrying...' : 'Retry All Failed (' + (stats?.queue?.failed || 0) + ')'"></span>
+        </button>
+        <span x-show="retryMessage" x-text="retryMessage" style="color: var(--accent-green, #22c55e); font-size: 13px;"></span>
+      </div>
+
+      <!-- Pending retries in backoff -->
+      <template x-if="stats?.pending_retries?.length > 0">
+        <div style="margin-bottom: 32px;">
+          <h2 style="font-size: 18px; margin-bottom: 12px;">Pending Retries</h2>
+          <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">Items waiting for retry after transient failure</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Source</th>
+                  <th>Source ID</th>
+                  <th>Attempts</th>
+                  <th>Error</th>
+                  <th>Retry At</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="item in stats.pending_retries" :key="item.id">
+                  <tr>
+                    <td><span :class="'badge badge-source-' + item.source" x-text="item.source"></span></td>
+                    <td style="font-size: 12px; font-family: monospace;" x-text="item.source_id ? item.source_id.slice(0, 20) : '-'"></td>
+                    <td x-text="item.attempts"></td>
+                    <td style="font-size: 12px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" x-text="item.error || '-'"></td>
+                    <td x-text="formatCountdown(item.retry_after)"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </template>
+
+      <!-- Failed items table -->
+      <div>
+        <h2 style="font-size: 18px; margin-bottom: 12px;">Failed Items</h2>
+        <template x-if="!stats?.failed_items?.length">
+          <div class="empty-state">No failed items. All clear!</div>
+        </template>
+        <template x-if="stats?.failed_items?.length > 0">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Source</th>
+                  <th>Source ID</th>
+                  <th>Attempts</th>
+                  <th>Error</th>
+                  <th>Failed At</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="item in stats.failed_items" :key="item.id">
+                  <tr>
+                    <td><span :class="'badge badge-source-' + item.source" x-text="item.source"></span></td>
+                    <td style="font-size: 12px; font-family: monospace;" x-text="item.source_id ? item.source_id.slice(0, 20) : '-'"></td>
+                    <td x-text="item.attempts"></td>
+                    <td style="font-size: 12px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                        :title="item.error" x-text="item.error || '-'"></td>
+                    <td x-text="formatDate(item.processed_at || item.created_at)"></td>
+                    <td>
+                      <button class="btn btn-small" @click="retrySingle(item.id)">Retry</button>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </template>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    function healthApp() {
+      return {
+        stats: null,
+        loading: false,
+        retrying: false,
+        retryMessage: '',
+        refreshTimer: null,
+
+        async init() {
+          await this.loadStats();
+          this.startAutoRefresh();
+        },
+
+        async loadStats() {
+          try {
+            const res = await fetch('/admin/api/health/stats');
+            this.stats = await res.json();
+          } catch (e) {
+            console.error('Health stats error:', e);
+          }
+        },
+
+        startAutoRefresh() {
+          if (this.refreshTimer) clearInterval(this.refreshTimer);
+          this.refreshTimer = setInterval(() => {
+            if (this.stats && (this.stats.queue.pending > 0 || this.stats.queue.processing > 0 || this.stats.pending_retries?.length > 0)) {
+              this.loadStats();
+            }
+          }, 5000);
+        },
+
+        async retryAll() {
+          this.retrying = true;
+          this.retryMessage = '';
+          try {
+            const res = await fetch('/admin/api/health/retry-all', { method: 'POST' });
+            const data = await res.json();
+            this.retryMessage = 'Queued ' + (data.count || 0) + ' items for retry';
+            await this.loadStats();
+          } catch (e) {
+            this.retryMessage = 'Retry failed: ' + e.message;
+          } finally {
+            this.retrying = false;
+          }
+        },
+
+        async retrySingle(id) {
+          try {
+            await fetch('/admin/api/health/retry/' + id, { method: 'POST' });
+            await this.loadStats();
+          } catch (e) {
+            console.error('Retry error:', e);
+          }
+        },
+
+        formatDate(dateStr) {
+          if (!dateStr) return '';
+          var d = new Date(dateStr);
+          var now = new Date();
+          var diff = now - d;
+          if (diff < 86400000) {
+            return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          }
+          return d.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        },
+
+        formatCountdown(dateStr) {
+          if (!dateStr) return '';
+          var target = new Date(dateStr);
+          var now = new Date();
+          var diffMs = target - now;
+          if (diffMs <= 0) return 'now';
+          var secs = Math.floor(diffMs / 1000);
+          if (secs < 60) return secs + 's';
+          var mins = Math.floor(secs / 60);
+          var remainSecs = secs % 60;
+          return mins + 'm ' + remainSecs + 's';
+        }
+      };
+    }
+  </script>
+</body>
+</html>

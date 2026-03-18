@@ -9,6 +9,8 @@ import type pg from 'pg';
 import type { Config } from '../config.js';
 import { syncFathomMeetings } from '../fathom/sync.js';
 import { parseFile } from '../parsers/index.js';
+import { createJob, getJob, updateJob, listJobs } from '../transcribe/job-tracker.js';
+import { runTranscription, formatAsSrt } from '../transcribe/service.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -217,6 +219,7 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
                 COALESCE(
                   (SELECT COUNT(*) FROM entity_relationships er
                    WHERE (er.source_id = e.id OR er.target_id = e.id)
+                   AND er.is_explicit = TRUE
                    AND er.invalid_at IS NULL),
                   0
                 )::int as relationship_count,
@@ -637,6 +640,161 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
       return;
     }
     next(err);
+  });
+
+  // ---- Audio transcription ----
+  const AUDIO_EXTENSIONS = new Set(['m4a', 'mp3', 'wav', 'ogg', 'flac', 'webm', 'mp4', 'aac', 'wma']);
+  const audioUpload = multer({
+    storage: multer.diskStorage({
+      destination: config.transcribeDir,
+      filename: (_req, file, cb) => {
+        const ext = path.extname(file.originalname).slice(1).toLowerCase();
+        cb(null, `${crypto.randomUUID()}.${ext}`);
+      },
+    }),
+    limits: { fileSize: 200 * 1024 * 1024 }, // 200MB
+    fileFilter: (_req, file, cb) => {
+      const ext = path.extname(file.originalname).slice(1).toLowerCase();
+      if (!AUDIO_EXTENSIONS.has(ext)) {
+        cb(new Error(`Unsupported audio format: .${ext}`));
+        return;
+      }
+      cb(null, true);
+    },
+  });
+
+  router.post('/api/transcribe', audioUpload.single('file'), async (req, res) => {
+    try {
+      if (!req.file) {
+        res.status(400).json({ error: 'No audio file provided' });
+        return;
+      }
+
+      const job = createJob(
+        crypto.randomUUID(),
+        req.file.path,
+        req.file.originalname,
+        req.file.size,
+      );
+
+      // Start transcription in background (don't await)
+      runTranscription(job.id, config).catch(err => {
+        console.error('Transcription background error:', err);
+      });
+
+      res.json({ id: job.id, status: job.status });
+    } catch (err) {
+      console.error('Transcribe upload error:', err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // Handle audio upload errors (file size, format)
+  router.use('/api/transcribe', (err: any, _req: any, res: any, next: any) => {
+    if (err?.code === 'LIMIT_FILE_SIZE') {
+      res.status(413).json({ error: 'File too large (max 200MB)' });
+      return;
+    }
+    if (err?.message?.includes('Unsupported audio format')) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    next(err);
+  });
+
+  router.get('/api/transcribe/:id', async (req, res) => {
+    const job = getJob(req.params.id);
+    if (!job) {
+      res.status(404).json({ error: 'Job not found' });
+      return;
+    }
+    res.json(job);
+  });
+
+  router.get('/api/transcribe', async (_req, res) => {
+    res.json(listJobs().slice(0, 20));
+  });
+
+  router.post('/api/transcribe/:id/save', async (req, res) => {
+    try {
+      const job = getJob(req.params.id);
+      if (!job) {
+        res.status(404).json({ error: 'Job not found' });
+        return;
+      }
+      if (job.status !== 'completed' || !job.result) {
+        res.status(400).json({ error: 'Transcription not yet completed' });
+        return;
+      }
+      if (job.savedToQueue) {
+        res.json({ id: job.queueId, status: 'already_saved' });
+        return;
+      }
+
+      let content = job.result.text;
+      const contextNote = (req.body?.context_note || '').trim();
+      if (contextNote) {
+        content = `[Context: ${contextNote}]\n\n${content}`;
+      }
+
+      const meta: Record<string, unknown> = {
+        title: req.body?.title || job.originalFilename.replace(/\.[^.]+$/, ''),
+        thought_type: 'meeting_transcript',
+        source_type: 'audio_transcription',
+        original_filename: job.originalFilename,
+        audio_duration: job.result.duration,
+        language: job.result.language,
+        segment_count: job.result.segments.length,
+        whisper_model: config.whisperModel,
+      };
+      if (job.result.summary) meta.summary_hint = job.result.summary;
+      if (contextNote) meta.context_note = contextNote;
+
+      const attribution = (req.body?.attribution || '').trim();
+      if (attribution) meta.attribution = attribution;
+
+      const { rows: [row] } = await pool.query(
+        `INSERT INTO queue (content, source, source_meta) VALUES ($1, 'transcription', $2) RETURNING id`,
+        [content, JSON.stringify(meta)]
+      );
+
+      updateJob(job.id, { savedToQueue: true, queueId: row.id });
+
+      res.json({ id: row.id, status: 'queued' });
+    } catch (err) {
+      console.error('Transcribe save error:', err);
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  router.get('/api/transcribe/:id/download', async (req, res) => {
+    const job = getJob(req.params.id);
+    if (!job || !job.result) {
+      res.status(404).json({ error: 'Transcription not found or not completed' });
+      return;
+    }
+
+    const format = (req.query.format as string) || 'txt';
+    const basename = job.originalFilename.replace(/\.[^.]+$/, '');
+
+    if (format === 'srt') {
+      res.setHeader('Content-Type', 'text/srt');
+      res.setHeader('Content-Disposition', `attachment; filename="${basename}.srt"`);
+      res.send(formatAsSrt(job.result.segments));
+    } else if (format === 'json') {
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition', `attachment; filename="${basename}.json"`);
+      res.json(job.result);
+    } else {
+      // txt: transcript + summary
+      res.setHeader('Content-Type', 'text/plain');
+      res.setHeader('Content-Disposition', `attachment; filename="${basename}.txt"`);
+      let text = job.result.text;
+      if (job.result.summary) {
+        text = `SUMMARY\n${'='.repeat(40)}\n${job.result.summary}\n\nTRANSCRIPT\n${'='.repeat(40)}\n${text}`;
+      }
+      res.send(text);
+    }
   });
 
   // ---- Entity autocomplete search ----

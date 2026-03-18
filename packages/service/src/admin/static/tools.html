@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tools - TopiaBrain</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>
+    .tool-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+    .tool-card h2 { margin: 0 0 6px; font-size: 18px; }
+    .tool-card .tool-desc { color: var(--text-secondary); font-size: 13px; margin-bottom: 16px; }
+
+    .drop-zone {
+      border: 2px dashed var(--border-glass);
+      border-radius: var(--radius-lg);
+      padding: 32px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: all var(--transition);
+      margin-bottom: 16px;
+      position: relative;
+    }
+    .drop-zone:hover, .drop-zone.dragover {
+      border-color: var(--accent);
+      background: var(--accent-glow);
+    }
+    .drop-zone .drop-icon { font-size: 32px; margin-bottom: 8px; }
+    .drop-zone .drop-text { font-size: 14px; color: var(--text-secondary); }
+    .drop-zone .drop-hint { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+    .drop-zone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .progress-container {
+      margin: 16px 0;
+      padding: 16px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-md);
+    }
+    .progress-bar-track {
+      height: 6px;
+      background: var(--bg-surface);
+      border-radius: 3px;
+      overflow: hidden;
+      margin: 10px 0;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.3s;
+    }
+    .progress-bar-fill.indeterminate {
+      width: 30%;
+      animation: indeterminate 1.5s ease-in-out infinite;
+      background: var(--accent);
+    }
+    @keyframes indeterminate {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(400%); }
+    }
+    .progress-status { font-size: 13px; color: var(--text-secondary); }
+    .progress-status.error { color: var(--accent-rose); }
+
+    .result-section {
+      margin-top: 16px;
+    }
+    .result-section h3 { margin: 0 0 8px; font-size: 15px; }
+    .result-meta {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .result-meta span { display: inline-flex; align-items: center; gap: 4px; }
+
+    .summary-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-md);
+      padding: 14px;
+      margin-bottom: 12px;
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--text-primary);
+    }
+
+    .transcript-area {
+      width: 100%;
+      min-height: 200px;
+      max-height: 400px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-md);
+      padding: 12px;
+      font-size: 13px;
+      font-family: var(--font);
+      color: var(--text-primary);
+      resize: vertical;
+      line-height: 1.6;
+      box-sizing: border-box;
+    }
+
+    .action-bar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+
+    .save-options {
+      margin-top: 12px;
+      padding: 14px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-md);
+    }
+    .save-options label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 4px; font-weight: 500; }
+    .save-options input, .save-options textarea {
+      width: 100%;
+      font-size: 13px;
+      font-family: var(--font);
+      box-sizing: border-box;
+      margin-bottom: 10px;
+    }
+
+    .job-history {
+      margin-top: 24px;
+    }
+    .job-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-md);
+      margin-bottom: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+    .job-item:hover { border-color: var(--border-glass-hover); }
+    .job-item .job-name { flex: 1; color: var(--text-primary); }
+    .job-item .job-date { color: var(--text-muted); font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <a href="index.html" class="sidebar-logo">
+        <span class="logo-icon">T</span>
+        TopiaBrain
+      </a>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Knowledge</div>
+        <a href="browse.html" class="sidebar-link">
+          <span class="link-icon">&#x1F4DA;</span> Browse
+        </a>
+        <a href="ingest.html" class="sidebar-link">
+          <span class="link-icon">&#x2795;</span> Add Content
+        </a>
+        <a href="/chat" class="sidebar-link">
+          <span class="link-icon">&#x1F4AC;</span> Chat
+        </a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Tools</div>
+        <a href="tools.html" class="sidebar-link active">
+          <span class="link-icon">&#x1F3A4;</span> Transcribe
+        </a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Manage</div>
+        <a href="integrations.html" class="sidebar-link">
+          <span class="link-icon">&#x1F50C;</span> Integrations
+        </a>
+        <a href="entities.html" class="sidebar-link">
+          <span class="link-icon">&#x1F465;</span> Entities
+        </a>
+        <a href="approvals.html" class="sidebar-link">
+          <span class="link-icon">&#x2705;</span> Approvals
+        </a>
+        <a href="examples.html" class="sidebar-link">
+          <span class="link-icon">&#x1F4DD;</span> Examples
+        </a>
+        <a href="health.html" class="sidebar-link">
+          <span class="link-icon">&#x1F527;</span> Health
+        </a>
+      </div>
+      <div class="sidebar-spacer"></div>
+    </aside>
+
+    <main class="main-content" x-data="transcribeApp()" x-init="loadJobs()">
+      <div class="page-header">
+        <h1>Tools</h1>
+        <p>Audio transcription, document conversion, and more</p>
+      </div>
+
+      <div id="flash"></div>
+
+      <!-- Audio Transcription Tool -->
+      <div class="tool-card">
+        <h2>Audio Transcription</h2>
+        <div class="tool-desc">Upload an audio file to get a transcript and AI summary. Runs locally on GPU via Whisper — nothing leaves your server.</div>
+
+        <!-- Upload zone (show when no active job) -->
+        <div x-show="!currentJob">
+          <div class="drop-zone" :class="{ dragover: isDragging }"
+               @dragover.prevent="isDragging = true"
+               @dragleave.prevent="isDragging = false"
+               @drop.prevent="handleDrop($event)">
+            <input type="file"
+                   accept=".m4a,.mp3,.wav,.ogg,.flac,.webm,.mp4,.aac,.wma"
+                   @change="handleFileSelect($event)">
+            <div class="drop-icon">&#x1F3A4;</div>
+            <div class="drop-text">Drop an audio file here or click to browse</div>
+            <div class="drop-hint">.m4a, .mp3, .wav, .ogg, .flac, .webm, .mp4 — up to 200MB</div>
+          </div>
+        </div>
+
+        <!-- Progress (show during transcription) -->
+        <div class="progress-container" x-show="currentJob && !isComplete() && !isFailed()">
+          <div style="display:flex; justify-content:space-between; align-items:center">
+            <strong x-text="currentJob?.originalFilename || ''"></strong>
+            <span style="font-size:12px; color:var(--text-muted)" x-text="formatFileSize(currentJob?.fileSize || 0)"></span>
+          </div>
+          <div class="progress-bar-track">
+            <div class="progress-bar-fill indeterminate"></div>
+          </div>
+          <div class="progress-status" x-text="statusMessage()"></div>
+        </div>
+
+        <!-- Error -->
+        <div class="progress-container" x-show="currentJob && isFailed()">
+          <div class="progress-status error" x-text="'Error: ' + (currentJob?.error || 'Unknown error')"></div>
+          <div class="action-bar">
+            <button class="btn" @click="reset()">Try Again</button>
+          </div>
+        </div>
+
+        <!-- Results (show when complete) -->
+        <div class="result-section" x-show="currentJob && isComplete()">
+          <div class="result-meta">
+            <span><strong x-text="currentJob?.originalFilename || ''"></strong></span>
+            <span x-text="formatDuration(currentJob?.result?.duration)"></span>
+            <span x-text="'Language: ' + (currentJob?.result?.language || '?')"></span>
+            <span x-text="(currentJob?.result?.segments?.length || 0) + ' segments'"></span>
+          </div>
+
+          <!-- Summary -->
+          <div x-show="currentJob?.result?.summary">
+            <h3>Summary</h3>
+            <div class="summary-card" x-text="currentJob?.result?.summary"></div>
+          </div>
+
+          <!-- Transcript -->
+          <h3>Transcript</h3>
+          <textarea class="transcript-area" readonly x-text="currentJob?.result?.text || ''"></textarea>
+
+          <!-- Action buttons -->
+          <div class="action-bar">
+            <button class="btn" @click="download('txt')">Download .txt</button>
+            <button class="btn" @click="download('srt')">Download .srt</button>
+            <button class="btn" @click="download('json')">Download .json</button>
+            <button class="btn btn-primary" @click="showSave = !showSave" x-show="!currentJob?.savedToQueue">
+              Save to Brain
+            </button>
+            <span x-show="currentJob?.savedToQueue" style="color:var(--accent-emerald); font-size:13px; padding:8px">
+              Saved to brain
+            </span>
+            <button class="btn" @click="reset()" style="margin-left:auto">New Transcription</button>
+          </div>
+
+          <!-- Save options -->
+          <div class="save-options" x-show="showSave && !currentJob?.savedToQueue">
+            <div>
+              <label>Title</label>
+              <input type="text" x-model="saveTitle" :placeholder="currentJob?.originalFilename?.replace(/\.[^.]+$/, '') || 'Untitled'">
+            </div>
+            <div>
+              <label>Context note (optional)</label>
+              <textarea x-model="saveContext" rows="2" placeholder="e.g., Weekly team standup with engineering"></textarea>
+            </div>
+            <div>
+              <label>Attribution (optional)</label>
+              <input type="text" x-model="saveAttribution" placeholder="e.g., Recorded by Daniel">
+            </div>
+            <div style="margin-top:8px">
+              <button class="btn btn-primary" @click="saveToQueue()" :disabled="saving">
+                <span x-show="!saving">Confirm Save</span>
+                <span x-show="saving">Saving...</span>
+              </button>
+              <button class="btn" @click="showSave = false">Cancel</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Recent transcriptions -->
+        <div class="job-history" x-show="recentJobs.length > 0 && !currentJob">
+          <h3>Recent Transcriptions</h3>
+          <template x-for="job in recentJobs" :key="job.id">
+            <div class="job-item" @click="loadJob(job.id)">
+              <span class="job-name" x-text="job.originalFilename"></span>
+              <span class="badge" :class="{
+                'badge-approved': job.status === 'completed',
+                'badge-pending': job.status === 'transcribing' || job.status === 'summarizing' || job.status === 'pending',
+                'badge-rejected': job.status === 'failed'
+              }" x-text="job.status"></span>
+              <span class="job-date" x-text="formatDate(job.createdAt)"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    function transcribeApp() {
+      return {
+        isDragging: false,
+        currentJob: null,
+        recentJobs: [],
+        pollTimer: null,
+        showSave: false,
+        saveTitle: '',
+        saveContext: '',
+        saveAttribution: '',
+        saving: false,
+
+        handleDrop(event) {
+          this.isDragging = false;
+          var files = event.dataTransfer.files;
+          if (files.length > 0) this.uploadFile(files[0]);
+        },
+
+        handleFileSelect(event) {
+          var files = event.target.files;
+          if (files.length > 0) this.uploadFile(files[0]);
+          event.target.value = '';
+        },
+
+        async uploadFile(file) {
+          // Validate size
+          if (file.size > 200 * 1024 * 1024) {
+            flash('File too large (max 200MB)', 'error');
+            return;
+          }
+
+          var formData = new FormData();
+          formData.append('file', file);
+
+          try {
+            var res = await fetch('/admin/api/transcribe', {
+              method: 'POST',
+              body: formData,
+            });
+            var data = await res.json();
+            if (!res.ok) {
+              flash(data.error || 'Upload failed', 'error');
+              return;
+            }
+            this.currentJob = { id: data.id, status: data.status, originalFilename: file.name, fileSize: file.size };
+            this.startPolling();
+          } catch (err) {
+            flash('Network error: ' + err.message, 'error');
+          }
+        },
+
+        startPolling() {
+          if (this.pollTimer) clearInterval(this.pollTimer);
+          var self = this;
+          this.pollTimer = setInterval(function() {
+            self.pollStatus();
+          }, 2000);
+        },
+
+        stopPolling() {
+          if (this.pollTimer) {
+            clearInterval(this.pollTimer);
+            this.pollTimer = null;
+          }
+        },
+
+        async pollStatus() {
+          if (!this.currentJob) { this.stopPolling(); return; }
+          try {
+            var res = await fetch('/admin/api/transcribe/' + this.currentJob.id);
+            if (!res.ok) return;
+            var data = await res.json();
+            this.currentJob = data;
+            if (data.status === 'completed' || data.status === 'failed') {
+              this.stopPolling();
+              if (data.status === 'completed') {
+                this.loadJobs(); // Refresh history
+              }
+            }
+          } catch (e) {
+            // Silent — will retry on next poll
+          }
+        },
+
+        async loadJob(id) {
+          try {
+            var res = await fetch('/admin/api/transcribe/' + id);
+            if (res.ok) {
+              this.currentJob = await res.json();
+              if (this.currentJob.status !== 'completed' && this.currentJob.status !== 'failed') {
+                this.startPolling();
+              }
+            }
+          } catch (e) {
+            flash('Failed to load job', 'error');
+          }
+        },
+
+        async loadJobs() {
+          try {
+            var res = await fetch('/admin/api/transcribe');
+            if (res.ok) {
+              this.recentJobs = await res.json();
+            }
+          } catch (e) {
+            // Silent
+          }
+        },
+
+        isComplete() { return this.currentJob && this.currentJob.status === 'completed'; },
+        isFailed() { return this.currentJob && this.currentJob.status === 'failed'; },
+
+        statusMessage() {
+          if (!this.currentJob) return '';
+          var msgs = {
+            pending: 'Queued for transcription...',
+            transcribing: 'Transcribing audio... this may take a few minutes for long recordings.',
+            summarizing: 'Generating AI summary...',
+            completed: 'Complete!',
+            failed: 'Failed',
+          };
+          return msgs[this.currentJob.status] || this.currentJob.status;
+        },
+
+        download(format) {
+          if (!this.currentJob) return;
+          window.open('/admin/api/transcribe/' + this.currentJob.id + '/download?format=' + format, '_blank');
+        },
+
+        async saveToQueue() {
+          if (!this.currentJob || this.saving) return;
+          this.saving = true;
+          try {
+            var body = {};
+            if (this.saveTitle.trim()) body.title = this.saveTitle.trim();
+            if (this.saveContext.trim()) body.context_note = this.saveContext.trim();
+            if (this.saveAttribution.trim()) body.attribution = this.saveAttribution.trim();
+
+            var res = await fetch('/admin/api/transcribe/' + this.currentJob.id + '/save', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+            var data = await res.json();
+            if (res.ok) {
+              this.currentJob.savedToQueue = true;
+              this.currentJob.queueId = data.id;
+              this.showSave = false;
+              flash('Transcript saved to brain! It will be processed shortly.', 'success');
+            } else {
+              flash(data.error || 'Save failed', 'error');
+            }
+          } catch (err) {
+            flash('Network error: ' + err.message, 'error');
+          } finally {
+            this.saving = false;
+          }
+        },
+
+        reset() {
+          this.currentJob = null;
+          this.showSave = false;
+          this.saveTitle = '';
+          this.saveContext = '';
+          this.saveAttribution = '';
+          this.stopPolling();
+          this.loadJobs();
+        },
+
+        formatFileSize(bytes) {
+          if (!bytes) return '';
+          if (bytes < 1024) return bytes + ' B';
+          if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+          return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        },
+
+        formatDuration(seconds) {
+          if (!seconds) return '';
+          var m = Math.floor(seconds / 60);
+          var s = Math.round(seconds % 60);
+          if (m >= 60) {
+            var h = Math.floor(m / 60);
+            m = m % 60;
+            return h + 'h ' + m + 'm ' + s + 's';
+          }
+          return m + 'm ' + s + 's';
+        },
+
+        formatDate(dateStr) {
+          if (!dateStr) return '';
+          var d = new Date(dateStr);
+          return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+      };
+    }
+
+    function flash(message, type) {
+      var el = document.getElementById('flash');
+      el.innerHTML = '<div class="flash flash-' + type + '">' + escapeHtml(message) + '</div>';
+      setTimeout(function() { el.innerHTML = ''; }, 5000);
+    }
+
+    function escapeHtml(str) {
+      var div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+  </script>
+</body>
+</html>

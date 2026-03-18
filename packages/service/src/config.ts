@@ -20,6 +20,8 @@ const configSchema = z.object({
   batchSize: z.number().int().default(5),
   maxRetries: z.number().int().default(3),
   rawFilesDir: z.string().default('./data/raw-files'),
+  whisperModel: z.string().default('large-v3'),
+  transcribeDir: z.string().default('./data/transcriptions'),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -45,5 +47,7 @@ export function loadConfig(): Config {
     batchSize: process.env.BATCH_SIZE ? parseInt(process.env.BATCH_SIZE, 10) : undefined,
     maxRetries: process.env.MAX_RETRIES ? parseInt(process.env.MAX_RETRIES, 10) : undefined,
     rawFilesDir: process.env.RAW_FILES_DIR || undefined,
+    whisperModel: process.env.WHISPER_MODEL || undefined,
+    transcribeDir: process.env.TRANSCRIBE_DIR || undefined,
   });
 }
