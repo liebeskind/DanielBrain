@@ -55,6 +55,7 @@ const baseConfig = {
   batchSize: 5,
   maxRetries: 3,
   rawFilesDir: '/tmp/test-raw-files',
+  whisperBaseUrl: 'http://localhost:8001',
   whisperModel: 'large-v3',
   transcribeDir: '/tmp/test-transcriptions',
 };

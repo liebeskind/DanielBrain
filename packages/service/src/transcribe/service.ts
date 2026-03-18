@@ -1,11 +1,6 @@
-import { execFile } from 'child_process';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import fs from 'fs';
 import { updateJob, getJob } from './job-tracker.js';
 import type { Config } from '../config.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SCRIPTS_DIR = path.resolve(__dirname, '..', '..', '..', '..', 'scripts');
 
 export async function runTranscription(jobId: string, config: Config): Promise<void> {
   const job = getJob(jobId);
@@ -14,8 +9,8 @@ export async function runTranscription(jobId: string, config: Config): Promise<v
   updateJob(jobId, { status: 'transcribing' });
 
   try {
-    // Run Python transcription script
-    const transcriptResult = await runPythonTranscribe(job.audioPath, config.whisperModel);
+    // Transcribe via faster-whisper-server API (OpenAI-compatible)
+    const transcriptResult = await callWhisperApi(job.audioPath, config);
 
     updateJob(jobId, { status: 'summarizing' });
 
@@ -44,49 +39,52 @@ export async function runTranscription(jobId: string, config: Config): Promise<v
   }
 }
 
-interface PythonTranscribeResult {
+interface TranscribeResult {
   text: string;
   segments: Array<{ start: number; end: number; text: string }>;
   language: string;
   duration: number;
 }
 
-export function runPythonTranscribe(audioPath: string, model: string): Promise<PythonTranscribeResult> {
-  return new Promise((resolve, reject) => {
-    const scriptPath = path.join(SCRIPTS_DIR, 'transcribe.py');
+async function callWhisperApi(audioPath: string, config: Config): Promise<TranscribeResult> {
+  const fileBuffer = await fs.promises.readFile(audioPath);
+  const filename = audioPath.split('/').pop() || 'audio.wav';
 
-    execFile(
-      'python3',
-      [scriptPath, audioPath, model],
-      {
-        timeout: 600_000, // 10 minutes
-        maxBuffer: 50 * 1024 * 1024, // 50MB for large transcripts
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          // Try to extract error JSON from stderr
-          let errorMsg = error.message;
-          if (stderr) {
-            try {
-              const parsed = JSON.parse(stderr);
-              if (parsed.error) errorMsg = parsed.error;
-            } catch {
-              errorMsg = stderr.trim() || errorMsg;
-            }
-          }
-          reject(new Error(errorMsg));
-          return;
-        }
+  // Build multipart form data manually using Blob/FormData
+  const formData = new FormData();
+  formData.append('file', new Blob([fileBuffer]), filename);
+  formData.append('model', `Systran/faster-whisper-${config.whisperModel}`);
+  formData.append('response_format', 'verbose_json');
+  formData.append('timestamp_granularities[]', 'segment');
 
-        try {
-          const result = JSON.parse(stdout);
-          resolve(result);
-        } catch {
-          reject(new Error('Failed to parse transcription output'));
-        }
-      },
-    );
+  const response = await fetch(`${config.whisperBaseUrl}/v1/audio/transcriptions`, {
+    method: 'POST',
+    body: formData,
+    signal: AbortSignal.timeout(600_000), // 10 min timeout
   });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    throw new Error(`Whisper API error: ${response.status} ${errorText}`);
+  }
+
+  const data = await response.json() as {
+    text: string;
+    language: string;
+    duration: number;
+    segments?: Array<{ start: number; end: number; text: string }>;
+  };
+
+  return {
+    text: data.text || '',
+    segments: (data.segments || []).map(s => ({
+      start: Math.round(s.start * 100) / 100,
+      end: Math.round(s.end * 100) / 100,
+      text: s.text.trim(),
+    })),
+    language: data.language || 'unknown',
+    duration: data.duration || 0,
+  };
 }
 
 async function generateSummary(text: string, config: Config): Promise<string> {
