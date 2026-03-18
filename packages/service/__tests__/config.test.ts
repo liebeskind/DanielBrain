@@ -10,7 +10,7 @@ describe('config', () => {
     vi.stubEnv('BRAIN_ACCESS_KEY', 'a'.repeat(64));
     vi.stubEnv('OLLAMA_BASE_URL', 'http://localhost:11434');
     vi.stubEnv('EMBEDDING_MODEL', 'nomic-embed-text');
-    vi.stubEnv('EXTRACTION_MODEL', 'llama3.1:8b');
+    vi.stubEnv('EXTRACTION_MODEL', 'llama3.3:70b');
     vi.stubEnv('SLACK_BOT_TOKEN', 'xoxb-test');
     vi.stubEnv('SLACK_SIGNING_SECRET', 'test-secret');
 
@@ -21,7 +21,7 @@ describe('config', () => {
     expect(config.brainAccessKey).toBe('a'.repeat(64));
     expect(config.ollamaBaseUrl).toBe('http://localhost:11434');
     expect(config.embeddingModel).toBe('nomic-embed-text');
-    expect(config.extractionModel).toBe('llama3.1:8b');
+    expect(config.extractionModel).toBe('llama3.3:70b');
   });
 
   it('uses defaults for optional values', async () => {
@@ -39,7 +39,7 @@ describe('config', () => {
     expect(config.maxRetries).toBe(3);
     expect(config.ollamaBaseUrl).toBe('http://localhost:11434');
     expect(config.embeddingModel).toBe('nomic-embed-text');
-    expect(config.extractionModel).toBe('llama3.1:8b');
+    expect(config.extractionModel).toBe('llama3.3:70b');
   });
 
   it('loads optional Telegram config when present', async () => {

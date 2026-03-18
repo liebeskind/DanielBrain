@@ -13,6 +13,7 @@
  *   --skip-entities  Re-extract metadata but skip entity re-resolution
  *   --offset       Start from this thought index (for resuming)
  *   --min-length   Skip thoughts shorter than this (default: 0)
+ *   --only-missing  Only process thoughts that haven't been extracted with the new schema yet
  */
 
 import 'dotenv/config';
@@ -28,10 +29,12 @@ const batchSize = parseInt(args.find(a => a.startsWith('--batch-size='))?.split(
 const delayMs = parseInt(args.find(a => a.startsWith('--delay-ms='))?.split('=')[1] || '500', 10);
 const startOffset = parseInt(args.find(a => a.startsWith('--offset='))?.split('=')[1] || '0', 10);
 const minLength = parseInt(args.find(a => a.startsWith('--min-length='))?.split('=')[1] || '0', 10);
+const onlyMissing = args.includes('--only-missing');
+const maxContent = parseInt(args.find(a => a.startsWith('--max-content='))?.split('=')[1] || '0', 10);
 
 const config = {
   ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
-  extractionModel: process.env.EXTRACTION_MODEL || 'llama3.1:8b',
+  extractionModel: process.env.EXTRACTION_MODEL || 'llama3.3:70b',
   embeddingModel: process.env.EMBEDDING_MODEL || 'nomic-embed-text',
   enableGleaning: true,
 };
@@ -44,6 +47,7 @@ interface ThoughtRow {
   thought_type: string;
   people: string[];
   summary: string;
+  created_at: string;
 }
 
 async function main() {
@@ -53,8 +57,9 @@ async function main() {
     // Count target thoughts
     const sourceFilter = source === 'all' ? '' : `AND source = '${source}'`;
     const lengthFilter = minLength > 0 ? `AND LENGTH(content) >= ${minLength}` : '';
+    const missingFilter = onlyMissing ? `AND (themes = '{}' AND key_decisions = '{}' AND department IS NULL)` : '';
     const { rows: [{ count: totalCount }] } = await pool.query(
-      `SELECT COUNT(*) as count FROM thoughts WHERE parent_id IS NULL ${sourceFilter} ${lengthFilter}`
+      `SELECT COUNT(*) as count FROM thoughts WHERE parent_id IS NULL ${sourceFilter} ${lengthFilter} ${missingFilter}`
     );
 
     console.log(`\nRe-extraction target: ${totalCount} parent thoughts${source !== 'all' ? ` (source: ${source})` : ''}`);
@@ -62,6 +67,7 @@ async function main() {
     console.log(`Model: ${config.extractionModel} @ ${config.ollamaBaseUrl}`);
     if (dryRun) console.log('DRY RUN — no changes will be written\n');
     if (skipEntities) console.log('Entity resolution SKIPPED\n');
+    if (onlyMissing) console.log('Only processing thoughts missing new extraction fields\n');
     if (startOffset > 0) console.log(`Resuming from offset ${startOffset}\n`);
 
     let offset = startOffset;
@@ -71,9 +77,9 @@ async function main() {
 
     while (true) {
       const { rows: thoughts } = await pool.query<ThoughtRow>(
-        `SELECT id, content, source, source_meta, thought_type, people, summary
+        `SELECT id, content, source, source_meta, thought_type, people, summary, created_at
          FROM thoughts
-         WHERE parent_id IS NULL ${sourceFilter} ${lengthFilter}
+         WHERE parent_id IS NULL ${sourceFilter} ${lengthFilter} ${missingFilter}
          ORDER BY created_at ASC
          LIMIT $1 OFFSET $2`,
         [batchSize, offset]
@@ -90,15 +96,19 @@ async function main() {
           }
 
           // Re-extract metadata with improved prompt + gleaning
-          const metadata = await extractMetadata(thought.content, config);
+          const content = maxContent > 0 ? thought.content.slice(0, maxContent) : thought.content;
+          const metadata = await extractMetadata(content, config);
 
           // Update thought metadata columns
           await pool.query(
             `UPDATE thoughts SET
                thought_type = $1, people = $2, topics = $3, action_items = $4,
                dates_mentioned = $5::date[], sentiment = $6, summary = $7,
+               key_decisions = $8, key_insights = $9, themes = $10,
+               department = $11, confidentiality = $12, meeting_participants = $13,
+               action_items_structured = $14::jsonb,
                updated_at = NOW()
-             WHERE id = $8`,
+             WHERE id = $15`,
             [
               metadata.thought_type,
               metadata.people,
@@ -107,6 +117,13 @@ async function main() {
               metadata.dates_mentioned.length > 0 ? metadata.dates_mentioned : null,
               metadata.sentiment,
               metadata.summary,
+              metadata.key_decisions,
+              metadata.key_insights,
+              metadata.themes,
+              metadata.department,
+              metadata.confidentiality,
+              metadata.meeting_participants,
+              JSON.stringify(metadata.action_items_structured),
               thought.id,
             ]
           );
@@ -127,6 +144,7 @@ async function main() {
                 pool,
                 config,
                 thought.source_meta,
+                new Date(thought.created_at),
               );
             } catch (err) {
               console.error(`  Entity resolution failed for ${thought.id} (non-fatal):`, err);

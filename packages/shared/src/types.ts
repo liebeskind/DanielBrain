@@ -12,6 +12,15 @@ export interface Thought {
   sentiment?: string | null;
   summary?: string | null;
 
+  // Extended extraction fields
+  key_decisions?: string[];
+  key_insights?: string[];
+  themes?: string[];
+  department?: string | null;
+  confidentiality?: string | null;
+  meeting_participants?: string[];
+  action_items_structured?: Array<{ action: string; assignee: string | null; deadline: string | null; status: 'open' | 'done' | null }> | null;
+
   // Chunking support
   parent_id?: string | null;
   chunk_index?: number | null;
@@ -90,6 +99,18 @@ export interface ThoughtMetadata {
   companies: string[];
   products: string[];
   projects: string[];
+  department: string | null;
+  confidentiality: string | null;
+  themes: string[];
+  key_decisions: string[];
+  key_insights: string[];
+  meeting_participants: string[];
+  action_items_structured: Array<{
+    action: string;
+    assignee: string | null;
+    deadline: string | null;
+    status: 'open' | 'done' | null;
+  }>;
 }
 
 export type EntityType = 'person' | 'company' | 'topic' | 'product' | 'project' | 'place';
@@ -167,6 +188,7 @@ export interface EntityRelationship {
   valid_at: Date | null;
   invalid_at: Date | null;
   source_thought_ids: string[];
+  is_explicit: boolean;
   first_seen_at: Date;
   last_seen_at: Date;
   created_at: Date;
@@ -213,4 +235,6 @@ export interface SearchResult {
   chunk_index: number | null;
   source: string;
   created_at: Date;
+  key_decisions?: string[];
+  key_insights?: string[];
 }

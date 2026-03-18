@@ -12,7 +12,7 @@ const mockPool = {
 const mockConfig = {
   ollamaBaseUrl: 'http://localhost:11434',
   embeddingModel: 'nomic-embed-text',
-  extractionModel: 'llama3.1:8b',
+  extractionModel: 'llama3.3:70b',
 };
 
 const sampleMetadata: ThoughtMetadata = {
@@ -23,6 +23,16 @@ const sampleMetadata: ThoughtMetadata = {
   dates_mentioned: [],
   sentiment: 'neutral',
   summary: 'A test thought',
+  companies: [],
+  products: [],
+  projects: [],
+  department: null,
+  confidentiality: 'internal',
+  themes: [],
+  key_decisions: [],
+  key_insights: [],
+  meeting_participants: [],
+  action_items_structured: [],
 };
 
 describe('handleSaveThought', () => {

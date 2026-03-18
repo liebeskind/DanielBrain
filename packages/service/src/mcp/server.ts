@@ -8,6 +8,9 @@ import {
   saveThoughtInputSchema,
   listEntitiesInputSchema,
   getContextInputSchema,
+  queryRelationshipsInputSchema,
+  updateThoughtInputSchema,
+  proposeRelationshipInputSchema,
 } from '@danielbrain/shared';
 import { handleSemanticSearch } from './tools/semantic-search.js';
 import { handleListRecent } from './tools/list-recent.js';
@@ -17,6 +20,9 @@ import { handleGetEntity } from './tools/get-entity.js';
 import { handleListEntities } from './tools/list-entities.js';
 import { handleGetContext } from './tools/get-context.js';
 import { handleGetTimeline } from './tools/get-timeline.js';
+import { handleQueryRelationships } from './tools/query-relationships.js';
+import { handleUpdateThought } from './tools/update-thought.js';
+import { handleProposeRelationship } from './tools/propose-relationship.js';
 import type { Config } from '../config.js';
 
 export function createMcpServer(pool: pg.Pool, config: Config): McpServer {
@@ -36,6 +42,8 @@ export function createMcpServer(pool: pg.Pool, config: Config): McpServer {
       person: semanticSearchInputSchema.shape.person,
       topic: semanticSearchInputSchema.shape.topic,
       days_back: semanticSearchInputSchema.shape.days_back,
+      source: semanticSearchInputSchema.shape.source,
+      sources: semanticSearchInputSchema.shape.sources,
     },
     async (params) => {
       const input = semanticSearchInputSchema.parse(params);
@@ -58,6 +66,7 @@ export function createMcpServer(pool: pg.Pool, config: Config): McpServer {
       days: listRecentInputSchema.shape.days,
       limit: listRecentInputSchema.shape.limit,
       thought_type: listRecentInputSchema.shape.thought_type,
+      source: listRecentInputSchema.shape.source,
     },
     async (params) => {
       const input = listRecentInputSchema.parse(params);
@@ -209,6 +218,73 @@ export function createMcpServer(pool: pg.Pool, config: Config): McpServer {
           isError: true,
         };
       }
+    }
+  );
+
+  // --- Relationship tools ---
+
+  server.tool(
+    'query_relationships',
+    'Query entity-to-entity relationships. Returns edges with weights, descriptions, and connected entity info. Useful for understanding how entities relate to each other.',
+    {
+      entity_name: z.string().min(1).optional().describe('Entity name to search for'),
+      entity_id: z.string().uuid().optional().describe('UUID of the entity'),
+      min_weight: z.number().int().min(1).default(1).describe('Minimum co-occurrence weight'),
+      limit: z.number().int().min(1).max(100).default(20).describe('Max edges to return'),
+    },
+    async (params) => {
+      if (!params.entity_id && !params.entity_name) {
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Either entity_id or entity_name must be provided' }) }],
+          isError: true,
+        };
+      }
+      const input = queryRelationshipsInputSchema.parse(params);
+      const result = await handleQueryRelationships(input, pool);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+      };
+    }
+  );
+
+  server.tool(
+    'update_thought',
+    'Update metadata fields on a thought. PATCH semantics — only updates provided fields. Use this to correct extraction errors.',
+    {
+      thought_id: updateThoughtInputSchema.shape.thought_id,
+      summary: updateThoughtInputSchema.shape.summary,
+      action_items: updateThoughtInputSchema.shape.action_items,
+      people: updateThoughtInputSchema.shape.people,
+      topics: updateThoughtInputSchema.shape.topics,
+      thought_type: updateThoughtInputSchema.shape.thought_type,
+      sentiment: updateThoughtInputSchema.shape.sentiment,
+    },
+    async (params) => {
+      const input = updateThoughtInputSchema.parse(params);
+      const result = await handleUpdateThought(input, pool);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+        isError: 'error' in result,
+      };
+    }
+  );
+
+  server.tool(
+    'propose_relationship',
+    'Propose a new relationship between two entities. Creates a proposal in the approvals queue for human review.',
+    {
+      source_entity: proposeRelationshipInputSchema.shape.source_entity,
+      target_entity: proposeRelationshipInputSchema.shape.target_entity,
+      description: proposeRelationshipInputSchema.shape.description,
+      relationship_type: proposeRelationshipInputSchema.shape.relationship_type,
+    },
+    async (params) => {
+      const input = proposeRelationshipInputSchema.parse(params);
+      const result = await handleProposeRelationship(input, pool);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+        isError: 'error' in result,
+      };
     }
   );
 

@@ -8,7 +8,7 @@ const mockPool = {
 const mockConfig = {
   ollamaBaseUrl: 'http://localhost:11434',
   embeddingModel: 'nomic-embed-text',
-  extractionModel: 'llama3.1:8b',
+  extractionModel: 'llama3.3:70b',
 };
 
 const sampleEntity = {

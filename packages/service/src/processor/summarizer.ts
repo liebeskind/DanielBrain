@@ -1,3 +1,5 @@
+import { OLLAMA_LLM_TIMEOUT_MS } from '@danielbrain/shared';
+
 interface SummarizeConfig {
   ollamaBaseUrl: string;
   extractionModel: string;
@@ -36,6 +38,7 @@ export async function summarize(text: string, config: SummarizeConfig): Promise<
         },
       ],
     }),
+    signal: AbortSignal.timeout(OLLAMA_LLM_TIMEOUT_MS),
   });
 
   if (!response.ok) {

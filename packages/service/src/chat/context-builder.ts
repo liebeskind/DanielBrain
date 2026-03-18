@@ -143,6 +143,16 @@ export async function buildContext(
           parts.push(`  ACTION: ${ai}`);
         }
       }
+
+      // Surface key decisions and insights
+      const keyDecisions = (r as any).key_decisions || [];
+      for (const kd of keyDecisions) {
+        parts.push(`  DECISION: ${kd}`);
+      }
+      const keyInsights = (r as any).key_insights || [];
+      for (const ki of keyInsights) {
+        parts.push(`  INSIGHT: ${ki}`);
+      }
     }
   }
 
@@ -171,16 +181,32 @@ export async function buildContext(
   };
 }
 
+// Common English stop words that should never match entity names
+const ENTITY_STOP_WORDS = new Set([
+  'the', 'and', 'are', 'was', 'were', 'been', 'being', 'have', 'has', 'had',
+  'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'must',
+  'shall', 'can', 'need', 'not', 'but', 'for', 'with', 'from', 'into', 'that',
+  'this', 'then', 'than', 'what', 'when', 'where', 'which', 'who', 'whom',
+  'how', 'all', 'each', 'every', 'both', 'few', 'more', 'most', 'other',
+  'some', 'such', 'only', 'own', 'same', 'also', 'just', 'any', 'about',
+  'use', 'top', 'best', 'many', 'much', 'very', 'too', 'yet', 'out', 'there',
+  'here', 'why', 'our', 'you', 'your', 'they', 'them', 'their', 'his', 'her',
+  'its', 'she', 'him', 'who', 'get', 'got', 'let', 'put', 'say', 'said',
+  'tell', 'told', 'ask', 'asked', 'give', 'gave', 'take', 'took', 'make',
+  'made', 'know', 'think', 'come', 'came', 'want', 'look', 'like', 'new',
+  'cases', 'discussed', 'between', 'after', 'before', 'during', 'through',
+]);
+
 async function findMatchingEntities(
   message: string,
   pool: pg.Pool,
 ): Promise<Array<{ id: string; name: string; entity_type: string; profile_summary: string | null }>> {
-  // Extract meaningful words (3+ chars) and search against entity names
+  // Extract meaningful words (3+ chars), filtering stop words
   const words = message
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, '')
     .split(/\s+/)
-    .filter((w) => w.length >= 3);
+    .filter((w) => w.length >= 3 && !ENTITY_STOP_WORDS.has(w));
 
   if (words.length === 0) return [];
 

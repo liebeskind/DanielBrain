@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { MAX_COOCCURRENCE_ENTITIES } from '@danielbrain/shared';
 
 /**
  * Create co-occurrence edges between all entities mentioned in the same thought.
@@ -8,6 +9,7 @@ export async function createCooccurrenceEdges(
   thoughtId: string,
   entityIds: string[],
   pool: pg.Pool,
+  skipPairs?: Set<string>,
 ): Promise<number> {
   if (entityIds.length < 2) return 0;
 
@@ -15,15 +17,23 @@ export async function createCooccurrenceEdges(
   const unique = [...new Set(entityIds)];
   if (unique.length < 2) return 0;
 
+  // Cap to prevent quadratic explosion on large transcripts
+  const capped = unique.length > MAX_COOCCURRENCE_ENTITIES
+    ? unique.slice(0, MAX_COOCCURRENCE_ENTITIES)
+    : unique;
+
   let created = 0;
 
   // All pairwise combinations
-  for (let i = 0; i < unique.length; i++) {
-    for (let j = i + 1; j < unique.length; j++) {
+  for (let i = 0; i < capped.length; i++) {
+    for (let j = i + 1; j < capped.length; j++) {
       // Canonical direction: smaller UUID = source_id
-      const [sourceId, targetId] = unique[i] < unique[j]
-        ? [unique[i], unique[j]]
-        : [unique[j], unique[i]];
+      const [sourceId, targetId] = capped[i] < capped[j]
+        ? [capped[i], capped[j]]
+        : [capped[j], capped[i]];
+
+      // Skip pairs that already have explicit relationships
+      if (skipPairs?.has(`${sourceId}:${targetId}`)) continue;
 
       await pool.query(
         `INSERT INTO entity_relationships (source_id, target_id, relationship, source_thought_ids)

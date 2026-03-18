@@ -34,6 +34,7 @@ async function callOllamaEmbed(input: string | string[], config: EmbedConfig): P
       model: config.embeddingModel,
       input: truncated,
     }),
+    signal: AbortSignal.timeout(120_000),
   });
 
   if (!response.ok) {

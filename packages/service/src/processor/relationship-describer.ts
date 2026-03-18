@@ -1,5 +1,5 @@
 import type pg from 'pg';
-import { RELATIONSHIP_DESCRIPTION_BATCH_SIZE } from '@danielbrain/shared';
+import { RELATIONSHIP_DESCRIPTION_BATCH_SIZE, OLLAMA_LLM_TIMEOUT_MS } from '@danielbrain/shared';
 import { createRelationshipProposal } from '../proposals/helpers.js';
 
 interface DescriberConfig {
@@ -132,6 +132,7 @@ Description:`;
         { role: 'user', content: prompt },
       ],
     }),
+    signal: AbortSignal.timeout(OLLAMA_LLM_TIMEOUT_MS),
   });
 
   if (!response.ok) {
@@ -178,6 +179,7 @@ Has the relationship materially changed? Return JSON only.`;
         { role: 'user', content: prompt },
       ],
     }),
+    signal: AbortSignal.timeout(OLLAMA_LLM_TIMEOUT_MS),
   });
 
   if (!response.ok) {

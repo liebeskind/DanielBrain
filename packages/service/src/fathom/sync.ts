@@ -50,9 +50,9 @@ export async function syncFathomMeetings(
       const sourceId = `fathom-${meeting.recording_id}`;
 
       try {
-        // Check if already imported
+        // Check if already imported (thoughts stores raw recording_id in source_meta, queue stores prefixed source_id)
         const { rows } = await pool.query(
-          `SELECT 1 FROM thoughts WHERE source = 'fathom' AND source_meta->>'recording_id' = $1 AND parent_id IS NULL
+          `SELECT 1 FROM thoughts WHERE source = 'fathom' AND source_id = $1 AND parent_id IS NULL
            UNION ALL
            SELECT 1 FROM queue WHERE source_id = $1`,
           [sourceId],

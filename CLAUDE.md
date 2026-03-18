@@ -19,7 +19,7 @@ See `docs/vision/` for detailed use cases and architecture vision.
 ## Architecture
 
 - **PostgreSQL + pgvector** on DGX Spark for storage and vector search
-- **Ollama** on DGX Spark for embeddings (nomic-embed-text), metadata extraction (llama3.1:8b), and relationship description (llama3.1:70b-q4_K_M)
+- **Ollama** on DGX Spark for embeddings (nomic-embed-text) and all LLM tasks (llama3.3:70b — extraction, summarization, profiles, chat, relationship descriptions). 2 models kept resident via `OLLAMA_MAX_LOADED_MODELS=2` + `OLLAMA_KEEP_ALIVE=24h`
 - **MCP server** (HTTP/SSE transport) with 8 tools (4 thought tools + 4 entity tools)
 - **Entity knowledge graph**: first-class entities linked to thoughts + entity-to-entity relationship edges with temporal tracking
 - **Profile generation**: LLM-generated entity profiles with vector embeddings for entity-level semantic search
@@ -73,6 +73,9 @@ migrations/              # 15 SQL migration files
   021 add_tsvector        # tsvector column, trigger, GIN index, backfill
   022 create_hybrid_search # hybrid_search() RRF function replacing match_thoughts()
   023 create_conversations  # conversations, chat_messages, projects tables
+  024 add_extraction_columns # New extraction fields on thoughts
+  025 backfill_entity_last_seen # Backfill entity last_seen_at from thoughts
+  026 add_queue_retry_after # retry_after column + partial index for backoff
   020 add_relationship_columns # weight, description, valid_at/invalid_at, source_thought_ids
 scripts/migrate.ts       # Migration runner
 docker/                  # docker-compose.yml (prod) + docker-compose.test.yml (test)
@@ -191,7 +194,7 @@ General-purpose, confidence-gated proposal system. Any operation where confidenc
 - **Relationship inference**: deterministic rules based on source_meta, action items, summary
 - **Hybrid data model**: shared entity graph + privately-scoped thoughts + selective sharing
 - **Source-determined visibility**: public channels → company, DMs → participants, personal → owner
-- **LLM Prompting Standard**: All prompts sent to local Ollama models (llama3.1:8b) must be explicit, structured prompts with examples. Claude writes these prompts, optimized for the smaller model's capabilities. Every prompt must include: (1) clear role and context about the system, (2) explicit DO/DON'T rules per field, (3) at least one concrete few-shot example, (4) negative examples showing common mistakes, (5) exact format constraints. Applies to extraction, summarization, profile generation, and any future LLM calls.
+- **LLM Prompting Standard**: All prompts sent to local Ollama models must be explicit, structured prompts with examples. Claude writes these prompts, optimized for the model's capabilities. Every prompt must include: (1) clear role and context about the system, (2) explicit DO/DON'T rules per field, (3) at least one concrete few-shot example, (4) negative examples showing common mistakes, (5) exact format constraints. Applies to extraction, summarization, profile generation, and any future LLM calls.
 - **Entity normalization**: `normalizeName()` strips parentheticals, domain suffixes (.io/.com/.earth), pronouns, name prefixes, and company suffixes. `isJunkEntity()` rejects blocklisted words, non-alphabetic strings, and CLI commands before any DB interaction.
 - **First-name prefix matching**: Single-token person names (e.g., "Chris") match existing entities where `canonical_name LIKE 'chris %'`, auto-adding the first name as an alias
 - **Confidence-gated proposals**: operations below threshold auto-apply + create reviewable proposal; high-risk ops hold until approved
@@ -208,14 +211,16 @@ General-purpose, confidence-gated proposal system. Any operation where confidenc
 - **source_thought_ids array**: traceability without a separate junction table
 - **Contradiction detection → proposals queue**: uncertain contradictions get human review (HITL moat)
 - **Entity merge cascading**: `applyEntityMerge` updates both `thought_entities` and `entity_relationships`
-- **Dual-model architecture**: 8B for extraction/chat, 70B for relationship description/contradiction (opt-in via RELATIONSHIP_MODEL)
+- **2-model architecture**: nomic-embed-text (embeddings) + llama3.3:70b (all LLM tasks: extraction, summarization, profiles, chat, relationship descriptions). Both kept resident in VRAM (~55GB on DGX Spark 128GB). Preloaded at startup via warmup requests. Zero model swapping
 - **Hybrid retrieval (RRF)**: `hybrid_search()` SQL function combines vector cosine similarity + BM25 full-text search via Reciprocal Rank Fusion (k=60). 3x oversampling from each source, FULL OUTER JOIN for dedup. Graceful degradation: empty/stop-word tsquery → vector-only
 - **tsvector trigger**: `search_vector` column auto-computed on INSERT/UPDATE via trigger — no application code changes needed
-- **Chat context sizing**: 15 results (up from 5), summary-first (use thought summary when available, content truncated at 1000 chars as fallback), action items surfaced, people/topics metadata included. llama4:scout has 10M token context
+- **Chat context sizing**: 15 results (up from 5), summary-first (use thought summary when available, content truncated at 1000 chars as fallback), action items surfaced, people/topics metadata included. llama3.3:70b has 128K context
 - **Chat persistence**: conversations + chat_messages tables. Messages persisted server-side, client loads from API. Auto-title on first exchange (truncation, no LLM call). Soft delete via `is_deleted` flag.
 - **Chat projects**: lightweight folder system — `projects` table with FK from conversations. Filter sidebar by project.
 - **Anti-hallucination system prompt**: explicit grounding rules ("ONLY state facts from context", "do not fabricate", "flag inferences"). Replaced permissive v1 prompt.
 - **streamChat returns fullResponse**: accumulated text returned so caller can persist assistant messages with context_data JSONB
+- **Queue retry with backoff**: Exponential backoff (30s → 2min → 10min with ±20% jitter) on transient failures, max 3 retries. Inspired by Sidekiq/pg-boss patterns. Items in backoff stay `pending` with `retry_after` timestamp; only marked `failed` after max retries exceeded. Pipeline uses ON CONFLICT upsert for idempotent retries.
+- **Planning process**: Before building new features, research how comparable platforms handle the same problem. Check `docs/reference/` projects first, then industry-standard tools.
 
 ## Environment Variables
 
@@ -227,7 +232,9 @@ See `.env.example` for all required/optional vars. Key ones:
 - `OLLAMA_BASE_URL` — defaults to http://localhost:11434
 - `SERPAPI_KEY` — SerpAPI key for LinkedIn enrichment (optional)
 - `FATHOM_API_KEY` / `FATHOM_WEBHOOK_SECRET` — Fathom meeting transcript integration (optional)
-- `RELATIONSHIP_MODEL` — Ollama model for relationship description/contradiction (optional, e.g. `llama3.1:70b-q4_K_M`)
+- `EXTRACTION_MODEL` — Ollama model for extraction/summarization/profiles (default: `llama3.3:70b`)
+- `CHAT_MODEL` — Ollama model for chat (default: `llama3.3:70b`)
+- `RELATIONSHIP_MODEL` — Ollama model for relationship description/contradiction (optional, e.g. `llama3.3:70b`)
 
 ## Build Phases
 
@@ -244,6 +251,7 @@ See `.env.example` for all required/optional vars. Key ones:
 - [x] Phase 6: Hybrid Retrieval (BM25 + tsvector + RRF, upgraded chat context)
 - [x] Phase 6b: Chat v2 — conversation persistence, projects, anti-hallucination
 - [ ] Phase 7: Community Detection + Global Search (Louvain via graphology, community summaries, simplified global search)
+- [ ] Phase 7b: Relationship Explorer (Cytoscape.js graph visualization, community clusters, entity/edge filtering, detail panels, graph API endpoint)
 - [ ] Phase 8: Agent Interface Enhancement (new MCP tools, agent personas, research mode, dual-level keywords)
 - [ ] Phase 9: Permissions + Multi-User (visibility scoping, access_keys, selective sharing)
 - [ ] Phase 10: Infrastructure + Polish (Cloudflare Tunnel, cross-encoder reranking, source-specific chunking, logging, backup)

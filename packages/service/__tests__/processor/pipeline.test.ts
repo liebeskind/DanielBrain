@@ -27,7 +27,7 @@ const mockPool = {
 const mockConfig = {
   ollamaBaseUrl: 'http://localhost:11434',
   embeddingModel: 'nomic-embed-text',
-  extractionModel: 'llama3.1:8b',
+  extractionModel: 'llama3.3:70b',
 };
 
 const sampleMetadata: ThoughtMetadata = {
@@ -41,6 +41,13 @@ const sampleMetadata: ThoughtMetadata = {
   companies: [],
   products: [],
   projects: [],
+  department: null,
+  confidentiality: 'internal',
+  themes: [],
+  key_decisions: [],
+  key_insights: [],
+  meeting_participants: [],
+  action_items_structured: [],
 };
 
 describe('parseEnvelope', () => {
@@ -98,6 +105,19 @@ describe('processThought', () => {
     const insertCall = mockPool.query.mock.calls[0];
     expect(insertCall[0]).toContain('INSERT INTO thoughts');
     expect(insertCall[1]).toContain('My thought');
+  });
+
+  it('includes new extraction columns in INSERT', async () => {
+    await processThought('My thought', 'manual', mockPool as any, mockConfig);
+
+    const insertCall = mockPool.query.mock.calls[0];
+    expect(insertCall[0]).toContain('key_decisions');
+    expect(insertCall[0]).toContain('key_insights');
+    expect(insertCall[0]).toContain('themes');
+    expect(insertCall[0]).toContain('department');
+    expect(insertCall[0]).toContain('confidentiality');
+    expect(insertCall[0]).toContain('meeting_participants');
+    expect(insertCall[0]).toContain('action_items_structured');
   });
 
   it('processes long content with chunking', async () => {
@@ -175,6 +195,34 @@ describe('processThought', () => {
 
     // Should not duplicate — only the original LLM version kept
     expect(result.metadata.action_items).toHaveLength(1);
+  });
+
+  it('uses ON CONFLICT upsert for idempotent retries (short)', async () => {
+    await processThought('Test thought', 'fathom', mockPool as any, mockConfig, null, 'fathom-123');
+
+    const insertCall = mockPool.query.mock.calls[0];
+    expect(insertCall[0]).toContain('ON CONFLICT (source_id)');
+    expect(insertCall[0]).toContain('DO UPDATE SET');
+  });
+
+  it('uses ON CONFLICT upsert for parent in long content', async () => {
+    const longText = 'This is a long sentence about various topics. '.repeat(700);
+    await processThought(longText, 'fathom', mockPool as any, mockConfig, null, 'fathom-456');
+
+    const insertCall = mockPool.query.mock.calls[0];
+    expect(insertCall[0]).toContain('ON CONFLICT (source_id)');
+    expect(insertCall[0]).toContain('DO UPDATE SET');
+  });
+
+  it('deletes old chunks before re-inserting in long content', async () => {
+    const longText = 'This is a long sentence about various topics. '.repeat(700);
+    await processThought(longText, 'fathom', mockPool as any, mockConfig, null, 'fathom-789');
+
+    // Find the DELETE FROM thoughts WHERE parent_id call
+    const deleteCall = mockPool.query.mock.calls.find(
+      (call: any[]) => typeof call[0] === 'string' && call[0].includes('DELETE FROM thoughts WHERE parent_id')
+    );
+    expect(deleteCall).toBeDefined();
   });
 
   it('returns extracted metadata', async () => {

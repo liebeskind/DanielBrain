@@ -17,11 +17,20 @@ export async function streamChat(
 ): Promise<StreamResult> {
   let fullResponse = '';
 
+  // Use an AbortController so we can cancel the timeout once streaming starts.
+  // AbortSignal.timeout would kill the entire stream after N seconds.
+  const controller = new AbortController();
+  const connectTimeout = setTimeout(() => controller.abort(new Error('Connection timeout')), 300_000);
+
   const response = await fetch(`${ollamaBaseUrl}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ model, messages, stream: true }),
+    signal: controller.signal,
   });
+
+  // Connection established — clear the timeout so streaming can run indefinitely
+  clearTimeout(connectTimeout);
 
   if (!response.ok) {
     const errorText = await response.text();

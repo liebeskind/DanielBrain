@@ -21,7 +21,7 @@ const mockPool = {
 
 const mockConfig = {
   ollamaBaseUrl: 'http://localhost:11434',
-  relationshipModel: 'llama3.1:70b-q4_K_M',
+  relationshipModel: 'llama3.3:70b',
 };
 
 // Helper to mock fetch
@@ -105,7 +105,7 @@ describe('describeRelationship', () => {
     const fetchCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     const body = JSON.parse(fetchCall[1].body);
     expect(body.messages[0].content).toBe(RELATIONSHIP_SYSTEM_PROMPT);
-    expect(body.model).toBe('llama3.1:70b-q4_K_M');
+    expect(body.model).toBe('llama3.3:70b');
 
     // Verify description was saved
     const updateCall = mockPool.query.mock.calls[2];

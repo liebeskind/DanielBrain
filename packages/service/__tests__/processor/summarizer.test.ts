@@ -22,7 +22,7 @@ describe('summarize', () => {
 
     const result = await summarize('A very long piece of text that needs summarizing...', {
       ollamaBaseUrl: 'http://localhost:11434',
-      extractionModel: 'llama3.1:8b',
+      extractionModel: 'llama3.3:70b',
     });
 
     expect(result).toBe('This is a concise summary of the long content.');
@@ -39,11 +39,11 @@ describe('summarize', () => {
 
     await summarize('Input text', {
       ollamaBaseUrl: 'http://localhost:11434',
-      extractionModel: 'llama3.1:8b',
+      extractionModel: 'llama3.3:70b',
     });
 
     const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
-    expect(callBody.model).toBe('llama3.1:8b');
+    expect(callBody.model).toBe('llama3.3:70b');
     expect(callBody.stream).toBe(false);
     // System message should ask for a summary
     const systemMsg = callBody.messages.find((m: { role: string }) => m.role === 'system');
@@ -61,7 +61,7 @@ describe('summarize', () => {
 
     await summarize('Input text', {
       ollamaBaseUrl: 'http://localhost:11434',
-      extractionModel: 'llama3.1:8b',
+      extractionModel: 'llama3.3:70b',
     });
 
     const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
@@ -69,6 +69,23 @@ describe('summarize', () => {
     expect(systemMsg.content).toContain('knowledge management');
     expect(systemMsg.content).toContain('2-3 sentences');
     expect(systemMsg.content).toContain('Name specific people');
+  });
+
+  it('includes timeout signal in fetch call', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          message: { content: 'Summary' },
+        }),
+    });
+
+    await summarize('Input text', {
+      ollamaBaseUrl: 'http://localhost:11434',
+      extractionModel: 'llama3.3:70b',
+    });
+
+    expect(mockFetch.mock.calls[0][1].signal).toBeDefined();
   });
 
   it('throws on Ollama error', async () => {
@@ -81,7 +98,7 @@ describe('summarize', () => {
     await expect(
       summarize('Text', {
         ollamaBaseUrl: 'http://localhost:11434',
-        extractionModel: 'llama3.1:8b',
+        extractionModel: 'llama3.3:70b',
       })
     ).rejects.toThrow();
   });

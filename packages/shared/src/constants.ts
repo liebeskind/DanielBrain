@@ -19,6 +19,9 @@ export const APPROVAL_THRESHOLDS: Record<string, number | 'always'> = {
   entity_relationship: 'always',
 };
 
+// Co-occurrence cap (prevents O(n²) explosion on large transcripts)
+export const MAX_COOCCURRENCE_ENTITIES = 20;
+
 // Relationship description poller
 export const RELATIONSHIP_DESCRIPTION_BATCH_SIZE = 5;
 export const RELATIONSHIP_DESCRIPTION_INTERVAL_MS = 60_000;
@@ -53,3 +56,6 @@ export const ENTITY_STALE_MENTIONS = 10;
 export const ENTITY_STALE_DAYS = 7;
 export const PROFILE_REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 export const PROFILE_REFRESH_BATCH_SIZE = 5;
+
+// Ollama LLM request timeout
+export const OLLAMA_LLM_TIMEOUT_MS = 600_000;

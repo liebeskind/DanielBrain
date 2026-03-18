@@ -4,6 +4,7 @@ import {
   ENTITY_STALE_MENTIONS,
   ENTITY_STALE_DAYS,
   PROFILE_REFRESH_BATCH_SIZE,
+  OLLAMA_LLM_TIMEOUT_MS,
 } from '@danielbrain/shared';
 
 interface ProfileConfig {
@@ -100,6 +101,7 @@ export async function generateProfile(
         { role: 'user', content: prompt },
       ],
     }),
+    signal: AbortSignal.timeout(OLLAMA_LLM_TIMEOUT_MS),
   });
 
   if (!response.ok) {

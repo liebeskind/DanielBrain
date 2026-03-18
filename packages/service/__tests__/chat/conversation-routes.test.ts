@@ -19,6 +19,15 @@ vi.mock('../../src/chat/ollama-stream.js', () => ({
   }),
 }));
 
+vi.mock('../../src/ollama-mutex.js', () => ({
+  acquireOllama: vi.fn().mockReturnValue(true),
+  releaseOllama: vi.fn(),
+}));
+
+import { acquireOllama, releaseOllama } from '../../src/ollama-mutex.js';
+const mockAcquire = vi.mocked(acquireOllama);
+const mockRelease = vi.mocked(releaseOllama);
+
 const mockQuery = vi.fn();
 const mockPool = { query: mockQuery } as unknown as import('pg').Pool;
 const mockConfig = {
@@ -26,8 +35,8 @@ const mockConfig = {
   brainAccessKey: 'test',
   ollamaBaseUrl: 'http://localhost:11434',
   embeddingModel: 'nomic-embed-text',
-  extractionModel: 'llama3.1:8b',
-  chatModel: 'llama4:scout',
+  extractionModel: 'llama3.3:70b',
+  chatModel: 'llama3.3:70b',
   mcpPort: 3000,
   pollIntervalMs: 5000,
   batchSize: 5,
@@ -224,6 +233,10 @@ describe('conversation routes', () => {
 
       expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'text/event-stream');
       expect(written[0]).toContain('"type":"context"');
+
+      // Verify mutex is acquired and released
+      expect(mockAcquire).toHaveBeenCalledWith('chat');
+      expect(mockRelease).toHaveBeenCalledWith('chat');
     });
   });
 });

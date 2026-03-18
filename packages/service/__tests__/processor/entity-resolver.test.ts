@@ -19,6 +19,14 @@ vi.mock('../../src/processor/relationship-builder.js', () => ({
   createCooccurrenceEdges: vi.fn().mockResolvedValue(0),
 }));
 
+vi.mock('../../src/processor/relationship-extractor.js', () => ({
+  extractRelationships: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock('../../src/processor/relationship-applier.js', () => ({
+  applyExtractedRelationships: vi.fn().mockResolvedValue(new Set()),
+}));
+
 import { shouldCreateProposal, createLinkProposal } from '../../src/proposals/helpers.js';
 import { createCooccurrenceEdges } from '../../src/processor/relationship-builder.js';
 
@@ -305,6 +313,13 @@ describe('inferRelationship', () => {
     companies: [],
     products: [],
     projects: [],
+    department: null,
+    confidentiality: 'internal',
+    themes: [],
+    key_decisions: [],
+    key_insights: [],
+    meeting_participants: [],
+    action_items_structured: [],
   };
 
   it('returns "from" when entity matches source author', () => {
@@ -375,6 +390,13 @@ describe('resolveEntities', () => {
       companies: ['Acme'],
       products: [],
       projects: [],
+      department: null,
+      confidentiality: 'internal',
+      themes: [],
+      key_decisions: [],
+      key_insights: [],
+      meeting_participants: [],
+      action_items_structured: [],
     };
 
     await resolveEntities(
@@ -392,6 +414,7 @@ describe('resolveEntities', () => {
       'thought-1',
       expect.arrayContaining(['e1', 'e2']),
       expect.anything(),
+      undefined,
     );
   });
 
@@ -414,6 +437,13 @@ describe('resolveEntities', () => {
       companies: [],
       products: [],
       projects: [],
+      department: null,
+      confidentiality: 'internal',
+      themes: [],
+      key_decisions: [],
+      key_insights: [],
+      meeting_participants: [],
+      action_items_structured: [],
     };
 
     await resolveEntities(
@@ -440,6 +470,13 @@ describe('resolveEntities', () => {
       companies: [],
       products: [],
       projects: [],
+      department: null,
+      confidentiality: 'internal',
+      themes: [],
+      key_decisions: [],
+      key_insights: [],
+      meeting_participants: [],
+      action_items_structured: [],
     };
 
     await resolveEntities(
@@ -482,6 +519,13 @@ describe('resolveEntities', () => {
       companies: [],
       products: [],
       projects: [],
+      department: null,
+      confidentiality: 'internal',
+      themes: [],
+      key_decisions: [],
+      key_insights: [],
+      meeting_participants: [],
+      action_items_structured: [],
     };
 
     await resolveEntities(
@@ -529,6 +573,13 @@ describe('resolveEntities', () => {
       companies: [],
       products: [],
       projects: [],
+      department: null,
+      confidentiality: 'internal',
+      themes: [],
+      key_decisions: [],
+      key_insights: [],
+      meeting_participants: [],
+      action_items_structured: [],
     };
 
     await resolveEntities(
@@ -567,6 +618,13 @@ describe('resolveEntities', () => {
       companies: [],
       products: [],
       projects: [],
+      department: null,
+      confidentiality: 'internal',
+      themes: [],
+      key_decisions: [],
+      key_insights: [],
+      meeting_participants: [],
+      action_items_structured: [],
     };
 
     // Should not throw
@@ -608,6 +666,13 @@ describe('resolveEntities', () => {
       companies: [],
       products: [],
       projects: [],
+      department: null,
+      confidentiality: 'internal',
+      themes: [],
+      key_decisions: [],
+      key_insights: [],
+      meeting_participants: [],
+      action_items_structured: [],
     };
 
     const sourceMeta = {
@@ -634,6 +699,7 @@ describe('resolveEntities', () => {
       'thought-7',
       expect.arrayContaining(['e1', 'e2']),
       expect.anything(),
+      undefined,
     );
 
     // Verify email was stored
@@ -660,6 +726,13 @@ describe('resolveEntities', () => {
       companies: ['Acme Corp'], // LLM also found it — should skip
       products: [],
       projects: [],
+      department: null,
+      confidentiality: 'internal',
+      themes: [],
+      key_decisions: [],
+      key_insights: [],
+      meeting_participants: [],
+      action_items_structured: [],
     };
 
     const sourceMeta = {
@@ -700,6 +773,13 @@ describe('resolveStructuredParticipants', () => {
     companies: [],
     products: [],
     projects: [],
+    department: null,
+    confidentiality: 'internal',
+    themes: [],
+    key_decisions: [],
+    key_insights: [],
+    meeting_participants: [],
+    action_items_structured: [],
   };
 
   it('returns set of resolved normalized names', async () => {

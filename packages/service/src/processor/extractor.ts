@@ -1,4 +1,4 @@
-import { metadataSchema, type ThoughtMetadata } from '@danielbrain/shared';
+import { metadataSchema, type ThoughtMetadata, OLLAMA_LLM_TIMEOUT_MS } from '@danielbrain/shared';
 
 interface ExtractConfig {
   ollamaBaseUrl: string;
@@ -21,7 +21,7 @@ const EXTRACTION_SCHEMA = {
     topics: {
       type: 'array',
       items: { type: 'string' },
-      description: 'Key topics or themes discussed. Use short noun phrases like "AI infrastructure" or "Q1 planning".',
+      description: 'Specific entities, products, or projects mentioned. Use short noun phrases. NOT abstract themes — put those in "themes" instead.',
     },
     action_items: {
       type: 'array',
@@ -39,7 +39,7 @@ const EXTRACTION_SCHEMA = {
     },
     summary: {
       type: 'string',
-      description: 'A 1-2 sentence summary. Name specific people and companies instead of saying "they".',
+      description: '2-4 sentences. Resolve ALL pronouns — say "Daniel discussed" not "he discussed". Name specific people and companies.',
     },
     companies: {
       type: 'array',
@@ -56,13 +56,59 @@ const EXTRACTION_SCHEMA = {
       items: { type: 'string' },
       description: 'Only real-world project names that are proper nouns. A project must have an actual name used by the people involved. Do not invent project names. Do not include build phases, activities, features, concepts, or generic descriptions.',
     },
+    department: {
+      type: ['string', 'null'],
+      description: 'One of: engineering, product, sales, marketing, hr, finance, leadership, operations, legal, support, other. Null if unclear.',
+    },
+    confidentiality: {
+      type: 'string',
+      description: 'One of: public, internal, confidential, restricted. Default "internal".',
+    },
+    meeting_participants: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Full names of meeting attendees. Only for meeting_notes. Return [] for non-meetings.',
+    },
+    themes: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'High-level business themes (max 3). Examples: "product_strategy", "hiring", "partnerships", "infrastructure", "customer_success". Abstract categories, NOT specific entities.',
+    },
+    key_decisions: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Decisions made. E.g., "Agreed to launch K12 Zone beta by March 15". Return [] if no decisions.',
+    },
+    key_insights: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Notable observations or learnings. E.g., "Canvas LTI 1.3 does not support SSO passthrough". Return [] if none.',
+    },
+    action_items_structured: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', description: 'The action item text' },
+          assignee: { type: ['string', 'null'], description: 'Person name or null' },
+          deadline: { type: ['string', 'null'], description: 'Date string or null' },
+          status: { type: ['string', 'null'], description: 'One of: open, done, or null' },
+        },
+        required: ['action', 'assignee', 'deadline', 'status'],
+      },
+      description: 'Structured version of action_items with assignee/deadline/status. Mirror the action_items array.',
+    },
   },
-  required: ['thought_type', 'people', 'topics', 'action_items', 'dates_mentioned', 'sentiment', 'summary', 'companies', 'products', 'projects'],
+  required: ['thought_type', 'people', 'topics', 'action_items', 'dates_mentioned', 'sentiment', 'summary', 'companies', 'products', 'projects', 'department', 'confidentiality', 'meeting_participants', 'themes', 'key_decisions', 'key_insights', 'action_items_structured'],
 };
 
 export { GLEANING_SYSTEM_PROMPT, GLEANING_SCHEMA };
 
 export const EXTRACTION_SYSTEM_PROMPT = `You are a metadata extraction assistant for a personal knowledge management system. Extract structured metadata from the given text. Return valid JSON matching the schema.
+
+CRITICAL RULE — Pronoun Resolution: Replace ALL pronouns with the actual person/company name. In summaries and action items, write "Daniel discussed" NOT "he discussed". Always use the full name at least once.
+
+Return [] for any array field with no data. An empty array is always better than a guess.
 
 RULES FOR EACH FIELD:
 
@@ -74,35 +120,42 @@ people: Extract full real names of people mentioned.
 - DON'T: "Chris (Topia)" or "Jason Levin (WGU Labs)" — strip parenthetical annotations
 - DON'T: "Salyers, Tosha (Contractor)" — use "Tosha Salyers" (normal order, no parenthetical)
 - If you see "Name <email>" or "Name (org)", extract ONLY the name part
-- If you only see a first name, that's fine: "Chris" is acceptable
 
-companies: Extract organization names without domains or legal suffixes.
+topics: Specific entities, products, or projects mentioned. Short noun phrases.
+- DO: "SSO integration", "LTI 1.3", "K12 Zone launch"
+- DON'T: "product_strategy" or "hiring" — those are abstract themes, put them in "themes"
+
+themes: High-level business themes (max 3). Abstract categories only.
+- DO: "product_strategy", "hiring", "partnerships", "infrastructure", "customer_success"
+- DON'T: "K12 Zone" (that's a topic, not a theme)
+
+companies: Organization names without domains or legal suffixes.
 - DO: "Topia", "AWS", "Google", "Stride"
-- DON'T: "Topia.io", "Acme Corp Inc.", "Google LLC"
-- DON'T list a company that is also listed as a product — choose one
+- DON'T: "Topia.io", "Acme Corp Inc."
 
-products: Only specific named software, hardware, or platforms with a proper name.
-- DO: "Docker", "Kubernetes", "GPT-4", "Slack", "PostgreSQL", "SchoolSpace", "K12 Zone", "Canvas"
-- DON'T: "GPUs" (generic category), "AI operating system" (concept), "carbon capture" (topic), "database" (generic)
-- DON'T: "3d virtual environments" (description), "ai inference at the edge" (concept), "massively scalable experiences" (description)
-- DON'T list a product that is also listed as a company — choose one. If it's both (e.g., "Slack"), prefer product.
-- TEST: Would someone Google this exact name to find it? If not, it's not a product.
+products: Specific named software/platforms only.
+- DO: "Docker", "K12 Zone", "Canvas", "Slack"
+- DON'T: "GPUs" (generic), "AI operating system" (concept)
+- TEST: Would someone Google this exact name? If not, omit.
 
-projects: Only named projects that function as proper nouns — a team would refer to it by this name.
-- DO: "DanielBrain", "College Conversations", "Choose Love Academy", "K12 Zone"
-- DON'T: "Phase 4" (build phase, not a project name)
-- DON'T: "bare-metal experiment" (activity), "onboarding flow" (feature), "the project" (vague)
-- DON'T: "AI operating system" or "carbon capture" (concepts, not project names)
-- DON'T: "canvas integration" (task), "career fair" (event), "classroom one-pager" (deliverable), "case studies and logos" (work items)
-- DON'T: "field day planning" (activity), "conference planning" (activity), "new deal" (status)
-- DON'T invent or guess project names. If unsure, omit it. An empty list [] is MUCH better than a wrong entry.
-- TEST: Is this a specific named initiative that has a team and timeline? If it's just a task or activity, put it in topics instead.
+projects: Only proper-noun project names used by the team.
+- DO: "DanielBrain", "College Conversations", "K12 Zone"
+- DON'T: "Phase 4" (build phase), "canvas integration" (task)
+- DON'T invent project names. [] is better than a wrong entry.
 
-sentiment: Must be exactly one of: positive, negative, neutral, mixed (lowercase only).
+summary: 2-4 sentences. Resolve ALL pronouns. Name specific people and companies.
 
-dates_mentioned: Only YYYY-MM-DD format. If no specific calendar dates are mentioned, return [].
+department: engineering, product, sales, marketing, hr, finance, leadership, operations, legal, support, other. Null if unclear.
 
-summary: Write 1-2 sentences. Name specific people and companies — say "Daniel and Rob discussed" not "they discussed".
+confidentiality: public, internal, confidential, restricted. Default "internal".
+
+meeting_participants: Full names of all meeting attendees. Only for meeting_notes — return [] otherwise.
+
+key_decisions: Specific decisions made. E.g., "Agreed to launch K12 Zone beta by March 15". Return [] if none.
+
+key_insights: Notable observations. E.g., "Canvas LTI 1.3 does not support SSO passthrough". Return [] if none.
+
+action_items_structured: Mirror action_items with assignee/deadline/status. Use null for unknown fields.
 
 EXAMPLE 1:
 Input: "Had a great call with Rob Fisher from provocative.earth about the carbon offset marketplace. He's interested in integrating with Topia's spatial platform. Action item: Daniel to send API docs by Friday."
@@ -114,26 +167,40 @@ Output:
   "action_items": ["Daniel to send API docs by Friday"],
   "dates_mentioned": [],
   "sentiment": "positive",
-  "summary": "Rob Fisher discussed integrating provocative.earth's carbon offset marketplace with Topia's spatial platform. Daniel will send API docs by Friday.",
+  "summary": "Rob Fisher discussed integrating provocative.earth's carbon offset marketplace with Topia's spatial platform. Rob Fisher expressed interest in the integration. Daniel will send API docs by Friday.",
   "companies": ["provocative.earth", "Topia"],
   "products": [],
-  "projects": []
+  "projects": [],
+  "department": null,
+  "confidentiality": "internal",
+  "meeting_participants": ["Rob Fisher", "Daniel"],
+  "themes": ["partnerships"],
+  "key_decisions": [],
+  "key_insights": [],
+  "action_items_structured": [{"action": "Daniel to send API docs by Friday", "assignee": "Daniel", "deadline": null, "status": "open"}]
 }
 
 EXAMPLE 2 (meeting with participant list):
-Input: "Meeting: K12 Zone Launch Prep. Attendees: Anna Cueni <anna@topia.io>, Gordon Smith <gordon.smith@topia.io>, Kevin Killeen. Discussed SSO integration timeline for Stride's Canvas LMS. Gordon to test LTI 1.3 by Wednesday."
+Input: "Meeting: K12 Zone Launch Prep. Attendees: Anna Cueni <anna@topia.io>, Gordon Smith <gordon.smith@topia.io>, Kevin Killeen. Discussed SSO integration timeline for Stride's Canvas LMS. Gordon to test LTI 1.3 by Wednesday. Decision: launch beta on March 15."
 Output:
 {
   "thought_type": "meeting_note",
   "people": ["Anna Cueni", "Gordon Smith", "Kevin Killeen"],
   "topics": ["SSO integration", "LTI 1.3", "K12 Zone launch"],
   "action_items": ["Gordon to test LTI 1.3 by Wednesday"],
-  "dates_mentioned": [],
+  "dates_mentioned": ["2026-03-15"],
   "sentiment": "neutral",
-  "summary": "Anna Cueni, Gordon Smith, and Kevin Killeen discussed SSO integration timeline for Stride's Canvas LMS ahead of the K12 Zone launch.",
+  "summary": "Anna Cueni, Gordon Smith, and Kevin Killeen discussed SSO integration timeline for Stride's Canvas LMS ahead of the K12 Zone launch. The team decided to launch beta on March 15.",
   "companies": ["Stride"],
   "products": ["K12 Zone", "Canvas"],
-  "projects": []
+  "projects": [],
+  "department": "engineering",
+  "confidentiality": "internal",
+  "meeting_participants": ["Anna Cueni", "Gordon Smith", "Kevin Killeen"],
+  "themes": ["product_strategy"],
+  "key_decisions": ["Launch K12 Zone beta on March 15"],
+  "key_insights": [],
+  "action_items_structured": [{"action": "Gordon to test LTI 1.3 by Wednesday", "assignee": "Gordon Smith", "deadline": null, "status": "open"}]
 }`;
 
 const GLEANING_SCHEMA = {
@@ -164,6 +231,26 @@ const GLEANING_SCHEMA = {
       items: { type: 'string' },
       description: 'Action items missed in the first pass. Each should start with a verb.',
     },
+    additional_key_decisions: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Key decisions missed in the first pass.',
+    },
+    additional_key_insights: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Key insights missed in the first pass.',
+    },
+    additional_meeting_participants: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Meeting participants missed in the first pass. Full names only.',
+    },
+    additional_themes: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Themes missed in the first pass. High-level business categories.',
+    },
   },
   required: ['additional_people', 'additional_companies', 'additional_products', 'additional_projects', 'additional_action_items'],
 };
@@ -172,7 +259,7 @@ const GLEANING_SYSTEM_PROMPT = `You are a quality reviewer for a metadata extrac
 1. The original text
 2. The metadata that was already extracted
 
-Your job is to find entities and action items that were MISSED in the first extraction pass. Only return genuinely new items — do NOT repeat anything already extracted.
+Your job is to find entities, action items, decisions, insights, participants, and themes that were MISSED in the first extraction pass. Only return genuinely new items — do NOT repeat anything already extracted.
 
 RULES:
 - Same rules as original extraction: no emails, no usernames, no descriptions-as-names, no generic concepts
@@ -204,6 +291,10 @@ function mergeGleanedMetadata(
     products: addUnique(base.products, gleaned.additional_products ?? []),
     projects: addUnique(base.projects, gleaned.additional_projects ?? []),
     action_items: addUnique(base.action_items, gleaned.additional_action_items ?? []),
+    key_decisions: addUnique(base.key_decisions, gleaned.additional_key_decisions ?? []),
+    key_insights: addUnique(base.key_insights, gleaned.additional_key_insights ?? []),
+    meeting_participants: addUnique(base.meeting_participants, gleaned.additional_meeting_participants ?? []),
+    themes: addUnique(base.themes, gleaned.additional_themes ?? []),
   };
 }
 
@@ -221,6 +312,7 @@ async function callOllama(
       format,
       messages,
     }),
+    signal: AbortSignal.timeout(OLLAMA_LLM_TIMEOUT_MS),
   });
 
   if (!response.ok) {

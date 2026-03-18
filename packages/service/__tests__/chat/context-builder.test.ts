@@ -252,6 +252,25 @@ describe('buildContext', () => {
     expect(result.contextText).toContain('Connected: K12 Zone (product, 15x), Stride (company, 12x)');
   });
 
+  it('surfaces key decisions and insights in context', async () => {
+    mockSearch.mockResolvedValue([
+      makeResult({
+        summary: 'Sprint planning session',
+        source: 'fathom',
+        thought_type: 'meeting_note',
+        key_decisions: ['Launch beta by March 15', 'Hire two engineers'],
+        key_insights: ['Canvas LTI 1.3 requires SSO passthrough'],
+      }),
+    ]);
+    const pool = mockPool([]);
+
+    const result = await buildContext('sprint planning', pool, config);
+
+    expect(result.contextText).toContain('DECISION: Launch beta by March 15');
+    expect(result.contextText).toContain('DECISION: Hire two engineers');
+    expect(result.contextText).toContain('INSIGHT: Canvas LTI 1.3 requires SSO passthrough');
+  });
+
   it('handles entities with no relationships', async () => {
     mockSearch.mockResolvedValue([]);
     const pool = mockPool(
@@ -309,15 +328,16 @@ describe('findMatchingEntities', () => {
     expect(result).toHaveLength(0);
   });
 
-  it('queries with normalized words', async () => {
+  it('queries with normalized words, filtering stop words', async () => {
     const pool = mockPool([]);
     await findMatchingEntities('Tell me about Alice', pool);
 
     expect(pool.query).toHaveBeenCalledTimes(1);
     const args = (pool.query as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(args[1][0]).toContain('tell');
-    expect(args[1][0]).toContain('about');
+    // "tell" and "about" are stop words, only "alice" should remain
     expect(args[1][0]).toContain('alice');
+    expect(args[1][0]).not.toContain('tell');
+    expect(args[1][0]).not.toContain('about');
   });
 
   it('returns id in results', async () => {

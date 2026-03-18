@@ -37,6 +37,18 @@ export const metadataSchema = z.object({
   companies: z.array(z.string()).default([]),
   products: z.array(z.string()).default([]),
   projects: z.array(z.string()).default([]),
+  department: z.string().nullable().default(null),
+  confidentiality: z.string().nullable().default(null),
+  themes: z.array(z.string()).default([]),
+  key_decisions: z.array(z.string()).default([]),
+  key_insights: z.array(z.string()).default([]),
+  meeting_participants: z.array(z.string()).default([]),
+  action_items_structured: z.array(z.object({
+    action: z.string(),
+    assignee: z.string().nullable().default(null),
+    deadline: z.string().nullable().default(null),
+    status: z.enum(['open', 'done']).nullable().default(null),
+  })).default([]),
 });
 
 export const semanticSearchInputSchema = z.object({
@@ -47,12 +59,15 @@ export const semanticSearchInputSchema = z.object({
   person: z.string().optional(),
   topic: z.string().optional(),
   days_back: z.number().int().min(1).optional(),
+  source: z.string().optional(),
+  sources: z.array(z.string()).optional(),
 });
 
 export const listRecentInputSchema = z.object({
   days: z.number().int().min(1).default(7),
   limit: z.number().int().min(1).max(100).default(20),
   thought_type: z.string().optional(),
+  source: z.string().optional(),
 });
 
 export const statsInputSchema = z.object({
@@ -139,4 +154,33 @@ export const listCorrectionExamplesSchema = z.object({
   tags: z.array(z.string()).optional(),
   limit: z.number().int().min(1).max(100).default(50),
   offset: z.number().int().min(0).default(0),
+});
+
+// --- New MCP tool schemas ---
+
+export const queryRelationshipsInputSchema = z.object({
+  entity_name: z.string().min(1).optional(),
+  entity_id: z.string().uuid().optional(),
+  min_weight: z.number().int().min(1).default(1),
+  limit: z.number().int().min(1).max(100).default(20),
+}).refine(
+  (data) => data.entity_id || data.entity_name,
+  { message: 'Either entity_id or entity_name must be provided' }
+);
+
+export const updateThoughtInputSchema = z.object({
+  thought_id: z.string().uuid(),
+  summary: z.string().optional(),
+  action_items: z.array(z.string()).optional(),
+  people: z.array(z.string()).optional(),
+  topics: z.array(z.string()).optional(),
+  thought_type: z.string().optional(),
+  sentiment: z.string().optional(),
+});
+
+export const proposeRelationshipInputSchema = z.object({
+  source_entity: z.string().min(1),
+  target_entity: z.string().min(1),
+  description: z.string().min(1),
+  relationship_type: z.string().default('related_to'),
 });

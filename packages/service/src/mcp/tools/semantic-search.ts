@@ -11,6 +11,8 @@ interface SemanticSearchInput {
   person?: string;
   topic?: string;
   days_back?: number;
+  source?: string;
+  sources?: string[];
 }
 
 interface EmbedConfig {
@@ -52,9 +54,18 @@ export async function handleSemanticSearch(
     ]
   );
 
+  // Post-filter by source/sources
+  let filtered = rows;
+  if (input.source) {
+    filtered = rows.filter((r: { source: string }) => r.source === input.source);
+  } else if (input.sources?.length) {
+    const sourceSet = new Set(input.sources);
+    filtered = rows.filter((r: { source: string }) => sourceSet.has(r.source));
+  }
+
   // For chunks, fetch parent context
   const results: SearchResultWithParent[] = [];
-  for (const row of rows) {
+  for (const row of filtered) {
     const result: SearchResultWithParent = { ...row };
 
     if (row.parent_id) {

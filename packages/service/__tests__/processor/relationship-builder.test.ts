@@ -94,6 +94,43 @@ describe('createCooccurrenceEdges', () => {
     expect(mockPool.query).not.toHaveBeenCalled();
   });
 
+  it('skips pairs in skipPairs set', async () => {
+    const skipPairs = new Set(['aaa-entity:bbb-entity']);
+    const result = await createCooccurrenceEdges(
+      'thought-1',
+      ['aaa-entity', 'bbb-entity', 'ccc-entity'],
+      mockPool as any,
+      skipPairs,
+    );
+
+    // 3 entities = 3 pairs, but 1 is skipped → 2 edges created
+    expect(result).toBe(2);
+    expect(mockPool.query).toHaveBeenCalledTimes(2);
+    // Verify skipped pair was not inserted
+    const allParams = mockPool.query.mock.calls.map((c: any) => [c[1][0], c[1][1]]);
+    for (const [source, target] of allParams) {
+      expect(`${source}:${target}`).not.toBe('aaa-entity:bbb-entity');
+    }
+  });
+
+  it('caps at MAX_COOCCURRENCE_ENTITIES (20) to prevent quadratic explosion', async () => {
+    // 25 unique entities → should be capped to 20 → C(20,2) = 190 edges
+    const entities = Array.from({ length: 25 }, (_, i) => `entity-${String(i).padStart(3, '0')}`);
+    const result = await createCooccurrenceEdges('thought-1', entities, mockPool as any);
+
+    expect(result).toBe(190); // C(20,2), not C(25,2) = 300
+    expect(mockPool.query).toHaveBeenCalledTimes(190);
+  });
+
+  it('does not cap when under MAX_COOCCURRENCE_ENTITIES', async () => {
+    // 15 entities → C(15,2) = 105 edges, no truncation
+    const entities = Array.from({ length: 15 }, (_, i) => `entity-${String(i).padStart(3, '0')}`);
+    const result = await createCooccurrenceEdges('thought-1', entities, mockPool as any);
+
+    expect(result).toBe(105); // C(15,2) = 105
+    expect(mockPool.query).toHaveBeenCalledTimes(105);
+  });
+
   it('uses UPSERT with weight increment', async () => {
     await createCooccurrenceEdges(
       'thought-1',

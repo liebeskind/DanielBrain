@@ -5,6 +5,7 @@ import type { Config } from '../config.js';
 import { buildContext } from './context-builder.js';
 import { streamChat } from './ollama-stream.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
+import { acquireOllama, releaseOllama } from '../ollama-mutex.js';
 import {
   CHAT_MAX_HISTORY_MESSAGES,
   CONVERSATION_TITLE_MAX_LENGTH,
@@ -167,6 +168,7 @@ export function createConversationRoutes(pool: pg.Pool, config: Config): Router 
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders();
 
+    acquireOllama('chat');
     try {
       // Save user message
       await pool.query(
@@ -186,8 +188,22 @@ export function createConversationRoutes(pool: pg.Pool, config: Config): Router 
       // Reverse to get chronological order (we fetched DESC)
       const history = historyRows.reverse();
 
-      // Build RAG context
-      const context = await buildContext(message, pool, config);
+      // Build RAG context (with timeout so chat doesn't hang if Ollama is busy)
+      let context: Awaited<ReturnType<typeof buildContext>>;
+      try {
+        const contextPromise = buildContext(message, pool, config);
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Context retrieval timed out — Ollama may be busy')), 90_000),
+        );
+        context = await Promise.race([contextPromise, timeoutPromise]);
+      } catch (ctxErr) {
+        console.error('Context build failed:', ctxErr);
+        // Fall back to no-context chat
+        context = { contextText: '', sources: [], entities: [] };
+      }
+
+      // Log retrieval results for debugging
+      console.log(`Chat context: ${context.sources.length} sources, ${context.entities.length} entities for "${message.slice(0, 80)}"`);
 
       // Send context metadata
       res.write(`data: ${JSON.stringify({ type: 'context', sources: context.sources, entities: context.entities })}\n\n`);
@@ -241,6 +257,8 @@ export function createConversationRoutes(pool: pg.Pool, config: Config): Router 
         res.write(`data: ${JSON.stringify({ error: `Chat error: ${String(err)}` })}\n\n`);
         res.end();
       }
+    } finally {
+      releaseOllama('chat');
     }
   });
 

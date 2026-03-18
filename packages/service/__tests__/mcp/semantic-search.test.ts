@@ -12,7 +12,7 @@ const mockPool = {
 const mockConfig = {
   ollamaBaseUrl: 'http://localhost:11434',
   embeddingModel: 'nomic-embed-text',
-  extractionModel: 'llama3.1:8b',
+  extractionModel: 'llama3.3:70b',
 };
 
 describe('handleSemanticSearch', () => {
@@ -87,6 +87,46 @@ describe('handleSemanticSearch', () => {
     expect(queryCall[1][5]).toBe('Alice');
     expect(queryCall[1][6]).toBe('AI');
     expect(queryCall[1][7]).toBe(30);
+  });
+
+  it('filters results by source', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [
+        { id: '1', content: 'Slack msg', source: 'slack', parent_id: null, similarity: 0.9 },
+        { id: '2', content: 'Fathom msg', source: 'fathom', parent_id: null, similarity: 0.8 },
+      ],
+    });
+
+    const result = await handleSemanticSearch(
+      { query: 'test', limit: 10, threshold: 0.5, source: 'slack' },
+      mockPool as any,
+      mockConfig,
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0].source).toBe('slack');
+  });
+
+  it('filters results by sources array', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [
+        { id: '1', content: 'Slack msg', source: 'slack', parent_id: null, similarity: 0.9 },
+        { id: '2', content: 'Fathom msg', source: 'fathom', parent_id: null, similarity: 0.8 },
+        { id: '3', content: 'Telegram msg', source: 'telegram', parent_id: null, similarity: 0.7 },
+      ],
+    });
+
+    const result = await handleSemanticSearch(
+      { query: 'test', limit: 10, threshold: 0.5, sources: ['slack', 'fathom'] },
+      mockPool as any,
+      mockConfig,
+    );
+
+    expect(result).toHaveLength(2);
+    const sources = result.map(r => r.source);
+    expect(sources).toContain('slack');
+    expect(sources).toContain('fathom');
+    expect(sources).not.toContain('telegram');
   });
 
   it('fetches parent context for chunk results', async () => {

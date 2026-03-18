@@ -52,6 +52,16 @@ describe('handleListRecent', () => {
     expect(queryCall[1]).toContain('idea');
   });
 
+  it('filters by source when provided', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+    await handleListRecent({ days: 7, limit: 20, source: 'fathom' }, mockPool as any);
+
+    const queryCall = mockPool.query.mock.calls[0];
+    expect(queryCall[0]).toContain('source = $');
+    expect(queryCall[1]).toContain('fathom');
+  });
+
   it('excludes chunk children', async () => {
     mockPool.query.mockResolvedValueOnce({ rows: [] });
 

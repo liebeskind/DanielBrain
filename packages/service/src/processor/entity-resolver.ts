@@ -2,6 +2,8 @@ import type pg from 'pg';
 import type { ThoughtMetadata, EntityType, EntityRelationshipType, StructuredData, ParticipantIdentity } from '@danielbrain/shared';
 import { shouldCreateProposal, createLinkProposal } from '../proposals/helpers.js';
 import { createCooccurrenceEdges } from './relationship-builder.js';
+import { extractRelationships } from './relationship-extractor.js';
+import { applyExtractedRelationships } from './relationship-applier.js';
 
 interface ResolverConfig {
   ollamaBaseUrl: string;
@@ -79,6 +81,7 @@ export async function findOrCreateEntity(
   name: string,
   entityType: EntityType,
   pool: pg.Pool,
+  thoughtDate?: Date,
 ): Promise<EntityMatch> {
   const canonical = normalizeName(name);
 
@@ -146,9 +149,9 @@ export async function findOrCreateEntity(
     `INSERT INTO entities (name, entity_type, canonical_name, aliases)
      VALUES ($1, $2, $3, ARRAY[$3])
      ON CONFLICT (canonical_name, entity_type) DO UPDATE SET
-       last_seen_at = NOW()
+       last_seen_at = GREATEST(entities.last_seen_at, COALESCE($4, NOW()))
      RETURNING id, name, entity_type`,
-    [name, entityType, canonical]
+    [name, entityType, canonical, thoughtDate ?? null]
   );
 
   return {
@@ -209,6 +212,7 @@ async function linkEntity(
   relationship: EntityRelationshipType,
   confidence: number,
   pool: pg.Pool,
+  thoughtDate?: Date,
 ): Promise<void> {
   await pool.query(
     `INSERT INTO thought_entities (thought_id, entity_id, relationship, confidence)
@@ -217,11 +221,12 @@ async function linkEntity(
     [thoughtId, entityId, relationship, confidence]
   );
 
-  // Bump mention count and last_seen_at
+  // Bump mention count and last_seen_at (only move forward, never backward)
   await pool.query(
-    `UPDATE entities SET mention_count = mention_count + 1, last_seen_at = NOW()
+    `UPDATE entities SET mention_count = mention_count + 1,
+       last_seen_at = GREATEST(last_seen_at, COALESCE($2, NOW()))
      WHERE id = $1`,
-    [entityId]
+    [entityId, thoughtDate ?? null]
   );
 }
 
@@ -252,6 +257,7 @@ export async function resolveStructuredParticipants(
   content: string,
   pool: pg.Pool,
   sourceMeta?: Record<string, unknown> | null,
+  thoughtDate?: Date,
 ): Promise<{ resolvedNames: Set<string>; resolvedEntityIds: string[] }> {
   const resolvedNames = new Set<string>();
   const resolvedEntityIds: string[] = [];
@@ -260,9 +266,9 @@ export async function resolveStructuredParticipants(
   if (structured.participants?.length) {
     for (const p of structured.participants) {
       if (isJunkEntity(p.name)) continue;
-      const match = await findOrCreateEntity(p.name, 'person', pool);
+      const match = await findOrCreateEntity(p.name, 'person', pool, thoughtDate);
       const relationship: EntityRelationshipType = p.role === 'author' ? 'from' : p.role === 'recorder' ? 'from' : 'mentions';
-      await linkEntity(thoughtId, match.id, relationship, 1.0, pool);
+      await linkEntity(thoughtId, match.id, relationship, 1.0, pool, thoughtDate);
 
       if (p.email) {
         await storeEmailOnEntity(match.id, p.email, pool);
@@ -277,8 +283,8 @@ export async function resolveStructuredParticipants(
   if (structured.companies?.length) {
     for (const c of structured.companies) {
       if (isJunkEntity(c.name)) continue;
-      const match = await findOrCreateEntity(c.name, 'company', pool);
-      await linkEntity(thoughtId, match.id, 'mentions', 1.0, pool);
+      const match = await findOrCreateEntity(c.name, 'company', pool, thoughtDate);
+      await linkEntity(thoughtId, match.id, 'mentions', 1.0, pool, thoughtDate);
       resolvedNames.add(normalizeName(c.name));
       resolvedEntityIds.push(match.id);
     }
@@ -294,6 +300,7 @@ export async function resolveEntities(
   pool: pg.Pool,
   _config: ResolverConfig,
   sourceMeta?: Record<string, unknown> | null,
+  thoughtDate?: Date,
 ): Promise<void> {
   // Phase B: resolve structured participants first
   let alreadyResolved = new Set<string>();
@@ -307,6 +314,7 @@ export async function resolveEntities(
         content,
         pool,
         sourceMeta,
+        thoughtDate,
       );
       alreadyResolved = result.resolvedNames;
       allEntityIds.push(...result.resolvedEntityIds);
@@ -337,9 +345,9 @@ export async function resolveEntities(
     // Skip names already resolved via structured data
     if (alreadyResolved.has(normalizeName(entry.name))) continue;
 
-    const match = await findOrCreateEntity(entry.name, entry.type, pool);
+    const match = await findOrCreateEntity(entry.name, entry.type, pool, thoughtDate);
     const relationship = inferRelationship(entry.name, metadata, content, sourceMeta);
-    await linkEntity(thoughtId, match.id, relationship, match.confidence, pool);
+    await linkEntity(thoughtId, match.id, relationship, match.confidence, pool, thoughtDate);
     allEntityIds.push(match.id);
 
     // Create proposal for low-confidence links (e.g., prefix matches)
@@ -362,10 +370,25 @@ export async function resolveEntities(
     }
   }
 
+  // Non-blocking explicit relationship extraction (separate focused pass)
+  let explicitPairs: Set<string> | undefined;
+  const allEntries = entityEntries.filter(e => !isJunkEntity(e.name));
+  const entityNames = [...new Set(allEntries.map(e => e.name))];
+  if (entityNames.length >= 2) {
+    try {
+      const extracted = await extractRelationships(content, entityNames, _config);
+      if (extracted.length > 0) {
+        explicitPairs = await applyExtractedRelationships(extracted, thoughtId, pool);
+      }
+    } catch (err) {
+      console.error('Relationship extraction failed (non-fatal):', err);
+    }
+  }
+
   // Create co-occurrence edges between all resolved entities (non-blocking)
   if (allEntityIds.length >= 2) {
     try {
-      await createCooccurrenceEdges(thoughtId, allEntityIds, pool);
+      await createCooccurrenceEdges(thoughtId, allEntityIds, pool, explicitPairs);
     } catch (err) {
       console.error('Co-occurrence edge creation failed (non-fatal):', err);
     }

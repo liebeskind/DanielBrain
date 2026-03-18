@@ -42,7 +42,7 @@ describe('streamChat', () => {
 
     await streamChat(
       [{ role: 'user', content: 'hi' }],
-      'llama4:scout',
+      'llama3.3:70b',
       'http://localhost:11434',
       res,
     );
@@ -65,7 +65,7 @@ describe('streamChat', () => {
 
     const result = await streamChat(
       [{ role: 'user', content: 'hi' }],
-      'llama4:scout',
+      'llama3.3:70b',
       'http://localhost:11434',
       res,
     );
@@ -103,12 +103,13 @@ describe('streamChat', () => {
       { role: 'user' as const, content: 'hello' },
     ];
 
-    await streamChat(messages, 'llama4:scout', 'http://localhost:11434', res);
+    await streamChat(messages, 'llama3.3:70b', 'http://localhost:11434', res);
 
     expect(mockFetch).toHaveBeenCalledWith('http://localhost:11434/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'llama4:scout', messages, stream: true }),
+      body: JSON.stringify({ model: 'llama3.3:70b', messages, stream: true }),
+      signal: expect.any(AbortSignal),
     });
   });
 });

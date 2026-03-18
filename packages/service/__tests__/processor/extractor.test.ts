@@ -6,7 +6,7 @@ vi.stubGlobal('fetch', mockFetch);
 
 const baseConfig = {
   ollamaBaseUrl: 'http://localhost:11434',
-  extractionModel: 'llama3.1:8b',
+  extractionModel: 'llama3.3:70b',
 };
 
 function mockOllamaResponse(content: Record<string, unknown>) {
@@ -27,6 +27,13 @@ const fullExtraction = {
   companies: ['Acme Corp'],
   products: ['Widget Pro'],
   projects: ['Project Alpha'],
+  department: 'engineering',
+  confidentiality: 'internal',
+  themes: ['product_strategy'],
+  key_decisions: ['Launch beta by March 15'],
+  key_insights: ['LTI 1.3 requires SSO passthrough'],
+  meeting_participants: ['Alice', 'Bob'],
+  action_items_structured: [{ action: 'Draft proposal', assignee: 'Alice', deadline: null, status: 'open' }],
 };
 
 const emptyGleaning = {
@@ -58,6 +65,13 @@ describe('extractMetadata', () => {
     expect(result.companies).toEqual(['Acme Corp']);
     expect(result.products).toEqual(['Widget Pro']);
     expect(result.projects).toEqual(['Project Alpha']);
+    expect(result.department).toBe('engineering');
+    expect(result.confidentiality).toBe('internal');
+    expect(result.themes).toEqual(['product_strategy']);
+    expect(result.key_decisions).toEqual(['Launch beta by March 15']);
+    expect(result.key_insights).toEqual(['LTI 1.3 requires SSO passthrough']);
+    expect(result.meeting_participants).toEqual(['Alice', 'Bob']);
+    expect(result.action_items_structured).toEqual([{ action: 'Draft proposal', assignee: 'Alice', deadline: null, status: 'open' }]);
   });
 
   it('sends correct JSON schema for constrained decoding', async () => {
@@ -70,8 +84,37 @@ describe('extractMetadata', () => {
 
     const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
     expect(callBody.format).toBeDefined();
-    expect(callBody.model).toBe('llama3.1:8b');
+    expect(callBody.model).toBe('llama3.3:70b');
     expect(callBody.stream).toBe(false);
+  });
+
+  it('includes timeout signal in fetch call', async () => {
+    mockFetch.mockResolvedValueOnce(mockOllamaResponse({
+      thought_type: null, people: [], topics: [], action_items: [],
+      dates_mentioned: [], sentiment: null, summary: null,
+    }));
+
+    await extractMetadata('Some text', { ...baseConfig, enableGleaning: false });
+
+    expect(mockFetch.mock.calls[0][1].signal).toBeDefined();
+  });
+
+  it('includes new fields in schema sent to Ollama', async () => {
+    mockFetch.mockResolvedValueOnce(mockOllamaResponse({
+      thought_type: null, people: [], topics: [], action_items: [],
+      dates_mentioned: [], sentiment: null, summary: null,
+    }));
+
+    await extractMetadata('Some text', { ...baseConfig, enableGleaning: false });
+
+    const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(callBody.format.properties.department).toBeDefined();
+    expect(callBody.format.properties.confidentiality).toBeDefined();
+    expect(callBody.format.properties.themes).toBeDefined();
+    expect(callBody.format.properties.key_decisions).toBeDefined();
+    expect(callBody.format.properties.key_insights).toBeDefined();
+    expect(callBody.format.properties.meeting_participants).toBeDefined();
+    expect(callBody.format.properties.action_items_structured).toBeDefined();
   });
 
   it('handles missing fields gracefully with defaults', async () => {
@@ -230,9 +273,36 @@ describe('gleaning', () => {
     expect(userMsg.content).toContain('ALREADY EXTRACTED');
   });
 
+  it('merges gleaned new fields (key_decisions, key_insights, themes, participants)', async () => {
+    mockFetch
+      .mockResolvedValueOnce(mockOllamaResponse(fullExtraction))
+      .mockResolvedValueOnce(mockOllamaResponse({
+        additional_people: [],
+        additional_companies: [],
+        additional_products: [],
+        additional_projects: [],
+        additional_action_items: [],
+        additional_key_decisions: ['Hire two more engineers'],
+        additional_key_insights: ['Budget is tight'],
+        additional_meeting_participants: ['Carol'],
+        additional_themes: ['hiring'],
+      }));
+
+    const result = await extractMetadata('Meeting text', baseConfig);
+
+    expect(result.key_decisions).toContain('Launch beta by March 15');
+    expect(result.key_decisions).toContain('Hire two more engineers');
+    expect(result.key_insights).toContain('Budget is tight');
+    expect(result.meeting_participants).toContain('Carol');
+    expect(result.themes).toContain('hiring');
+  });
+
   it('exports gleaning schema and prompt for inspection', () => {
     expect(GLEANING_SYSTEM_PROMPT).toContain('MISSED');
     expect(GLEANING_SCHEMA.properties.additional_people).toBeDefined();
     expect(GLEANING_SCHEMA.properties.additional_action_items).toBeDefined();
+    expect(GLEANING_SCHEMA.properties.additional_key_decisions).toBeDefined();
+    expect(GLEANING_SCHEMA.properties.additional_key_insights).toBeDefined();
+    expect(GLEANING_SCHEMA.properties.additional_themes).toBeDefined();
   });
 });
