@@ -41,26 +41,73 @@ export async function runTranscription(jobId: string, config: Config): Promise<v
 
 interface TranscribeResult {
   text: string;
-  segments: Array<{ start: number; end: number; text: string }>;
+  segments: Array<{ start: number; end: number; text: string; speaker?: string }>;
   language: string;
   duration: number;
+  speakers?: Record<string, { duration: number; segments: number }>;
 }
 
 async function callWhisperApi(audioPath: string, config: Config): Promise<TranscribeResult> {
   const fileBuffer = await fs.promises.readFile(audioPath);
   const filename = audioPath.split('/').pop() || 'audio.wav';
-
-  // Build multipart form data manually using Blob/FormData
   const formData = new FormData();
   formData.append('file', new Blob([fileBuffer]), filename);
-  formData.append('model', `Systran/faster-whisper-${config.whisperModel}`);
-  formData.append('response_format', 'verbose_json');
-  formData.append('timestamp_granularities[]', 'segment');
+
+  // Try whisperx-blackwell API first (GPU, with diarization)
+  try {
+    formData.append('language', 'auto');
+    const response = await fetch(`${config.whisperBaseUrl}/transcribe`, {
+      method: 'POST',
+      body: formData,
+      signal: AbortSignal.timeout(600_000),
+    });
+
+    if (response.ok) {
+      const data = await response.json() as {
+        status: string;
+        language: string;
+        segments: Array<{ start: number; end: number; text: string; speaker?: string }>;
+        speakers?: Record<string, { duration: number; segments: number }>;
+      };
+
+      if (data.status === 'success' && data.segments) {
+        const text = data.segments.map(s => {
+          const prefix = s.speaker ? `[${s.speaker}] ` : '';
+          return prefix + s.text.trim();
+        }).join('\n');
+
+        const lastSeg = data.segments[data.segments.length - 1];
+        const duration = lastSeg ? lastSeg.end : 0;
+
+        return {
+          text,
+          segments: data.segments.map(s => ({
+            start: Math.round(s.start * 100) / 100,
+            end: Math.round(s.end * 100) / 100,
+            text: s.text.trim(),
+            speaker: s.speaker,
+          })),
+          language: data.language || 'unknown',
+          duration,
+          speakers: data.speakers,
+        };
+      }
+    }
+  } catch {
+    // Fall through to OpenAI-compatible API
+  }
+
+  // Fallback: OpenAI-compatible API (faster-whisper-server on CPU)
+  const fallbackForm = new FormData();
+  fallbackForm.append('file', new Blob([fileBuffer]), filename);
+  fallbackForm.append('model', `Systran/faster-whisper-${config.whisperModel}`);
+  fallbackForm.append('response_format', 'verbose_json');
+  fallbackForm.append('timestamp_granularities[]', 'segment');
 
   const response = await fetch(`${config.whisperBaseUrl}/v1/audio/transcriptions`, {
     method: 'POST',
-    body: formData,
-    signal: AbortSignal.timeout(600_000), // 10 min timeout
+    body: fallbackForm,
+    signal: AbortSignal.timeout(600_000),
   });
 
   if (!response.ok) {
@@ -120,11 +167,12 @@ async function generateSummary(text: string, config: Config): Promise<string> {
   return data.message?.content?.trim() || '';
 }
 
-export function formatAsSrt(segments: Array<{ start: number; end: number; text: string }>): string {
+export function formatAsSrt(segments: Array<{ start: number; end: number; text: string; speaker?: string }>): string {
   return segments.map((seg, i) => {
     const startTime = formatSrtTime(seg.start);
     const endTime = formatSrtTime(seg.end);
-    return `${i + 1}\n${startTime} --> ${endTime}\n${seg.text}\n`;
+    const prefix = seg.speaker ? `[${seg.speaker}] ` : '';
+    return `${i + 1}\n${startTime} --> ${endTime}\n${prefix}${seg.text}\n`;
   }).join('\n');
 }
 

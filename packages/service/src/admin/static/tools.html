@@ -258,6 +258,7 @@
             <span x-text="formatDuration(currentJob?.result?.duration)"></span>
             <span x-text="'Language: ' + (currentJob?.result?.language || '?')"></span>
             <span x-text="(currentJob?.result?.segments?.length || 0) + ' segments'"></span>
+            <span x-show="currentJob?.result?.speakers" x-text="Object.keys(currentJob?.result?.speakers || {}).length + ' speakers'"></span>
           </div>
 
           <!-- Summary -->

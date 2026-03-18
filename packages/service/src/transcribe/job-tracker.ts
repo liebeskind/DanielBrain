@@ -2,6 +2,7 @@ export interface TranscribeSegment {
   start: number;
   end: number;
   text: string;
+  speaker?: string;
 }
 
 export interface TranscribeResult {
@@ -10,6 +11,7 @@ export interface TranscribeResult {
   language: string;
   duration: number;
   summary?: string;
+  speakers?: Record<string, { duration: number; segments: number }>;
 }
 
 export interface TranscribeJob {
