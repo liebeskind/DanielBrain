@@ -11,6 +11,12 @@ import {
   queryRelationshipsInputSchema,
   updateThoughtInputSchema,
   proposeRelationshipInputSchema,
+  getCommunitiesInputSchema,
+  globalSearchInputSchema,
+  updateEntityInputSchema,
+  proposeMergeInputSchema,
+  askInputSchema,
+  deepResearchInputSchema,
 } from '@danielbrain/shared';
 import { handleSemanticSearch } from './tools/semantic-search.js';
 import { handleListRecent } from './tools/list-recent.js';
@@ -23,17 +29,76 @@ import { handleGetTimeline } from './tools/get-timeline.js';
 import { handleQueryRelationships } from './tools/query-relationships.js';
 import { handleUpdateThought } from './tools/update-thought.js';
 import { handleProposeRelationship } from './tools/propose-relationship.js';
+import { handleGetCommunities } from './tools/get-communities.js';
+import { handleGlobalSearch } from './tools/global-search.js';
+import { handleUpdateEntity } from './tools/update-entity.js';
+import { handleProposeMerge } from './tools/propose-merge.js';
+import { handleAsk } from './tools/ask.js';
+import { handleDeepResearch } from './tools/deep-research.js';
 import type { Config } from '../config.js';
 
 export function createMcpServer(pool: pg.Pool, config: Config): McpServer {
   const server = new McpServer({
     name: 'DanielBrain',
-    version: '0.2.0',
+    version: '0.3.0',
   });
+
+  // ==========================================================================
+  // CONSOLIDATED TOOLS (start here if unsure which tool to use)
+  // ==========================================================================
+
+  server.tool(
+    'ask',
+    `PURPOSE: Answer any question by searching thoughts, entities, and communities in parallel.
+USE WHEN: You have a question and aren't sure which specific tool to use, or you want comprehensive results from all data sources at once.
+NOT FOR: Writing data (use save_thought), modifying entities (use update_entity), or deep multi-step research (use deep_research).
+EXAMPLE: ask({ query: "What do we know about the Stride partnership?", limit: 10 })`,
+    {
+      query: askInputSchema.shape.query,
+      days_back: askInputSchema.shape.days_back,
+      limit: askInputSchema.shape.limit,
+    },
+    async (params) => {
+      const input = askInputSchema.parse(params);
+      const result = await handleAsk(input, pool, config);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+      };
+    }
+  );
+
+  server.tool(
+    'deep_research',
+    `PURPOSE: Answer complex questions by decomposing into sub-questions, searching each, and optionally synthesizing a combined answer.
+USE WHEN: The question requires connecting multiple pieces of information, or a simple search wouldn't be sufficient (e.g., "How has our product strategy evolved over the last quarter?").
+NOT FOR: Simple factual lookups (use ask or semantic_search). Costs 2 LLM calls when synthesize=true.
+EXAMPLE: deep_research({ question: "What are the key decisions made about the K12 Zone product?", synthesize: true })`,
+    {
+      question: deepResearchInputSchema.shape.question,
+      max_iterations: deepResearchInputSchema.shape.max_iterations,
+      include_community_context: deepResearchInputSchema.shape.include_community_context,
+      synthesize: deepResearchInputSchema.shape.synthesize,
+    },
+    async (params) => {
+      const input = deepResearchInputSchema.parse(params);
+      const result = await handleDeepResearch(input, pool, config);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+        isError: 'error' in result,
+      };
+    }
+  );
+
+  // ==========================================================================
+  // THOUGHT TOOLS (search, browse, save, update)
+  // ==========================================================================
 
   server.tool(
     'semantic_search',
-    'Search thoughts by semantic similarity. Use this to find relevant past thoughts, ideas, meeting notes, etc.',
+    `PURPOSE: Search thoughts by meaning using hybrid vector + full-text search.
+USE WHEN: Looking for specific facts, discussions, or notes. Supports filters by type, person, topic, source, and time range.
+NOT FOR: Broad thematic questions (use global_search), entity profiles (use get_entity), or meeting prep (use get_context). If unsure which tool to use, call ask instead.
+EXAMPLE: semantic_search({ query: "budget planning for Q2", person: "Chris", days_back: 30 })`,
     {
       query: semanticSearchInputSchema.shape.query,
       limit: semanticSearchInputSchema.shape.limit,
@@ -49,19 +114,17 @@ export function createMcpServer(pool: pg.Pool, config: Config): McpServer {
       const input = semanticSearchInputSchema.parse(params);
       const results = await handleSemanticSearch(input, pool, config);
       return {
-        content: [
-          {
-            type: 'text' as const,
-            text: JSON.stringify(results, null, 2),
-          },
-        ],
+        content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
       };
     }
   );
 
   server.tool(
     'list_recent',
-    'List recent thoughts, ordered by date. Useful for seeing what was captured recently.',
+    `PURPOSE: Browse recently captured thoughts, ordered by date.
+USE WHEN: You want to see what's new, review recent activity, or check what was captured from a specific source.
+NOT FOR: Searching by meaning (use semantic_search) or finding specific topics (use ask).
+EXAMPLE: list_recent({ days: 7, source: "fathom", limit: 10 })`,
     {
       days: listRecentInputSchema.shape.days,
       limit: listRecentInputSchema.shape.limit,
@@ -72,19 +135,17 @@ export function createMcpServer(pool: pg.Pool, config: Config): McpServer {
       const input = listRecentInputSchema.parse(params);
       const results = await handleListRecent(input, pool);
       return {
-        content: [
-          {
-            type: 'text' as const,
-            text: JSON.stringify(results, null, 2),
-          },
-        ],
+        content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
       };
     }
   );
 
   server.tool(
     'stats',
-    'Get statistics about stored thoughts: counts, breakdowns by type, top people, top topics.',
+    `PURPOSE: Get aggregate statistics — counts, breakdowns by type, top people, top topics, action item counts.
+USE WHEN: You need an overview of what's in the knowledge base, or want to understand volume and distribution.
+NOT FOR: Searching content (use semantic_search or ask).
+EXAMPLE: stats({ period: "month" })`,
     {
       period: statsInputSchema.shape.period,
     },
@@ -92,19 +153,17 @@ export function createMcpServer(pool: pg.Pool, config: Config): McpServer {
       const input = statsInputSchema.parse(params);
       const results = await handleStats(input, pool);
       return {
-        content: [
-          {
-            type: 'text' as const,
-            text: JSON.stringify(results, null, 2),
-          },
-        ],
+        content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
       };
     }
   );
 
   server.tool(
     'save_thought',
-    'Save a new thought. Processes it through the pipeline: embedding, metadata extraction, and optional chunking for long content.',
+    `PURPOSE: Save a new thought into the knowledge base. Triggers the full processing pipeline: embedding, metadata extraction, entity resolution, and chunking for long content.
+USE WHEN: You want to record a note, insight, meeting summary, or any information for future retrieval.
+NOT FOR: Searching or reading (use semantic_search, ask, or list_recent).
+EXAMPLE: save_thought({ content: "Met with Chris about K12 Zone roadmap. Key decision: launch beta in April.", source: "mcp" })`,
     {
       content: saveThoughtInputSchema.shape.content,
       source: saveThoughtInputSchema.shape.source,
@@ -113,21 +172,46 @@ export function createMcpServer(pool: pg.Pool, config: Config): McpServer {
       const input = saveThoughtInputSchema.parse(params);
       const result = await handleSaveThought(input, pool, config);
       return {
-        content: [
-          {
-            type: 'text' as const,
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
       };
     }
   );
 
-  // --- Entity tools ---
+  server.tool(
+    'update_thought',
+    `PURPOSE: Correct or update metadata on an existing thought (PATCH semantics — only updates fields you provide).
+USE WHEN: The extraction pipeline got something wrong — wrong people, topics, summary, or thought_type — and you want to fix it.
+NOT FOR: Adding new thoughts (use save_thought) or updating entities (use update_entity).
+EXAMPLE: update_thought({ thought_id: "uuid-here", people: ["Chris Psiaki", "Daniel"], topics: ["K12 Zone"] })`,
+    {
+      thought_id: updateThoughtInputSchema.shape.thought_id,
+      summary: updateThoughtInputSchema.shape.summary,
+      action_items: updateThoughtInputSchema.shape.action_items,
+      people: updateThoughtInputSchema.shape.people,
+      topics: updateThoughtInputSchema.shape.topics,
+      thought_type: updateThoughtInputSchema.shape.thought_type,
+      sentiment: updateThoughtInputSchema.shape.sentiment,
+    },
+    async (params) => {
+      const input = updateThoughtInputSchema.parse(params);
+      const result = await handleUpdateThought(input, pool);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+        isError: 'error' in result,
+      };
+    }
+  );
+
+  // ==========================================================================
+  // ENTITY TOOLS (lookup, browse, update, merge)
+  // ==========================================================================
 
   server.tool(
     'get_entity',
-    'Get full profile for an entity (person, company, project, etc). Returns entity details, recent linked thoughts, and connected entities. Lookup by ID or name.',
+    `PURPOSE: Deep dive on a single entity — full profile, recent linked thoughts, connected entities, and relationship edges.
+USE WHEN: You know which entity you want and need comprehensive information about it. Lookup by UUID or name.
+NOT FOR: Browsing or discovering entities (use list_entities), or getting context across multiple entities (use get_context). If unsure which tool to use, call ask instead.
+EXAMPLE: get_entity({ name: "Chris Psiaki" })`,
     {
       entity_id: z.string().uuid().optional().describe('UUID of the entity'),
       name: z.string().min(1).optional().describe('Name to search for'),
@@ -156,7 +240,10 @@ export function createMcpServer(pool: pg.Pool, config: Config): McpServer {
 
   server.tool(
     'list_entities',
-    'Browse or search known entities. Filter by type, search by name prefix, sort by mention count, recency, or name.',
+    `PURPOSE: Browse or search the entity catalog. Filter by type, search by name prefix, sort by mentions/recency/name.
+USE WHEN: You want to discover what entities exist, find entities matching a pattern, or see the most active/recent entities.
+NOT FOR: Deep dive on one entity (use get_entity), or semantic search over thoughts (use semantic_search). If unsure which tool to use, call ask instead.
+EXAMPLE: list_entities({ entity_type: "person", sort_by: "mention_count", limit: 10 })`,
     {
       entity_type: listEntitiesInputSchema.shape.entity_type,
       query: listEntitiesInputSchema.shape.query,
@@ -174,7 +261,10 @@ export function createMcpServer(pool: pg.Pool, config: Config): McpServer {
 
   server.tool(
     'get_context',
-    'Assemble a briefing from the intersection of multiple entities. Great for meeting prep — e.g., "give me context for my meeting with Alice about Project X". Returns shared thoughts ranked by entity overlap, action items, and key topics.',
+    `PURPOSE: Assemble a briefing from the intersection of multiple entities — ideal for meeting prep.
+USE WHEN: You need context about the relationship between 2-5 specific entities (e.g., "prep me for meeting with Alice about Project X"). Requires exact entity names.
+NOT FOR: Free-form questions (use ask or semantic_search), or single entity lookup (use get_entity).
+EXAMPLE: get_context({ entities: ["Chris Psiaki", "K12 Zone"], days_back: 30 })`,
     {
       entities: getContextInputSchema.shape.entities,
       days_back: getContextInputSchema.shape.days_back,
@@ -192,7 +282,10 @@ export function createMcpServer(pool: pg.Pool, config: Config): McpServer {
 
   server.tool(
     'get_timeline',
-    'Get a chronological timeline of thoughts related to an entity, grouped by date. Filter by source (slack, telegram, mcp, etc).',
+    `PURPOSE: Chronological timeline of thoughts linked to an entity, grouped by date.
+USE WHEN: You want to see how an entity's story unfolds over time, or review activity from specific sources.
+NOT FOR: Searching by meaning (use semantic_search) or entity profiles (use get_entity). If unsure which tool to use, call ask instead.
+EXAMPLE: get_timeline({ entity_name: "Topia", days_back: 60, sources: ["fathom"] })`,
     {
       entity_id: z.string().uuid().optional().describe('UUID of the entity'),
       entity_name: z.string().min(1).optional().describe('Name to search for'),
@@ -221,11 +314,68 @@ export function createMcpServer(pool: pg.Pool, config: Config): McpServer {
     }
   );
 
-  // --- Relationship tools ---
+  server.tool(
+    'update_entity',
+    `PURPOSE: Update an entity's name, aliases, type, or metadata. All changes go through the approvals queue for human review.
+USE WHEN: An entity has the wrong name, is missing aliases, needs metadata added, or has the wrong type.
+NOT FOR: Merging duplicate entities (use propose_merge), or updating thought metadata (use update_thought).
+EXAMPLE: update_entity({ name: "Chris", new_name: "Chris Psiaki", add_aliases: ["christopher"] })`,
+    {
+      entity_id: updateEntityInputSchema.shape.entity_id,
+      name: updateEntityInputSchema.shape.name,
+      new_name: updateEntityInputSchema.shape.new_name,
+      add_aliases: updateEntityInputSchema.shape.add_aliases,
+      remove_aliases: updateEntityInputSchema.shape.remove_aliases,
+      metadata: updateEntityInputSchema.shape.metadata,
+      entity_type: updateEntityInputSchema.shape.entity_type,
+    },
+    async (params) => {
+      const input = updateEntityInputSchema.parse(params);
+      if (!input.entity_id && !input.name) {
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Either entity_id or name must be provided' }) }],
+          isError: true,
+        };
+      }
+      const result = await handleUpdateEntity(input, pool);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+        isError: 'error' in result,
+      };
+    }
+  );
+
+  server.tool(
+    'propose_merge',
+    `PURPOSE: Propose merging two duplicate entities. The "loser" entity is absorbed into the "winner". Goes through the approvals queue.
+USE WHEN: You've found two entities that represent the same real-world thing (e.g., "Chris" and "Chris Psiaki").
+NOT FOR: Updating entity fields (use update_entity), or creating relationships (use propose_relationship).
+EXAMPLE: propose_merge({ winner: "Chris Psiaki", loser: "Chris", reason: "Same person — CTO of Topia" })`,
+    {
+      winner: proposeMergeInputSchema.shape.winner,
+      loser: proposeMergeInputSchema.shape.loser,
+      reason: proposeMergeInputSchema.shape.reason,
+    },
+    async (params) => {
+      const input = proposeMergeInputSchema.parse(params);
+      const result = await handleProposeMerge(input, pool);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+        isError: 'error' in result,
+      };
+    }
+  );
+
+  // ==========================================================================
+  // RELATIONSHIP TOOLS
+  // ==========================================================================
 
   server.tool(
     'query_relationships',
-    'Query entity-to-entity relationships. Returns edges with weights, descriptions, and connected entity info. Useful for understanding how entities relate to each other.',
+    `PURPOSE: Query entity-to-entity relationship edges. Returns co-occurrence weights, LLM-generated descriptions, and connected entity info.
+USE WHEN: You want to understand how two or more entities relate, or see the strongest connections for a given entity.
+NOT FOR: Entity profiles (use get_entity), or meeting prep (use get_context). If unsure which tool to use, call ask instead.
+EXAMPLE: query_relationships({ entity_name: "Topia", min_weight: 3, limit: 10 })`,
     {
       entity_name: z.string().min(1).optional().describe('Entity name to search for'),
       entity_id: z.string().uuid().optional().describe('UUID of the entity'),
@@ -248,30 +398,11 @@ export function createMcpServer(pool: pg.Pool, config: Config): McpServer {
   );
 
   server.tool(
-    'update_thought',
-    'Update metadata fields on a thought. PATCH semantics — only updates provided fields. Use this to correct extraction errors.',
-    {
-      thought_id: updateThoughtInputSchema.shape.thought_id,
-      summary: updateThoughtInputSchema.shape.summary,
-      action_items: updateThoughtInputSchema.shape.action_items,
-      people: updateThoughtInputSchema.shape.people,
-      topics: updateThoughtInputSchema.shape.topics,
-      thought_type: updateThoughtInputSchema.shape.thought_type,
-      sentiment: updateThoughtInputSchema.shape.sentiment,
-    },
-    async (params) => {
-      const input = updateThoughtInputSchema.parse(params);
-      const result = await handleUpdateThought(input, pool);
-      return {
-        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-        isError: 'error' in result,
-      };
-    }
-  );
-
-  server.tool(
     'propose_relationship',
-    'Propose a new relationship between two entities. Creates a proposal in the approvals queue for human review.',
+    `PURPOSE: Propose a new typed relationship between two entities. Creates a proposal for human review.
+USE WHEN: You've identified a relationship between entities that isn't captured by co-occurrence (e.g., "Alice reports to Bob").
+NOT FOR: Merging duplicates (use propose_merge), or querying existing relationships (use query_relationships).
+EXAMPLE: propose_relationship({ source_entity: "Chris Psiaki", target_entity: "Topia", description: "CTO of Topia", relationship_type: "role_at" })`,
     {
       source_entity: proposeRelationshipInputSchema.shape.source_entity,
       target_entity: proposeRelationshipInputSchema.shape.target_entity,
@@ -284,6 +415,51 @@ export function createMcpServer(pool: pg.Pool, config: Config): McpServer {
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
         isError: 'error' in result,
+      };
+    }
+  );
+
+  // ==========================================================================
+  // COMMUNITY TOOLS (clusters, themes, global search)
+  // ==========================================================================
+
+  server.tool(
+    'get_communities',
+    `PURPOSE: List detected communities — clusters of entities that frequently co-occur.
+USE WHEN: You want to understand the structure of the knowledge graph, see which entities cluster together, or find a community by entity membership.
+NOT FOR: Searching by theme (use global_search), or entity details (use get_entity). If unsure which tool to use, call ask instead.
+EXAMPLE: get_communities({ entity_id: "uuid-here", limit: 5 })`,
+    {
+      level: getCommunitiesInputSchema.shape.level,
+      entity_id: getCommunitiesInputSchema.shape.entity_id,
+      search: getCommunitiesInputSchema.shape.search,
+      limit: getCommunitiesInputSchema.shape.limit,
+    },
+    async (params) => {
+      const input = getCommunitiesInputSchema.parse(params);
+      const results = await handleGetCommunities(input, pool);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
+      };
+    }
+  );
+
+  server.tool(
+    'global_search',
+    `PURPOSE: Search across community-level summaries for broad, thematic questions.
+USE WHEN: The question is about high-level themes, organizational patterns, or "what is the team working on?" — things that span many thoughts and entities.
+NOT FOR: Specific facts or individual discussions (use semantic_search), or entity profiles (use get_entity). If unsure which tool to use, call ask instead.
+EXAMPLE: global_search({ query: "What are the main strategic initiatives?" })`,
+    {
+      query: globalSearchInputSchema.shape.query,
+      level: globalSearchInputSchema.shape.level,
+      limit: globalSearchInputSchema.shape.limit,
+    },
+    async (params) => {
+      const input = globalSearchInputSchema.parse(params);
+      const results = await handleGlobalSearch(input, pool, config);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
       };
     }
   );

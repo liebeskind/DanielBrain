@@ -17,6 +17,7 @@ export const APPROVAL_THRESHOLDS: Record<string, number | 'always'> = {
   entity_enrichment: 'always',
   entity_merge: 'always',
   entity_relationship: 'always',
+  entity_update: 'always',
 };
 
 // Co-occurrence cap (prevents O(n²) explosion on large transcripts)
@@ -57,5 +58,17 @@ export const ENTITY_STALE_DAYS = 7;
 export const PROFILE_REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 export const PROFILE_REFRESH_BATCH_SIZE = 5;
 
+// Community detection
+export const COMMUNITY_DETECTION_INTERVAL_MS = 3_600_000; // 1 hour
+export const COMMUNITY_SUMMARY_BATCH_SIZE = 5;
+export const COMMUNITY_SUMMARY_INTERVAL_MS = 300_000; // 5 min
+export const COMMUNITY_MIN_EDGE_WEIGHT = 2;
+export const GLOBAL_SEARCH_COMMUNITY_LIMIT = 10;
+
 // Ollama LLM request timeout
 export const OLLAMA_LLM_TIMEOUT_MS = 600_000;
+
+// Deep research
+export const DEEP_RESEARCH_MAX_ITERATIONS = 5;
+export const DEEP_RESEARCH_RESULTS_PER_QUERY = 10;
+export const DEEP_RESEARCH_SIMILARITY_THRESHOLD = 0.2;

@@ -15,6 +15,9 @@ export async function applyProposal(proposal: Proposal, pool: pg.Pool): Promise<
     case 'entity_relationship':
       await applyEntityRelationship(proposal, pool);
       break;
+    case 'entity_update':
+      await applyEntityUpdate(proposal, pool);
+      break;
     default:
       throw new Error(`Unknown proposal type: ${proposal.proposal_type}`);
   }
@@ -32,6 +35,9 @@ export async function revertProposal(proposal: Proposal, pool: pg.Pool): Promise
       // Not auto-applied, nothing to revert
       break;
     case 'entity_relationship':
+      // Not auto-applied, nothing to revert
+      break;
+    case 'entity_update':
       // Not auto-applied, nothing to revert
       break;
     default:
@@ -186,6 +192,75 @@ async function applyEntityRelationship(proposal: Proposal, pool: pg.Pool): Promi
       `INSERT INTO entity_relationships (source_id, target_id, relationship, description, weight, source_thought_ids, valid_at)
        VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
       [old.source_id, old.target_id, old.relationship, new_description, old.weight, old.source_thought_ids]
+    );
+  }
+}
+
+async function applyEntityUpdate(proposal: Proposal, pool: pg.Pool): Promise<void> {
+  if (!proposal.entity_id) {
+    throw new Error('entity_update proposal missing entity_id');
+  }
+
+  const changes = proposal.proposed_data as {
+    new_name?: string;
+    add_aliases?: string[];
+    remove_aliases?: string[];
+    metadata?: Record<string, unknown>;
+    entity_type?: string;
+  };
+
+  if (changes.new_name) {
+    const newCanonical = changes.new_name.toLowerCase().trim();
+    // Get current name for alias
+    const { rows } = await pool.query(
+      `SELECT name FROM entities WHERE id = $1`,
+      [proposal.entity_id]
+    );
+    const oldName = rows[0]?.name;
+
+    await pool.query(
+      `UPDATE entities SET name = $1, canonical_name = $2, updated_at = NOW() WHERE id = $3`,
+      [changes.new_name, newCanonical, proposal.entity_id]
+    );
+    // Add old name as alias
+    if (oldName) {
+      await pool.query(
+        `UPDATE entities SET aliases = array_append(aliases, $1) WHERE id = $2 AND NOT ($1 = ANY(aliases))`,
+        [oldName.toLowerCase(), proposal.entity_id]
+      );
+    }
+  }
+
+  if (changes.add_aliases && changes.add_aliases.length > 0) {
+    for (const alias of changes.add_aliases) {
+      await pool.query(
+        `UPDATE entities SET aliases = array_append(aliases, $1), updated_at = NOW()
+         WHERE id = $2 AND NOT ($1 = ANY(aliases))`,
+        [alias.toLowerCase(), proposal.entity_id]
+      );
+    }
+  }
+
+  if (changes.remove_aliases && changes.remove_aliases.length > 0) {
+    for (const alias of changes.remove_aliases) {
+      await pool.query(
+        `UPDATE entities SET aliases = array_remove(aliases, $1), updated_at = NOW() WHERE id = $2`,
+        [alias.toLowerCase(), proposal.entity_id]
+      );
+    }
+  }
+
+  if (changes.metadata) {
+    await pool.query(
+      `UPDATE entities SET metadata = metadata || $1::jsonb, updated_at = NOW() WHERE id = $2`,
+      [JSON.stringify(changes.metadata), proposal.entity_id]
+    );
+  }
+
+  if (changes.entity_type) {
+    await pool.query(
+      `UPDATE entities SET entity_type = $1, updated_at = NOW() WHERE id = $2`,
+      [changes.entity_type, proposal.entity_id]
     );
   }
 }

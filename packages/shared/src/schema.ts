@@ -184,3 +184,49 @@ export const proposeRelationshipInputSchema = z.object({
   description: z.string().min(1),
   relationship_type: z.string().default('related_to'),
 });
+
+// --- Agent interface schemas ---
+
+export const updateEntityInputSchema = z.object({
+  entity_id: z.string().uuid().optional(),
+  name: z.string().min(1).optional(),
+  new_name: z.string().min(1).optional(),
+  add_aliases: z.array(z.string()).optional(),
+  remove_aliases: z.array(z.string()).optional(),
+  metadata: z.record(z.unknown()).optional(),
+  entity_type: entityTypeEnum.optional(),
+});
+
+export const proposeMergeInputSchema = z.object({
+  winner: z.string().min(1),
+  loser: z.string().min(1),
+  reason: z.string().optional(),
+});
+
+export const askInputSchema = z.object({
+  query: z.string().min(1),
+  days_back: z.number().int().min(1).optional(),
+  limit: z.number().int().min(1).max(50).default(10),
+});
+
+export const deepResearchInputSchema = z.object({
+  question: z.string().min(1),
+  max_iterations: z.number().int().min(1).max(5).default(3),
+  include_community_context: z.boolean().default(true),
+  synthesize: z.boolean().default(true),
+});
+
+// --- Community tool schemas ---
+
+export const getCommunitiesInputSchema = z.object({
+  level: z.number().int().min(0).default(0),
+  entity_id: z.string().uuid().optional(),
+  search: z.string().optional(),
+  limit: z.number().int().min(1).max(100).default(20),
+});
+
+export const globalSearchInputSchema = z.object({
+  query: z.string().min(1),
+  level: z.number().int().min(0).default(0),
+  limit: z.number().int().min(1).max(20).default(5),
+});
