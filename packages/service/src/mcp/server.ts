@@ -81,11 +81,19 @@ EXAMPLE: deep_research({ question: "What are the key decisions made about the K1
     },
     async (params) => {
       const input = deepResearchInputSchema.parse(params);
-      const result = await handleDeepResearch(input, pool, config);
-      return {
-        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-        isError: 'error' in result,
-      };
+      try {
+        const result = await handleDeepResearch(input, pool, config);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+          isError: 'error' in result,
+        };
+      } catch (err: any) {
+        console.error('[MCP deep_research] Handler error:', err.message);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ error: err.message }) }],
+          isError: true,
+        };
+      }
     }
   );
 

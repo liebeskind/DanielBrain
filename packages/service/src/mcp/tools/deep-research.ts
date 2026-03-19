@@ -44,15 +44,19 @@ export async function handleDeepResearch(
   config: DeepResearchConfig,
 ) {
   const startTime = Date.now();
+  console.log(`[deep_research] Starting: "${input.question}" (synthesize=${input.synthesize})`);
 
   // Acquire Ollama mutex at chat priority (user-initiated)
   if (!acquireOllama('chat')) {
+    console.log('[deep_research] Blocked by Ollama mutex');
     return { error: 'LLM is busy processing another request. Please try again shortly.' };
   }
 
   try {
     // Step 1: Planning — decompose question into sub-questions
+    console.log('[deep_research] Planning sub-questions...');
     const subQuestions = await planSubQuestions(input.question, input.max_iterations, config);
+    console.log(`[deep_research] Planned ${subQuestions.length} sub-questions:`, subQuestions);
 
     // Release mutex between planning and synthesis (searches don't need LLM)
     releaseOllama('chat');
@@ -92,12 +96,14 @@ export async function handleDeepResearch(
     }
 
     // Return raw findings for smart clients
+    console.log(`[deep_research] Returning raw findings (${Date.now() - startTime}ms)`);
     return {
       question: input.question,
       sub_questions: subResults,
       execution_time_ms: Date.now() - startTime,
     };
-  } catch (err) {
+  } catch (err: any) {
+    console.error(`[deep_research] Error: ${err.message}`, err.stack);
     releaseOllama('chat');
     throw err;
   }

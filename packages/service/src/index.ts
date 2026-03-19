@@ -1,5 +1,7 @@
 import 'dotenv/config';
 import fs from 'fs';
+import https from 'https';
+import path from 'path';
 import express from 'express';
 import pg from 'pg';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
@@ -12,7 +14,13 @@ import { verifyTelegramSecret } from './telegram/verify.js';
 import { handleTelegramUpdate } from './telegram/webhook.js';
 import { pollQueue } from './processor/queue-poller.js';
 import { refreshStaleProfiles } from './processor/profile-generator.js';
-import { PROFILE_REFRESH_INTERVAL_MS, LINKEDIN_ENRICHMENT_INTERVAL_MS, RELATIONSHIP_DESCRIPTION_INTERVAL_MS } from '@danielbrain/shared';
+import {
+  PROFILE_REFRESH_INTERVAL_MS,
+  LINKEDIN_ENRICHMENT_INTERVAL_MS,
+  RELATIONSHIP_DESCRIPTION_INTERVAL_MS,
+  COMMUNITY_DETECTION_INTERVAL_MS,
+  COMMUNITY_SUMMARY_INTERVAL_MS,
+} from '@danielbrain/shared';
 import { createProposalRoutes } from './proposals/routes.js';
 import { createAdminRoutes } from './admin/routes.js';
 import { createChatRoutes } from './chat/routes.js';
@@ -22,6 +30,8 @@ import { handleFathomEvent } from './fathom/webhook.js';
 import { createCorrectionRoutes } from './corrections/routes.js';
 import { describeUndescribedRelationships } from './processor/relationship-describer.js';
 import { acquireOllama, releaseOllama } from './ollama-mutex.js';
+import { detectCommunities } from './processor/community-detector.js';
+import { summarizeUnsummarizedCommunities } from './processor/community-summarizer.js';
 
 const config = loadConfig();
 const pool = new pg.Pool({ connectionString: config.databaseUrl });
@@ -142,10 +152,13 @@ app.use('/admin', createAdminRoutes(pool, config));
 app.use('/chat', createChatRoutes(pool, config));
 
 // --- API key auth middleware for MCP routes ---
+// Temporarily authless to support Claude Desktop (no custom header support).
+// Network-level access via Cloudflare Tunnel provides perimeter security.
+// Phase 9 will add per-user OAuth/JWT auth for MCP.
 app.use('/mcp', (req, res, next) => {
   const key = req.headers['x-brain-key'] as string | undefined;
-  if (!verifyAccessKey(key, config.brainAccessKey)) {
-    res.status(key ? 403 : 401).json({ error: key ? 'Forbidden' : 'Unauthorized' });
+  if (key && !verifyAccessKey(key, config.brainAccessKey)) {
+    res.status(403).json({ error: 'Forbidden' });
     return;
   }
   next();
@@ -259,6 +272,41 @@ function startRelationshipDescriber() {
   }, RELATIONSHIP_DESCRIPTION_INTERVAL_MS);
 }
 
+// --- Community detection poller (pure graph algorithm, no Ollama needed) ---
+let communityDetectionInterval: ReturnType<typeof setInterval> | undefined;
+
+function startCommunityDetection() {
+  communityDetectionInterval = setInterval(async () => {
+    try {
+      const result = await detectCommunities(pool);
+      if (result.changed) {
+        console.log(`Detected ${result.communities} communities (changed)`);
+      }
+    } catch (err) {
+      console.error('Community detection error:', err);
+    }
+  }, COMMUNITY_DETECTION_INTERVAL_MS);
+}
+
+// --- Community summarizer poller (needs Ollama) ---
+let communitySummaryInterval: ReturnType<typeof setInterval> | undefined;
+
+function startCommunitySummarizer() {
+  communitySummaryInterval = setInterval(async () => {
+    if (!acquireOllama('background')) return;
+    try {
+      const count = await summarizeUnsummarizedCommunities(pool, config);
+      if (count > 0) {
+        console.log(`Summarized ${count} community/ies`);
+      }
+    } catch (err) {
+      console.error('Community summary error:', err);
+    } finally {
+      releaseOllama('background');
+    }
+  }, COMMUNITY_SUMMARY_INTERVAL_MS);
+}
+
 // --- Model preloading ---
 async function preloadModels() {
   const models = new Map<string, 'embed' | 'llm'>();
@@ -301,6 +349,8 @@ function shutdown() {
   clearInterval(profileInterval);
   if (linkedinInterval) clearInterval(linkedinInterval);
   if (relationshipInterval) clearInterval(relationshipInterval);
+  if (communityDetectionInterval) clearInterval(communityDetectionInterval);
+  if (communitySummaryInterval) clearInterval(communitySummaryInterval);
   pool.end().then(() => {
     console.log('Database pool closed');
     process.exit(0);
@@ -311,24 +361,7 @@ process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
 // --- Start ---
-app.listen(config.mcpPort, () => {
-  const uniqueModels = [...new Set([config.embeddingModel, config.extractionModel, config.chatModel, config.relationshipModel].filter(Boolean))];
-  console.log(`DanielBrain running on port ${config.mcpPort}`);
-  console.log(`  Models: ${uniqueModels.join(', ')}`);
-  console.log(`  MCP SSE: http://localhost:${config.mcpPort}/mcp/sse`);
-  if (config.slackBotToken) {
-    console.log(`  Slack webhook: http://localhost:${config.mcpPort}/slack/events`);
-  }
-  if (config.telegramBotToken) {
-    console.log(`  Telegram webhook: http://localhost:${config.mcpPort}/telegram/updates`);
-  }
-  if (config.fathomApiKey) {
-    console.log(`  Fathom webhook: http://localhost:${config.mcpPort}/fathom/events`);
-  }
-  console.log(`  Health: http://localhost:${config.mcpPort}/health`);
-  console.log(`  Admin dashboard: http://localhost:${config.mcpPort}/admin`);
-  console.log(`  Chat: http://localhost:${config.mcpPort}/chat`);
-  console.log(`  Proposals API: http://localhost:${config.mcpPort}/api/proposals`);
+function startPollers() {
   startPoller();
   console.log(`  Queue poller: every ${config.pollIntervalMs}ms`);
   startProfileRefresher();
@@ -341,8 +374,43 @@ app.listen(config.mcpPort, () => {
   if (config.relationshipModel) {
     console.log(`  Relationship describer: every ${RELATIONSHIP_DESCRIPTION_INTERVAL_MS / 1000}s (model: ${config.relationshipModel})`);
   }
-  // Preload models into VRAM (async, non-blocking)
+  startCommunityDetection();
+  console.log(`  Community detection: every ${COMMUNITY_DETECTION_INTERVAL_MS / 1000}s`);
+  startCommunitySummarizer();
+  console.log(`  Community summarizer: every ${COMMUNITY_SUMMARY_INTERVAL_MS / 1000}s`);
   preloadModels().catch(err => console.error('Model preload error:', err));
+}
+
+function logStartup() {
+  const uniqueModels = [...new Set([config.embeddingModel, config.extractionModel, config.chatModel, config.relationshipModel].filter(Boolean))];
+  console.log(`  Models: ${uniqueModels.join(', ')}`);
+  if (config.slackBotToken) console.log(`  Slack webhook: /slack/events`);
+  if (config.telegramBotToken) console.log(`  Telegram webhook: /telegram/updates`);
+  if (config.fathomApiKey) console.log(`  Fathom webhook: /fathom/events`);
+  console.log(`  Admin dashboard: /admin`);
+  console.log(`  Chat: /chat`);
+}
+
+// HTTP server
+app.listen(config.mcpPort, () => {
+  console.log(`DanielBrain HTTP on port ${config.mcpPort}`);
+  console.log(`  MCP SSE: http://localhost:${config.mcpPort}/mcp/sse`);
+  logStartup();
+  startPollers();
 });
+
+// HTTPS server (for MCP clients that require TLS, e.g. Claude Desktop over Tailscale)
+const certPath = path.resolve(process.cwd(), 'certs/cert.pem');
+const keyPath = path.resolve(process.cwd(), 'certs/key.pem');
+if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+  const httpsPort = config.mcpPort + 1;
+  https.createServer(
+    { cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) },
+    app,
+  ).listen(httpsPort, () => {
+    console.log(`DanielBrain HTTPS on port ${httpsPort}`);
+    console.log(`  MCP SSE: https://100.120.74.69:${httpsPort}/mcp/sse`);
+  });
+}
 
 export { app, pool };
