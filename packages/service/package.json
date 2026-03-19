@@ -10,7 +10,10 @@
   "dependencies": {
     "@danielbrain/shared": "*",
     "@modelcontextprotocol/sdk": "^1.6.0",
-    "express": "^4.21.0"
+    "express": "^4.21.0",
+    "graphology": "^0.26.0",
+    "graphology-communities-louvain": "^2.0.2",
+    "graphology-types": "^0.24.8"
   },
   "devDependencies": {
     "@types/express": "^5.0.0"

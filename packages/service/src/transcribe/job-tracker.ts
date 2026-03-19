@@ -26,6 +26,7 @@ export interface TranscribeJob {
   result?: TranscribeResult;
   savedToQueue?: boolean;
   queueId?: string;
+  speakerMap?: Record<string, string>;
 }
 
 const jobs = new Map<string, TranscribeJob>();

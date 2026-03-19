@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { execFile } from 'child_process';
 import { updateJob, getJob } from './job-tracker.js';
 import type { Config } from '../config.js';
 
@@ -47,96 +48,79 @@ interface TranscribeResult {
   speakers?: Record<string, { duration: number; segments: number }>;
 }
 
-async function callWhisperApi(audioPath: string, config: Config): Promise<TranscribeResult> {
-  const fileBuffer = await fs.promises.readFile(audioPath);
-  const filename = audioPath.split('/').pop() || 'audio.wav';
-  const formData = new FormData();
-  formData.append('file', new Blob([fileBuffer]), filename);
+function callWhisperApi(audioPath: string, config: Config): Promise<TranscribeResult> {
+  // Use curl for reliable large file upload (Node 18 fetch has issues with big multipart bodies)
+  return new Promise((resolve, reject) => {
+    execFile(
+      'curl',
+      [
+        '-s', '-S',
+        '--max-time', '600',
+        '-X', 'POST',
+        `${config.whisperBaseUrl}/transcribe`,
+        '-F', `file=@${audioPath}`,
+        '-F', 'language=auto',
+      ],
+      { maxBuffer: 50 * 1024 * 1024 },
+      (error, stdout, stderr) => {
+        if (error) {
+          reject(new Error(stderr?.trim() || error.message));
+          return;
+        }
 
-  // Try whisperx-blackwell API first (GPU, with diarization)
-  try {
-    formData.append('language', 'auto');
-    const response = await fetch(`${config.whisperBaseUrl}/transcribe`, {
-      method: 'POST',
-      body: formData,
-      signal: AbortSignal.timeout(600_000),
-    });
+        try {
+          const data = JSON.parse(stdout) as {
+            status: string;
+            detail?: string;
+            language: string;
+            segments: Array<{ start: number; end: number; text: string; speaker?: string }>;
+            speakers?: Record<string, { duration: number; segments: number }>;
+          };
 
-    if (response.ok) {
-      const data = await response.json() as {
-        status: string;
-        language: string;
-        segments: Array<{ start: number; end: number; text: string; speaker?: string }>;
-        speakers?: Record<string, { duration: number; segments: number }>;
-      };
+          if (data.detail) {
+            reject(new Error(`Whisper API error: ${data.detail}`));
+            return;
+          }
 
-      if (data.status === 'success' && data.segments) {
-        const text = data.segments.map(s => {
-          const prefix = s.speaker ? `[${s.speaker}] ` : '';
-          return prefix + s.text.trim();
-        }).join('\n');
+          const text = (data.segments || []).map(s => {
+            const prefix = s.speaker ? `[${s.speaker}] ` : '';
+            return prefix + s.text.trim();
+          }).join('\n');
 
-        const lastSeg = data.segments[data.segments.length - 1];
-        const duration = lastSeg ? lastSeg.end : 0;
+          const lastSeg = data.segments?.[data.segments.length - 1];
+          const duration = lastSeg ? lastSeg.end : 0;
 
-        return {
-          text,
-          segments: data.segments.map(s => ({
-            start: Math.round(s.start * 100) / 100,
-            end: Math.round(s.end * 100) / 100,
-            text: s.text.trim(),
-            speaker: s.speaker,
-          })),
-          language: data.language || 'unknown',
-          duration,
-          speakers: data.speakers,
-        };
-      }
-    }
-  } catch {
-    // Fall through to OpenAI-compatible API
-  }
-
-  // Fallback: OpenAI-compatible API (faster-whisper-server on CPU)
-  const fallbackForm = new FormData();
-  fallbackForm.append('file', new Blob([fileBuffer]), filename);
-  fallbackForm.append('model', `Systran/faster-whisper-${config.whisperModel}`);
-  fallbackForm.append('response_format', 'verbose_json');
-  fallbackForm.append('timestamp_granularities[]', 'segment');
-
-  const response = await fetch(`${config.whisperBaseUrl}/v1/audio/transcriptions`, {
-    method: 'POST',
-    body: fallbackForm,
-    signal: AbortSignal.timeout(600_000),
+          resolve({
+            text,
+            segments: (data.segments || []).map(s => ({
+              start: Math.round(s.start * 100) / 100,
+              end: Math.round(s.end * 100) / 100,
+              text: s.text.trim(),
+              speaker: s.speaker,
+            })),
+            language: data.language || 'unknown',
+            duration,
+            speakers: data.speakers,
+          });
+        } catch {
+          reject(new Error('Failed to parse whisper response'));
+        }
+      },
+    );
   });
-
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => '');
-    throw new Error(`Whisper API error: ${response.status} ${errorText}`);
-  }
-
-  const data = await response.json() as {
-    text: string;
-    language: string;
-    duration: number;
-    segments?: Array<{ start: number; end: number; text: string }>;
-  };
-
-  return {
-    text: data.text || '',
-    segments: (data.segments || []).map(s => ({
-      start: Math.round(s.start * 100) / 100,
-      end: Math.round(s.end * 100) / 100,
-      text: s.text.trim(),
-    })),
-    language: data.language || 'unknown',
-    duration: data.duration || 0,
-  };
 }
 
-async function generateSummary(text: string, config: Config): Promise<string> {
-  // Truncate very long transcripts for summary (keep first ~8000 chars)
-  const truncated = text.length > 8000 ? text.slice(0, 8000) + '\n\n[... transcript truncated for summary ...]' : text;
+export async function generateSummary(
+  text: string,
+  config: Config,
+  speakerNames?: Record<string, string>,
+): Promise<string> {
+  // Truncate very long transcripts (llama3.3:70b has 128K context, use up to ~32K chars)
+  const truncated = text.length > 32000 ? text.slice(0, 32000) + '\n\n[... transcript truncated for summary ...]' : text;
+
+  const speakerContext = speakerNames && Object.keys(speakerNames).length > 0
+    ? `\n\nSPEAKER IDENTIFICATION:\n${Object.entries(speakerNames).map(([label, name]) => `${label} = ${name}`).join('\n')}\nUse the real names (not speaker labels) throughout your summary.`
+    : '';
 
   const response = await fetch(`${config.ollamaBaseUrl}/api/chat`, {
     method: 'POST',
@@ -146,7 +130,36 @@ async function generateSummary(text: string, config: Config): Promise<string> {
       messages: [
         {
           role: 'system',
-          content: 'You are a concise summarizer. Produce a 2-4 sentence summary of the following transcript. Focus on key topics discussed, decisions made, and action items. Do not start with "This transcript" or "The transcript".',
+          content: `You are a meeting analyst. Produce a detailed, structured summary of the following transcript.
+
+FORMAT YOUR RESPONSE EXACTLY LIKE THIS:
+
+## Overview
+2-3 sentences describing what this conversation is about and who is involved.
+
+## Key Topics Discussed
+- Topic 1: brief description
+- Topic 2: brief description
+(list all significant topics)
+
+## Decisions & Conclusions
+- Decision or conclusion reached
+(list any decisions, agreements, or conclusions. If none, write "No explicit decisions recorded.")
+
+## Action Items
+- [Owner if known] Action item description
+(list any action items, tasks, or next steps mentioned. If none, write "No explicit action items.")
+
+## Notable Ideas & Insights
+- Idea or insight worth capturing
+(list any interesting ideas, proposals, or strategic insights raised in the discussion)
+
+RULES:
+- Be thorough — capture ALL significant topics, not just the first few
+- Use specific details from the transcript, not vague generalizations
+- Attribute statements to speakers when possible
+- Do NOT invent information not in the transcript
+- Do NOT start with "This transcript" or "The transcript"${speakerContext}`,
         },
         {
           role: 'user',
@@ -156,7 +169,7 @@ async function generateSummary(text: string, config: Config): Promise<string> {
       stream: false,
       options: { temperature: 0.3 },
     }),
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(300_000),
   });
 
   if (!response.ok) {
@@ -165,6 +178,24 @@ async function generateSummary(text: string, config: Config): Promise<string> {
 
   const data = await response.json() as { message?: { content?: string } };
   return data.message?.content?.trim() || '';
+}
+
+export function applySpeakerNames(
+  text: string,
+  segments: Array<{ start: number; end: number; text: string; speaker?: string }>,
+  speakerMap: Record<string, string>,
+): { text: string; segments: Array<{ start: number; end: number; text: string; speaker?: string }> } {
+  let mappedText = text;
+  for (const [label, name] of Object.entries(speakerMap)) {
+    mappedText = mappedText.replaceAll(`[${label}]`, `[${name}]`);
+  }
+
+  const mappedSegments = segments.map(seg => ({
+    ...seg,
+    speaker: seg.speaker && speakerMap[seg.speaker] ? speakerMap[seg.speaker] : seg.speaker,
+  }));
+
+  return { text: mappedText, segments: mappedSegments };
 }
 
 export function formatAsSrt(segments: Array<{ start: number; end: number; text: string; speaker?: string }>): string {

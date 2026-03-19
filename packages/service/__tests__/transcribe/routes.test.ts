@@ -15,6 +15,8 @@ vi.mock('../../src/transcribe/job-tracker.js', () => ({
 vi.mock('../../src/transcribe/service.js', () => ({
   runTranscription: vi.fn(),
   formatAsSrt: vi.fn(),
+  generateSummary: vi.fn(),
+  applySpeakerNames: vi.fn(),
 }));
 
 vi.mock('fs', async () => {
@@ -32,7 +34,7 @@ vi.mock('fs', async () => {
 });
 
 import { createJob, getJob, updateJob, listJobs } from '../../src/transcribe/job-tracker.js';
-import { runTranscription, formatAsSrt } from '../../src/transcribe/service.js';
+import { runTranscription, formatAsSrt, generateSummary, applySpeakerNames } from '../../src/transcribe/service.js';
 
 const mockCreateJob = vi.mocked(createJob);
 const mockGetJob = vi.mocked(getJob);
@@ -40,6 +42,8 @@ const mockUpdateJob = vi.mocked(updateJob);
 const mockListJobs = vi.mocked(listJobs);
 const mockRunTranscription = vi.mocked(runTranscription);
 const mockFormatAsSrt = vi.mocked(formatAsSrt);
+const mockGenerateSummary = vi.mocked(generateSummary);
+const mockApplySpeakerNames = vi.mocked(applySpeakerNames);
 
 const mockPool = { query: vi.fn() };
 
@@ -212,6 +216,167 @@ describe('Transcribe Routes', () => {
       await handler(req as any, res as any);
 
       expect(res.json).toHaveBeenCalledWith({ id: 'q-existing', status: 'already_saved' });
+    });
+  });
+
+  describe('POST /api/transcribe/:id/speakers', () => {
+    it('applies speaker names to transcript', async () => {
+      const job = {
+        id: 'j1',
+        status: 'completed' as const,
+        audioPath: '/tmp/a.mp3',
+        originalFilename: 'meeting.mp3',
+        fileSize: 5000,
+        createdAt: new Date(),
+        result: {
+          text: '[SPEAKER_00] Hello.\n[SPEAKER_01] Hi.',
+          segments: [
+            { start: 0, end: 2, text: 'Hello.', speaker: 'SPEAKER_00' },
+            { start: 2, end: 4, text: 'Hi.', speaker: 'SPEAKER_01' },
+          ],
+          language: 'en',
+          duration: 4,
+        },
+      };
+      mockGetJob.mockReturnValueOnce(job);
+      mockApplySpeakerNames.mockReturnValueOnce({
+        text: '[Daniel] Hello.\n[Rob] Hi.',
+        segments: [
+          { start: 0, end: 2, text: 'Hello.', speaker: 'Daniel' },
+          { start: 2, end: 4, text: 'Hi.', speaker: 'Rob' },
+        ],
+      });
+
+      const router = createAdminRoutes(mockPool as any, baseConfig as any);
+      const handler = getHandler(router, 'post', '/api/transcribe/:id/speakers');
+
+      const req = {
+        params: { id: 'j1' },
+        body: { speakers: { SPEAKER_00: 'Daniel', SPEAKER_01: 'Rob' } },
+      };
+      const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+
+      await handler(req as any, res as any);
+
+      expect(res.json).toHaveBeenCalledWith({
+        ok: true,
+        speakerMap: { SPEAKER_00: 'Daniel', SPEAKER_01: 'Rob' },
+      });
+      expect(mockUpdateJob).toHaveBeenCalledWith('j1', expect.objectContaining({
+        speakerMap: { SPEAKER_00: 'Daniel', SPEAKER_01: 'Rob' },
+      }));
+    });
+
+    it('returns 400 with empty speakers map', async () => {
+      mockGetJob.mockReturnValueOnce({
+        id: 'j1',
+        status: 'completed',
+        audioPath: '/tmp/a.mp3',
+        originalFilename: 'a.mp3',
+        fileSize: 1000,
+        createdAt: new Date(),
+        result: { text: 'Hi', segments: [], language: 'en', duration: 5 },
+      });
+
+      const router = createAdminRoutes(mockPool as any, baseConfig as any);
+      const handler = getHandler(router, 'post', '/api/transcribe/:id/speakers');
+
+      const req = { params: { id: 'j1' }, body: { speakers: {} } };
+      const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+
+      await handler(req as any, res as any);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('returns 404 for unknown job', async () => {
+      mockGetJob.mockReturnValueOnce(undefined);
+
+      const router = createAdminRoutes(mockPool as any, baseConfig as any);
+      const handler = getHandler(router, 'post', '/api/transcribe/:id/speakers');
+
+      const req = { params: { id: 'nope' }, body: { speakers: { SPEAKER_00: 'Test' } } };
+      const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+
+      await handler(req as any, res as any);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    it('returns 400 for incomplete job', async () => {
+      mockGetJob.mockReturnValueOnce({
+        id: 'j1',
+        status: 'transcribing',
+        audioPath: '/tmp/a.mp3',
+        originalFilename: 'a.mp3',
+        fileSize: 1000,
+        createdAt: new Date(),
+      });
+
+      const router = createAdminRoutes(mockPool as any, baseConfig as any);
+      const handler = getHandler(router, 'post', '/api/transcribe/:id/speakers');
+
+      const req = { params: { id: 'j1' }, body: { speakers: { SPEAKER_00: 'Test' } } };
+      const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+
+      await handler(req as any, res as any);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+  });
+
+  describe('POST /api/transcribe/:id/resummarize', () => {
+    it('regenerates summary with speaker names', async () => {
+      const job = {
+        id: 'j1',
+        status: 'completed' as const,
+        audioPath: '/tmp/a.mp3',
+        originalFilename: 'meeting.mp3',
+        fileSize: 5000,
+        createdAt: new Date(),
+        speakerMap: { SPEAKER_00: 'Daniel' },
+        result: {
+          text: '[Daniel] Hello.',
+          segments: [{ start: 0, end: 2, text: 'Hello.', speaker: 'Daniel' }],
+          language: 'en',
+          duration: 2,
+          summary: 'Old summary.',
+        },
+      };
+      mockGetJob.mockReturnValueOnce(job);
+      mockGenerateSummary.mockResolvedValueOnce('## Overview\nNew detailed summary.');
+
+      const router = createAdminRoutes(mockPool as any, baseConfig as any);
+      const handler = getHandler(router, 'post', '/api/transcribe/:id/resummarize');
+
+      const req = { params: { id: 'j1' }, body: {} };
+      const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+
+      await handler(req as any, res as any);
+
+      expect(mockGenerateSummary).toHaveBeenCalledWith(
+        '[Daniel] Hello.',
+        expect.anything(),
+        { SPEAKER_00: 'Daniel' },
+      );
+      expect(res.json).toHaveBeenCalledWith({
+        ok: true,
+        summary: '## Overview\nNew detailed summary.',
+      });
+    });
+
+    it('returns 404 for unknown job', async () => {
+      mockGetJob.mockReturnValueOnce(undefined);
+
+      const router = createAdminRoutes(mockPool as any, baseConfig as any);
+      const handler = getHandler(router, 'post', '/api/transcribe/:id/resummarize');
+
+      const req = { params: { id: 'nope' }, body: {} };
+      const res = { json: vi.fn(), status: vi.fn().mockReturnThis() };
+
+      await handler(req as any, res as any);
+
+      expect(res.status).toHaveBeenCalledWith(404);
     });
   });
 

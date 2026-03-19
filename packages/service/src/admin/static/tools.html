@@ -93,8 +93,44 @@
       padding: 14px;
       margin-bottom: 12px;
       font-size: 14px;
-      line-height: 1.5;
+      line-height: 1.6;
       color: var(--text-primary);
+      white-space: pre-wrap;
+    }
+    .summary-card h2 { font-size: 15px; margin: 12px 0 6px; color: var(--text-primary); }
+    .summary-card h2:first-child { margin-top: 0; }
+
+    .speaker-mapping {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-md);
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+    .speaker-mapping h3 { margin: 0 0 10px; font-size: 15px; }
+    .speaker-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+    .speaker-row .speaker-label {
+      min-width: 100px;
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+    .speaker-row .speaker-stats {
+      min-width: 120px;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+    .speaker-row input {
+      flex: 1;
+      font-size: 13px;
+      font-family: var(--font);
+      padding: 4px 8px;
+      max-width: 200px;
     }
 
     .transcript-area {
@@ -190,6 +226,9 @@
         <a href="entities.html" class="sidebar-link">
           <span class="link-icon">&#x1F465;</span> Entities
         </a>
+        <a href="communities.html" class="sidebar-link">
+          <span class="link-icon">&#x1F310;</span> Communities
+        </a>
         <a href="approvals.html" class="sidebar-link">
           <span class="link-icon">&#x2705;</span> Approvals
         </a>
@@ -261,10 +300,46 @@
             <span x-show="currentJob?.result?.speakers" x-text="Object.keys(currentJob?.result?.speakers || {}).length + ' speakers'"></span>
           </div>
 
+          <!-- Speaker Mapping -->
+          <div class="speaker-mapping" x-show="hasSpeakers() && !currentJob?.speakerMap">
+            <h3>Identify Speakers</h3>
+            <p style="font-size:12px; color:var(--text-muted); margin:0 0 10px">
+              Diarization detected distinct speakers. Enter their real names to replace generic labels throughout the transcript.
+            </p>
+            <template x-for="[label, stats] in getSpeakerEntries()" :key="label">
+              <div class="speaker-row">
+                <span class="speaker-label" x-text="label"></span>
+                <span class="speaker-stats" x-text="formatDuration(stats.duration) + ' (' + stats.segments + ' segments)'"></span>
+                <input type="text" :placeholder="'Name for ' + label"
+                       x-model="speakerNames[label]"
+                       @keydown.enter="applySpeakerNames()">
+              </div>
+            </template>
+            <div style="margin-top:10px">
+              <button class="btn btn-primary" @click="applySpeakerNames()" :disabled="applyingSpeakers">
+                <span x-show="!applyingSpeakers">Apply Names</span>
+                <span x-show="applyingSpeakers">Applying...</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Speaker mapping applied indicator -->
+          <div x-show="currentJob?.speakerMap" style="font-size:13px; color:var(--accent-emerald); margin-bottom:8px">
+            Speakers identified: <span x-text="currentJob?.speakerMap ? Object.values(currentJob.speakerMap).join(', ') : ''"></span>
+          </div>
+
           <!-- Summary -->
           <div x-show="currentJob?.result?.summary">
-            <h3>Summary</h3>
-            <div class="summary-card" x-text="currentJob?.result?.summary"></div>
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px">
+              <h3 style="margin:0">Summary</h3>
+              <button class="btn" style="font-size:11px; padding:3px 8px"
+                      @click="resummarize()" :disabled="resummarizing"
+                      x-show="currentJob?.speakerMap">
+                <span x-show="!resummarizing">Re-generate with names</span>
+                <span x-show="resummarizing">Generating...</span>
+              </button>
+            </div>
+            <div class="summary-card" x-html="renderSummary(currentJob?.result?.summary || '')"></div>
           </div>
 
           <!-- Transcript -->
@@ -340,6 +415,9 @@
         saveContext: '',
         saveAttribution: '',
         saving: false,
+        speakerNames: {},
+        applyingSpeakers: false,
+        resummarizing: false,
 
         handleDrop(event) {
           this.isDragging = false;
@@ -488,12 +566,93 @@
           }
         },
 
+        hasSpeakers() {
+          return this.currentJob && this.currentJob.result && this.currentJob.result.speakers
+            && Object.keys(this.currentJob.result.speakers).length > 0;
+        },
+
+        getSpeakerEntries() {
+          if (!this.currentJob || !this.currentJob.result || !this.currentJob.result.speakers) return [];
+          var entries = Object.entries(this.currentJob.result.speakers);
+          // Sort by duration descending
+          entries.sort(function(a, b) { return b[1].duration - a[1].duration; });
+          return entries;
+        },
+
+        async applySpeakerNames() {
+          if (!this.currentJob || this.applyingSpeakers) return;
+          // Filter out empty names
+          var mapped = {};
+          for (var key in this.speakerNames) {
+            if (this.speakerNames[key] && this.speakerNames[key].trim()) {
+              mapped[key] = this.speakerNames[key].trim();
+            }
+          }
+          if (Object.keys(mapped).length === 0) {
+            flash('Enter at least one speaker name', 'error');
+            return;
+          }
+          this.applyingSpeakers = true;
+          try {
+            var res = await fetch('/admin/api/transcribe/' + this.currentJob.id + '/speakers', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ speakers: mapped }),
+            });
+            var data = await res.json();
+            if (res.ok) {
+              // Reload the job to get updated text/segments
+              var jobRes = await fetch('/admin/api/transcribe/' + this.currentJob.id);
+              if (jobRes.ok) this.currentJob = await jobRes.json();
+              flash('Speaker names applied!', 'success');
+            } else {
+              flash(data.error || 'Failed to apply names', 'error');
+            }
+          } catch (err) {
+            flash('Network error: ' + err.message, 'error');
+          } finally {
+            this.applyingSpeakers = false;
+          }
+        },
+
+        async resummarize() {
+          if (!this.currentJob || this.resummarizing) return;
+          this.resummarizing = true;
+          try {
+            var res = await fetch('/admin/api/transcribe/' + this.currentJob.id + '/resummarize', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+            });
+            var data = await res.json();
+            if (res.ok) {
+              this.currentJob.result.summary = data.summary;
+              flash('Summary regenerated with speaker names!', 'success');
+            } else {
+              flash(data.error || 'Summary generation failed', 'error');
+            }
+          } catch (err) {
+            flash('Network error: ' + err.message, 'error');
+          } finally {
+            this.resummarizing = false;
+          }
+        },
+
+        renderSummary(text) {
+          if (!text) return '';
+          // Convert markdown-style headers and bullets to HTML
+          return escapeHtml(text)
+            .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+            .replace(/^- \[([^\]]+)\] (.+)$/gm, '<div style="margin-left:12px">&#x2022; <strong>[$1]</strong> $2</div>')
+            .replace(/^- (.+)$/gm, '<div style="margin-left:12px">&#x2022; $1</div>');
+        },
+
         reset() {
           this.currentJob = null;
           this.showSave = false;
           this.saveTitle = '';
           this.saveContext = '';
           this.saveAttribution = '';
+          this.speakerNames = {};
           this.stopPolling();
           this.loadJobs();
         },
