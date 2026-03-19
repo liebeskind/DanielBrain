@@ -39,6 +39,9 @@
         <a href="entities.html" class="sidebar-link active">
           <span class="link-icon">&#x1F465;</span> Entities
         </a>
+        <a href="communities.html" class="sidebar-link">
+          <span class="link-icon">&#x1F310;</span> Communities
+        </a>
         <a href="approvals.html" class="sidebar-link">
           <span class="link-icon">&#x2705;</span> Approvals
         </a>
@@ -96,6 +99,8 @@
     .tab { padding: 0.4rem 0.8rem; border-radius: 4px; border: 1px solid #ddd; background: transparent; cursor: pointer; font-size: 0.85rem; color: #666; }
     .tab:hover { border-color: #4f8ff7; color: #4f8ff7; }
     .tab.active { background: #4f8ff7; color: #fff; border-color: #4f8ff7; }
+    .entity-link { color: var(--text-primary); text-decoration: none; transition: color var(--transition); }
+    .entity-link:hover { color: #a5b4fc; text-decoration: underline; }
   </style>
   <script>
     function escapeHtml(str) {
@@ -144,7 +149,7 @@
       entities.forEach(function(e) {
         var tr = document.createElement('tr');
         tr.innerHTML =
-          '<td>' + escapeHtml(e.name) + '</td>' +
+          '<td><a href="entity-detail.html?id=' + encodeURIComponent(e.id) + '" class="entity-link">' + escapeHtml(e.name) + '</a></td>' +
           '<td><span class="badge badge-entity-' + e.entity_type + '">' + escapeHtml(e.entity_type) + '</span></td>' +
           '<td>' + e.mention_count + '</td>' +
           '<td>' + (e.relationship_count || 0) + '</td>' +

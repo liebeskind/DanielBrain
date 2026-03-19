@@ -1,0 +1,1176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Entity Explorer - TopiaBrain</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/cytoscape-fcose@2.2.0/cytoscape-fcose.js"></script>
+  <script src="https://unpkg.com/@popperjs/core@2"></script>
+  <script src="https://unpkg.com/tippy.js@6"></script>
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <a href="index.html" class="sidebar-logo">
+        <span class="logo-icon">T</span>
+        TopiaBrain
+      </a>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Knowledge</div>
+        <a href="browse.html" class="sidebar-link">
+          <span class="link-icon">&#x1F4DA;</span> Browse
+        </a>
+        <a href="ingest.html" class="sidebar-link">
+          <span class="link-icon">&#x2795;</span> Add Content
+        </a>
+        <a href="/chat" class="sidebar-link">
+          <span class="link-icon">&#x1F4AC;</span> Chat
+        </a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Tools</div>
+        <a href="tools.html" class="sidebar-link">
+          <span class="link-icon">&#x1F3A4;</span> Transcribe
+        </a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Manage</div>
+        <a href="integrations.html" class="sidebar-link">
+          <span class="link-icon">&#x1F50C;</span> Integrations
+        </a>
+        <a href="entities.html" class="sidebar-link">
+          <span class="link-icon">&#x1F465;</span> Entities
+        </a>
+        <a href="communities.html" class="sidebar-link">
+          <span class="link-icon">&#x1F310;</span> Communities
+        </a>
+        <a href="approvals.html" class="sidebar-link">
+          <span class="link-icon">&#x2705;</span> Approvals
+        </a>
+        <a href="examples.html" class="sidebar-link">
+          <span class="link-icon">&#x1F4DD;</span> Examples
+        </a>
+        <a href="health.html" class="sidebar-link">
+          <span class="link-icon">&#x1F527;</span> Health
+        </a>
+      </div>
+      <div class="sidebar-spacer"></div>
+    </aside>
+
+    <main class="explorer-main">
+      <!-- Toolbar -->
+      <div class="explorer-toolbar">
+        <div class="toolbar-left">
+          <a href="entities.html" class="toolbar-back">&larr; Entities</a>
+          <div class="toolbar-search">
+            <input type="text" id="searchInput" placeholder="Search entities..." autocomplete="off">
+            <div id="searchResults" class="search-dropdown"></div>
+          </div>
+        </div>
+        <div class="toolbar-center">
+          <div class="type-filters" id="typeFilters">
+            <label class="type-check"><input type="checkbox" data-type="person" checked><span class="type-dot" style="background:#a5b4fc"></span>Person</label>
+            <label class="type-check"><input type="checkbox" data-type="company" checked><span class="type-dot" style="background:#6ee7b7"></span>Company</label>
+            <label class="type-check"><input type="checkbox" data-type="topic" checked><span class="type-dot" style="background:#fbbf24"></span>Topic</label>
+            <label class="type-check"><input type="checkbox" data-type="product" checked><span class="type-dot" style="background:#fb7185"></span>Product</label>
+            <label class="type-check"><input type="checkbox" data-type="project" checked><span class="type-dot" style="background:#7dd3fc"></span>Project</label>
+            <label class="type-check"><input type="checkbox" data-type="place" checked><span class="type-dot" style="background:#c084fc"></span>Place</label>
+          </div>
+        </div>
+        <div class="toolbar-right">
+          <label class="weight-label">Min weight:
+            <input type="range" id="weightSlider" min="1" max="20" value="2" class="weight-slider">
+            <span id="weightValue">2</span>
+          </label>
+          <select id="depthSelect" class="control-select depth-select">
+            <option value="1">Depth: 1</option>
+            <option value="2">Depth: 2</option>
+          </select>
+          <button id="viewToggle" class="btn btn-sm">Full Graph</button>
+        </div>
+      </div>
+
+      <!-- Graph + Panel -->
+      <div class="explorer-body">
+        <div id="cy" class="graph-canvas"></div>
+        <div id="detailPanel" class="detail-panel">
+          <div class="panel-placeholder">
+            <p>Click a node to see details</p>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <style>
+    /* Explorer layout - override main-content */
+    .explorer-main {
+      flex: 1;
+      margin-left: 240px;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* Toolbar */
+    .explorer-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border-glass);
+      background: rgba(255, 255, 255, 0.02);
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+
+    .toolbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .toolbar-back {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 13px;
+      white-space: nowrap;
+      transition: color var(--transition);
+    }
+    .toolbar-back:hover { color: var(--text-primary); }
+
+    .toolbar-search {
+      position: relative;
+    }
+    .toolbar-search input {
+      width: 200px;
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+    .search-dropdown {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: var(--bg-base);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-sm);
+      max-height: 240px;
+      overflow-y: auto;
+      z-index: 50;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+    .search-dropdown.visible { display: block; }
+    .search-item {
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-secondary);
+      transition: background var(--transition);
+    }
+    .search-item:hover { background: var(--bg-surface-hover); color: var(--text-primary); }
+
+    .toolbar-center {
+      flex: 1;
+      display: flex;
+      justify-content: center;
+    }
+
+    .type-filters {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .type-check {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      user-select: none;
+    }
+    .type-check input { width: 12px; height: 12px; accent-color: var(--accent); }
+    .type-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+    .toolbar-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .weight-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    .weight-slider { width: 80px; accent-color: var(--accent); }
+    .depth-select { width: auto; min-width: 90px; font-size: 12px; padding: 5px 8px; }
+
+    /* Graph + panel body */
+    .explorer-body {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .graph-canvas {
+      flex: 1;
+      background: #0a0e27;
+      background: radial-gradient(ellipse at center, #0f1535 0%, #0a0e27 70%);
+    }
+
+    /* Detail panel */
+    .detail-panel {
+      width: 380px;
+      flex-shrink: 0;
+      background: rgba(7, 7, 14, 0.95);
+      border-left: 1px solid var(--border-glass);
+      overflow-y: auto;
+      transition: width 0.3s ease, opacity 0.3s ease;
+    }
+    .detail-panel.collapsed {
+      width: 0;
+      opacity: 0;
+      overflow: hidden;
+      border-left: none;
+    }
+
+    .panel-placeholder {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    .panel-header {
+      padding: 20px 20px 12px;
+      border-bottom: 1px solid var(--border-glass);
+    }
+    .panel-entity-name {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-bottom: 6px;
+    }
+    .panel-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .panel-stat {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .panel-section {
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border-glass);
+    }
+    .panel-section:last-child { border-bottom: none; }
+    .panel-section-title {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+    .panel-profile {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+
+    /* Connected entity list */
+    .connected-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 0;
+      cursor: pointer;
+      transition: color var(--transition);
+    }
+    .connected-item:hover { color: var(--text-primary); }
+    .connected-name {
+      font-size: 13px;
+      color: var(--text-secondary);
+      flex: 1;
+    }
+    .connected-item:hover .connected-name { color: var(--text-primary); }
+    .connected-weight {
+      font-size: 10px;
+      color: var(--text-muted);
+      background: var(--bg-surface);
+      padding: 2px 6px;
+      border-radius: var(--radius-pill);
+    }
+    .connected-desc {
+      font-size: 11px;
+      color: var(--text-muted);
+      padding: 0 0 6px 16px;
+      line-height: 1.5;
+    }
+
+    /* Thought list in panel */
+    .thought-item {
+      padding: 8px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .thought-item:last-child { border-bottom: none; }
+    .thought-item-summary {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+    .thought-item-meta {
+      font-size: 10px;
+      color: var(--text-muted);
+      margin-top: 3px;
+      display: flex;
+      gap: 8px;
+    }
+
+    /* Community tags in panel */
+    .community-tag {
+      display: inline-block;
+      font-size: 11px;
+      padding: 4px 10px;
+      border-radius: var(--radius-pill);
+      background: rgba(99, 102, 241, 0.1);
+      color: #a5b4fc;
+      border: 1px solid rgba(99, 102, 241, 0.15);
+      margin: 2px;
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+    .community-tag:hover {
+      background: rgba(99, 102, 241, 0.2);
+      border-color: rgba(99, 102, 241, 0.3);
+    }
+
+    /* Tippy glass theme */
+    .tippy-box[data-theme~='glass'] {
+      background: rgba(10, 14, 39, 0.9);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px;
+      color: rgba(255,255,255,0.9);
+      font-size: 12px;
+      padding: 6px 10px;
+      max-width: 280px;
+    }
+    .tippy-box[data-theme~='glass'] > .tippy-arrow::before {
+      border-top-color: rgba(10, 14, 39, 0.9);
+    }
+
+    /* Loading overlay */
+    .graph-loading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: var(--text-muted);
+      font-size: 14px;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    @media (max-width: 768px) {
+      .explorer-main { margin-left: 0; }
+      .detail-panel { width: 100%; position: absolute; right: 0; top: 0; bottom: 0; z-index: 20; }
+      .detail-panel.collapsed { width: 0; }
+      .toolbar-center { display: none; }
+    }
+  </style>
+
+  <script>
+    // ---- State ----
+    var state = {
+      centerId: null,
+      selectedId: null,
+      detailCache: {},
+      isFullGraph: false,
+      loading: false,
+      depth: 1,
+      minWeight: 2,
+      typeFilters: { person: true, company: true, topic: true, product: true, project: true, place: true },
+    };
+
+    var TYPE_COLORS = {
+      person: '#a5b4fc',
+      company: '#6ee7b7',
+      topic: '#fbbf24',
+      product: '#fb7185',
+      project: '#7dd3fc',
+      place: '#c084fc',
+    };
+
+    var TYPE_BORDER = {
+      person: '#6366f1',
+      company: '#10b981',
+      topic: '#f59e0b',
+      product: '#f43f5e',
+      project: '#38bdf8',
+      place: '#a855f7',
+    };
+
+    var cy = null;
+
+    // ---- Init ----
+    document.addEventListener('DOMContentLoaded', function() {
+      var params = new URLSearchParams(window.location.search);
+      state.centerId = params.get('id');
+
+      initCytoscape();
+      initControls();
+
+      if (state.centerId) {
+        loadGraph(state.centerId);
+      } else {
+        // No entity specified — load full graph
+        state.isFullGraph = true;
+        document.getElementById('viewToggle').textContent = 'Focused View';
+        loadFullGraph();
+      }
+    });
+
+    function initCytoscape() {
+      cy = cytoscape({
+        container: document.getElementById('cy'),
+        textureOnViewport: true,
+        hideEdgesOnViewport: true,
+        motionBlur: true,
+        pixelRatio: 'auto',
+        minZoom: 0.1,
+        maxZoom: 5,
+        style: [
+          {
+            selector: 'node',
+            style: {
+              'label': 'data(name)',
+              'width': 'mapData(mention_count, 1, 100, 10, 32)',
+              'height': 'mapData(mention_count, 1, 100, 10, 32)',
+              'background-color': 'data(color)',
+              'color': '#fff',
+              'font-size': '10px',
+              'text-outline-width': 2,
+              'text-outline-color': '#0a0e27',
+              'text-valign': 'bottom',
+              'text-margin-y': 4,
+              'border-width': 1.5,
+              'border-color': 'data(borderColor)',
+              'overlay-opacity': 0,
+              'transition-property': 'opacity, width, height, border-width, border-color',
+              'transition-duration': '0.25s',
+              'transition-timing-function': 'ease-in-out-sine',
+            }
+          },
+          {
+            selector: 'edge',
+            style: {
+              'width': 'mapData(weight, 1, 20, 1, 5)',
+              'line-color': 'rgba(255,255,255,0.12)',
+              'curve-style': 'bezier',
+              'target-arrow-shape': 'none',
+              'overlay-opacity': 0,
+              'transition-property': 'line-color, opacity, width',
+              'transition-duration': '0.25s',
+            }
+          },
+          {
+            selector: 'edge.hover',
+            style: {
+              'line-color': 'rgba(255,255,255,0.5)',
+              'width': 'mapData(weight, 1, 20, 2, 7)',
+              'z-index': 10,
+            }
+          },
+          {
+            selector: 'node.dimmed',
+            style: { 'opacity': 0.15, 'text-opacity': 0 }
+          },
+          {
+            selector: 'edge.dimmed',
+            style: { 'opacity': 0.05 }
+          },
+          {
+            selector: 'node.highlighted',
+            style: {
+              'opacity': 1,
+              'border-width': 1.5,
+              'border-color': 'data(color)',
+              'text-opacity': 1,
+            }
+          },
+          {
+            selector: 'edge.highlighted',
+            style: {
+              'opacity': 0.7,
+              'line-color': 'rgba(255,255,255,0.35)',
+              'z-index': 5,
+            }
+          },
+          {
+            selector: 'node.selected-node',
+            style: {
+              'border-width': 3,
+              'border-color': '#6366f1',
+              'border-opacity': 1,
+              'text-opacity': 1,
+              'opacity': 1,
+              'z-index': 20,
+            }
+          },
+        ],
+        elements: [],
+      });
+
+      // Node tap
+      cy.on('tap', 'node', function(evt) {
+        var node = evt.target;
+        selectNode(node.id());
+      });
+
+      // Background tap
+      cy.on('tap', function(evt) {
+        if (evt.target === cy) {
+          cy.elements().removeClass('dimmed highlighted selected-node');
+          closeDetailPanel();
+        }
+      });
+
+      // Edge hover
+      cy.on('mouseover', 'edge', function(evt) {
+        evt.target.addClass('hover');
+        showEdgeTooltip(evt.target);
+      });
+      cy.on('mouseout', 'edge', function(evt) {
+        evt.target.removeClass('hover');
+        hideEdgeTooltip();
+      });
+
+      // Double-tap expand
+      cy.on('dbltap', 'node', function(evt) {
+        expandNeighbors(evt.target.id());
+      });
+    }
+
+    function initControls() {
+      // Type filters
+      document.querySelectorAll('#typeFilters input[type="checkbox"]').forEach(function(cb) {
+        cb.addEventListener('change', function() {
+          state.typeFilters[cb.dataset.type] = cb.checked;
+          applyFilters();
+        });
+      });
+
+      // Weight slider — re-fetches graph with server-side filtering
+      var slider = document.getElementById('weightSlider');
+      var weightVal = document.getElementById('weightValue');
+      var weightDebounce = null;
+      slider.addEventListener('input', function() {
+        weightVal.textContent = slider.value;
+        state.minWeight = parseInt(slider.value, 10);
+        // Debounce re-fetch while dragging
+        clearTimeout(weightDebounce);
+        weightDebounce = setTimeout(function() {
+          if (state.isFullGraph) {
+            loadFullGraph();
+          } else if (state.centerId) {
+            loadGraph(state.centerId);
+          }
+        }, 300);
+      });
+
+      // Depth
+      document.getElementById('depthSelect').addEventListener('change', function() {
+        state.depth = parseInt(this.value, 10);
+        if (state.centerId && !state.isFullGraph) {
+          loadGraph(state.centerId);
+        }
+      });
+
+      // View toggle
+      document.getElementById('viewToggle').addEventListener('click', function() {
+        state.isFullGraph = !state.isFullGraph;
+        this.textContent = state.isFullGraph ? 'Focused View' : 'Full Graph';
+        if (state.isFullGraph) {
+          loadFullGraph();
+        } else if (state.centerId) {
+          loadGraph(state.centerId);
+        }
+      });
+
+      // Search
+      var searchInput = document.getElementById('searchInput');
+      var searchResults = document.getElementById('searchResults');
+      var searchTimeout = null;
+
+      searchInput.addEventListener('input', function() {
+        clearTimeout(searchTimeout);
+        var q = searchInput.value.trim();
+        if (q.length < 2) {
+          searchResults.classList.remove('visible');
+          return;
+        }
+        searchTimeout = setTimeout(function() {
+          fetch('/admin/api/entities/search?q=' + encodeURIComponent(q))
+            .then(function(r) { return r.json(); })
+            .then(function(results) {
+              if (results.length === 0) {
+                searchResults.classList.remove('visible');
+                return;
+              }
+              searchResults.innerHTML = results.map(function(e) {
+                return '<div class="search-item" data-id="' + e.id + '">' +
+                  '<span class="type-dot" style="background:' + (TYPE_COLORS[e.entity_type] || '#888') + '"></span>' +
+                  escapeHtml(e.name) +
+                  ' <span style="color:var(--text-muted);font-size:10px">' + e.entity_type + '</span></div>';
+              }).join('');
+              searchResults.classList.add('visible');
+
+              searchResults.querySelectorAll('.search-item').forEach(function(item) {
+                item.addEventListener('click', function() {
+                  var id = item.dataset.id;
+                  searchResults.classList.remove('visible');
+                  searchInput.value = '';
+                  navigateToEntity(id);
+                });
+              });
+            });
+        }, 200);
+      });
+
+      searchInput.addEventListener('blur', function() {
+        setTimeout(function() { searchResults.classList.remove('visible'); }, 200);
+      });
+    }
+
+    // ---- Graph loading ----
+    function loadGraph(entityId) {
+      state.loading = true;
+      var depth = state.depth;
+      var mw = state.minWeight;
+      fetch('/admin/api/graph/' + entityId + '?depth=' + depth + '&min_weight=' + mw + '&limit=50')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          state.centerId = entityId;
+          renderGraph(data);
+          state.loading = false;
+          // Auto-select the center node
+          setTimeout(function() { selectNode(entityId); }, 100);
+        })
+        .catch(function(err) {
+          console.error('Graph load error:', err);
+          state.loading = false;
+        });
+    }
+
+    function loadFullGraph() {
+      state.loading = true;
+      var mw = state.minWeight;
+      fetch('/admin/api/graph?full=true&min_weight=' + mw)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          renderGraph(data);
+          state.loading = false;
+        })
+        .catch(function(err) {
+          console.error('Full graph load error:', err);
+          state.loading = false;
+        });
+    }
+
+    function renderGraph(data) {
+      var elements = [];
+
+      for (var i = 0; i < data.nodes.length; i++) {
+        var n = data.nodes[i];
+        var mc = Math.max(1, Math.min(n.mention_count || 1, 100));
+        elements.push({
+          group: 'nodes',
+          data: {
+            id: n.id,
+            name: n.name,
+            entity_type: n.entity_type,
+            mention_count: mc,
+            profile_summary: n.profile_summary || '',
+            community_id: n.community_id,
+            color: TYPE_COLORS[n.entity_type] || '#888',
+            borderColor: TYPE_BORDER[n.entity_type] || '#666',
+          }
+        });
+      }
+
+      for (var j = 0; j < data.edges.length; j++) {
+        var e = data.edges[j];
+        // Only add edge if both nodes exist
+        var hasSource = false, hasTarget = false;
+        for (var k = 0; k < data.nodes.length; k++) {
+          if (data.nodes[k].id === e.source) hasSource = true;
+          if (data.nodes[k].id === e.target) hasTarget = true;
+        }
+        if (hasSource && hasTarget) {
+          elements.push({
+            group: 'edges',
+            data: {
+              id: e.id,
+              source: e.source,
+              target: e.target,
+              weight: Math.max(1, Math.min(e.weight || 1, 20)),
+              description: e.description || '',
+            }
+          });
+        }
+      }
+
+      cy.elements().remove();
+      cy.add(elements);
+
+      // Run layout — try fcose, fall back to cose, then grid
+      var centerId = data.center;
+      function runLayout() {
+        var nodeCount = cy.nodes().length;
+
+        // Run cose to get relative positions
+        cy.layout({
+          name: 'cose',
+          fit: false,
+          padding: 30,
+          animate: false,
+          randomize: true,
+          nodeRepulsion: function() { return 400000; },
+          idealEdgeLength: function() { return 100; },
+          edgeElasticity: function() { return 50; },
+          gravity: 0.01,
+          numIter: 3000,
+        }).run();
+
+        // Scale positions outward — cose produces tiny layouts, multiply to spread
+        var bb = cy.nodes().boundingBox();
+        var cx = (bb.x1 + bb.x2) / 2;
+        var cy2 = (bb.y1 + bb.y2) / 2;
+        var scale = Math.max(3, nodeCount * 0.08);
+        cy.nodes().forEach(function(node) {
+          var pos = node.position();
+          node.position({
+            x: cx + (pos.x - cx) * scale,
+            y: cy2 + (pos.y - cy2) * scale,
+          });
+        });
+
+        var bb2 = cy.nodes().boundingBox();
+        console.log('Bounding box after scale:', bb2.w.toFixed(0), 'x', bb2.h.toFixed(0), '| nodes:', nodeCount, '| scale:', scale.toFixed(1));
+
+        // Fit then cap zoom
+        cy.fit(undefined, 40);
+        console.log('Zoom after fit:', cy.zoom().toFixed(2));
+
+        var maxZoom = nodeCount > 30 ? 0.6 : nodeCount > 15 ? 0.9 : 1.2;
+        if (cy.zoom() > maxZoom) {
+          cy.zoom(maxZoom);
+          cy.center();
+        }
+
+        // Center on the focused entity
+        if (centerId) {
+          var centerNode = cy.getElementById(centerId);
+          if (centerNode.length > 0) {
+            cy.center(centerNode);
+          }
+        }
+      }
+      runLayout();
+      applyFilters();
+    }
+
+    // ---- Node selection ----
+    function selectNode(nodeId) {
+      var node = cy.getElementById(nodeId);
+      if (!node || node.length === 0) return;
+
+      state.selectedId = nodeId;
+
+      var neighborhood = node.neighborhood().add(node);
+
+      // Dim everything
+      cy.elements().addClass('dimmed').removeClass('highlighted selected-node');
+
+      // Highlight neighborhood
+      neighborhood.removeClass('dimmed').addClass('highlighted');
+      node.addClass('selected-node');
+      pulseNode(node);
+
+      // Smooth camera center
+      cy.animate({
+        center: { eles: node },
+        zoom: Math.max(cy.zoom(), 1.2),
+      }, {
+        duration: 500,
+        easing: 'ease-in-out-cubic'
+      });
+
+      // Update URL
+      history.replaceState(null, '', 'entity-detail.html?id=' + nodeId);
+
+      // Load detail panel
+      loadEntityDetail(nodeId);
+    }
+
+    function pulseNode(node) {
+      node.animation({
+        style: { 'border-width': 5, 'border-opacity': 0.6 },
+        duration: 300, easing: 'ease-out'
+      }).play().promise().then(function() {
+        node.animation({
+          style: { 'border-width': 3, 'border-opacity': 1 },
+          duration: 300, easing: 'ease-in'
+        }).play();
+      });
+    }
+
+    // ---- Detail panel ----
+    function loadEntityDetail(entityId) {
+      var panel = document.getElementById('detailPanel');
+      panel.classList.remove('collapsed');
+
+      // Check cache
+      if (state.detailCache[entityId]) {
+        renderDetailPanel(state.detailCache[entityId]);
+        return;
+      }
+
+      panel.innerHTML = '<div class="panel-placeholder"><p>Loading...</p></div>';
+
+      fetch('/admin/api/entity/' + entityId + '/detail')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          state.detailCache[entityId] = data;
+          renderDetailPanel(data);
+        })
+        .catch(function() {
+          panel.innerHTML = '<div class="panel-placeholder"><p>Failed to load</p></div>';
+        });
+    }
+
+    function renderDetailPanel(data) {
+      var panel = document.getElementById('detailPanel');
+      var e = data.entity;
+      var typeColor = TYPE_COLORS[e.entity_type] || '#888';
+
+      var html = '';
+
+      // Header
+      html += '<div class="panel-header">';
+      html += '<div class="panel-entity-name">' + escapeHtml(e.name) + '</div>';
+      html += '<div class="panel-meta">';
+      html += '<span class="badge badge-entity-' + e.entity_type + '">' + e.entity_type + '</span>';
+      html += '<span class="panel-stat">' + e.mention_count + ' mentions</span>';
+      if (e.last_seen_at) {
+        html += '<span class="panel-stat">Last seen ' + formatDate(e.last_seen_at) + '</span>';
+      }
+      html += '</div>';
+      if (e.aliases && e.aliases.length > 0) {
+        html += '<div style="font-size:11px;color:var(--text-muted);margin-top:4px">aka: ' + e.aliases.map(escapeHtml).join(', ') + '</div>';
+      }
+      html += '</div>';
+
+      // Profile
+      if (e.profile_summary) {
+        html += '<div class="panel-section">';
+        html += '<div class="panel-section-title">Profile</div>';
+        html += '<div class="panel-profile">' + escapeHtml(e.profile_summary) + '</div>';
+        html += '</div>';
+      }
+
+      // Communities
+      if (data.communities && data.communities.length > 0) {
+        html += '<div class="panel-section">';
+        html += '<div class="panel-section-title">Communities</div>';
+        data.communities.forEach(function(c) {
+          html += '<span class="community-tag" data-community-id="' + c.id + '">' +
+            escapeHtml(c.title || 'Untitled') + '</span>';
+        });
+        html += '</div>';
+      }
+
+      // Connected entities
+      if (data.connected_entities && data.connected_entities.length > 0) {
+        html += '<div class="panel-section">';
+        html += '<div class="panel-section-title">Connected Entities (' + data.connected_entities.length + ')</div>';
+        data.connected_entities.forEach(function(ce) {
+          var ceColor = TYPE_COLORS[ce.entity_type] || '#888';
+          html += '<div class="connected-item" data-entity-id="' + ce.id + '">';
+          html += '<span class="type-dot" style="background:' + ceColor + '"></span>';
+          html += '<span class="connected-name">' + escapeHtml(ce.name) + '</span>';
+          if (ce.relationship_weight) {
+            html += '<span class="connected-weight">w:' + ce.relationship_weight + '</span>';
+          }
+          if (ce.shared_thought_count > 0) {
+            html += '<span class="connected-weight">' + ce.shared_thought_count + ' shared</span>';
+          }
+          html += '</div>';
+          if (ce.relationship_description) {
+            html += '<div class="connected-desc">' + escapeHtml(ce.relationship_description) + '</div>';
+          }
+        });
+        html += '</div>';
+      }
+
+      // Recent thoughts
+      if (data.recent_thoughts && data.recent_thoughts.length > 0) {
+        html += '<div class="panel-section">';
+        html += '<div class="panel-section-title">Recent Thoughts (' + data.recent_thoughts.length + ')</div>';
+        data.recent_thoughts.forEach(function(t) {
+          var display = t.summary || (t.content_preview ? t.content_preview.substring(0, 150) + '...' : 'No content');
+          html += '<div class="thought-item">';
+          html += '<div class="thought-item-summary">' + escapeHtml(display) + '</div>';
+          html += '<div class="thought-item-meta">';
+          html += '<span>' + (t.source || '') + '</span>';
+          html += '<span>' + (t.relationship || '') + '</span>';
+          html += '<span>' + formatDate(t.created_at) + '</span>';
+          html += '</div>';
+          html += '</div>';
+        });
+        html += '</div>';
+      }
+
+      panel.innerHTML = html;
+
+      // Wire up connected entity clicks
+      panel.querySelectorAll('.connected-item[data-entity-id]').forEach(function(item) {
+        item.addEventListener('click', function() {
+          navigateToEntity(item.dataset.entityId);
+        });
+      });
+
+      // Wire up community clicks
+      panel.querySelectorAll('.community-tag[data-community-id]').forEach(function(tag) {
+        tag.addEventListener('click', function() {
+          window.open('communities.html', '_blank');
+        });
+      });
+    }
+
+    function closeDetailPanel() {
+      document.getElementById('detailPanel').classList.add('collapsed');
+      state.selectedId = null;
+    }
+
+    // ---- Navigation ----
+    function navigateToEntity(entityId) {
+      // Check if node exists in current graph
+      var existing = cy.getElementById(entityId);
+      if (existing && existing.length > 0) {
+        selectNode(entityId);
+      } else {
+        // Need to re-fetch graph centered on new entity
+        state.centerId = entityId;
+        state.isFullGraph = false;
+        document.getElementById('viewToggle').textContent = 'Full Graph';
+        loadGraph(entityId);
+      }
+    }
+
+    // ---- Expand neighbors (double-click) ----
+    function expandNeighbors(nodeId) {
+      fetch('/admin/api/graph/' + nodeId + '?depth=1')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var existingIds = new Set();
+          cy.nodes().forEach(function(n) { existingIds.add(n.id()); });
+
+          var newElements = [];
+          var addedNodes = new Set();
+
+          // Add new nodes
+          data.nodes.forEach(function(n) {
+            if (!existingIds.has(n.id)) {
+              newElements.push({
+                group: 'nodes',
+                data: {
+                  id: n.id,
+                  name: n.name,
+                  entity_type: n.entity_type,
+                  mention_count: Math.max(1, Math.min(n.mention_count || 1, 100)),
+                  profile_summary: n.profile_summary || '',
+                  community_id: n.community_id,
+                  color: TYPE_COLORS[n.entity_type] || '#888',
+                  borderColor: TYPE_BORDER[n.entity_type] || '#666',
+                }
+              });
+              addedNodes.add(n.id);
+            }
+          });
+
+          // Add new edges
+          var existingEdges = new Set();
+          cy.edges().forEach(function(e) { existingEdges.add(e.id()); });
+
+          data.edges.forEach(function(e) {
+            if (!existingEdges.has(e.id)) {
+              var srcExists = existingIds.has(e.source) || addedNodes.has(e.source);
+              var tgtExists = existingIds.has(e.target) || addedNodes.has(e.target);
+              if (srcExists && tgtExists) {
+                newElements.push({
+                  group: 'edges',
+                  data: {
+                    id: e.id,
+                    source: e.source,
+                    target: e.target,
+                    weight: Math.max(1, Math.min(e.weight || 1, 20)),
+                    description: e.description || '',
+                  }
+                });
+              }
+            }
+          });
+
+          if (newElements.length > 0) {
+            var added = cy.add(newElements);
+            added.style({ 'opacity': 0 });
+
+            // Re-layout preserving positions
+            var nc2 = cy.nodes().length;
+            cy.layout({
+              name: 'cose',
+              fit: false,
+              padding: 30,
+              animate: false,
+              randomize: false,
+              nodeRepulsion: function() { return 400000; },
+              idealEdgeLength: function() { return 100; },
+              edgeElasticity: function() { return 50; },
+              gravity: 0.01,
+              numIter: 3000,
+            }).run();
+            // Scale positions
+            var ebb = cy.nodes().boundingBox();
+            var ecx = (ebb.x1 + ebb.x2) / 2;
+            var ecy = (ebb.y1 + ebb.y2) / 2;
+            var escale = Math.max(3, nc2 * 0.08);
+            cy.nodes().forEach(function(node) {
+              var pos = node.position();
+              node.position({
+                x: ecx + (pos.x - ecx) * escale,
+                y: ecy + (pos.y - ecy) * escale,
+              });
+            });
+            cy.fit(undefined, 40);
+            var maxZ = nc2 > 30 ? 0.6 : nc2 > 15 ? 0.9 : 1.2;
+            if (cy.zoom() > maxZ) { cy.zoom(maxZ); cy.center(); }
+
+            // Fade in new elements
+            setTimeout(function() {
+              added.animation({
+                style: { 'opacity': 1 },
+                duration: 400,
+                easing: 'ease-out-cubic'
+              }).play();
+            }, 300);
+          }
+
+          applyFilters();
+        });
+    }
+
+    // ---- Edge tooltips ----
+    var activeTooltip = null;
+
+    function showEdgeTooltip(edge) {
+      var desc = edge.data('description');
+      if (!desc) return;
+      hideEdgeTooltip();
+
+      try {
+        // Get midpoint of edge in rendered (screen) coordinates
+        var mid = edge.midpoint();
+        var pan = cy.pan();
+        var zoom = cy.zoom();
+        var container = cy.container().getBoundingClientRect();
+        var screenX = mid.x * zoom + pan.x + container.left;
+        var screenY = mid.y * zoom + pan.y + container.top;
+
+        // Create a virtual reference element for tippy
+        var virtualRef = {
+          getBoundingClientRect: function() {
+            return { width: 0, height: 0, top: screenY, bottom: screenY, left: screenX, right: screenX, x: screenX, y: screenY };
+          }
+        };
+
+        activeTooltip = tippy(document.createElement('div'), {
+          getReferenceClientRect: virtualRef.getBoundingClientRect,
+          content: desc,
+          theme: 'glass',
+          placement: 'top',
+          arrow: true,
+          animation: 'shift-away',
+          duration: [200, 150],
+          showOnCreate: true,
+          trigger: 'manual',
+        });
+      } catch (e) {
+        // tippy not loaded — ignore
+      }
+    }
+
+    function hideEdgeTooltip() {
+      if (activeTooltip) {
+        activeTooltip.destroy();
+        activeTooltip = null;
+      }
+    }
+
+    // ---- Filtering (client-side type filtering only; weight is server-side) ----
+    function applyFilters() {
+      if (!cy) return;
+
+      // Type filtering
+      cy.nodes().forEach(function(node) {
+        var type = node.data('entity_type');
+        if (!state.typeFilters[type]) {
+          node.style('display', 'none');
+        } else {
+          node.style('display', 'element');
+        }
+      });
+
+      // Hide edges where either endpoint is hidden
+      cy.edges().forEach(function(edge) {
+        var srcVis = edge.source().style('display') !== 'none';
+        var tgtVis = edge.target().style('display') !== 'none';
+        edge.style('display', (srcVis && tgtVis) ? 'element' : 'none');
+      });
+    }
+
+    // ---- Utility ----
+    function escapeHtml(str) {
+      if (!str) return '';
+      var div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    function formatDate(dateStr) {
+      if (!dateStr) return '';
+      var d = new Date(dateStr);
+      return d.toLocaleDateString();
+    }
+  </script>
+</body>
+</html>

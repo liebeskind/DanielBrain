@@ -10,7 +10,7 @@ import type { Config } from '../config.js';
 import { syncFathomMeetings } from '../fathom/sync.js';
 import { parseFile } from '../parsers/index.js';
 import { createJob, getJob, updateJob, listJobs } from '../transcribe/job-tracker.js';
-import { runTranscription, formatAsSrt } from '../transcribe/service.js';
+import { runTranscription, formatAsSrt, generateSummary, applySpeakerNames } from '../transcribe/service.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -767,6 +767,71 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
     }
   });
 
+  router.post('/api/transcribe/:id/speakers', async (req, res) => {
+    try {
+      const job = getJob(req.params.id);
+      if (!job) {
+        res.status(404).json({ error: 'Job not found' });
+        return;
+      }
+      if (job.status !== 'completed' || !job.result) {
+        res.status(400).json({ error: 'Transcription not yet completed' });
+        return;
+      }
+
+      const speakers = req.body?.speakers;
+      if (!speakers || typeof speakers !== 'object' || Object.keys(speakers).length === 0) {
+        res.status(400).json({ error: 'speakers map is required (e.g., { "SPEAKER_00": "Daniel" })' });
+        return;
+      }
+
+      // Store the original (unmapped) data if not already stored
+      if (!job.result._originalText) {
+        (job.result as any)._originalText = job.result.text;
+        (job.result as any)._originalSegments = job.result.segments.map(s => ({ ...s }));
+      }
+
+      // Apply speaker names to text and segments
+      const original = (job.result as any)._originalText as string;
+      const originalSegments = (job.result as any)._originalSegments as typeof job.result.segments;
+      const { text, segments } = applySpeakerNames(original, originalSegments, speakers);
+
+      updateJob(job.id, {
+        speakerMap: speakers,
+        result: { ...job.result, text, segments },
+      });
+
+      res.json({ ok: true, speakerMap: speakers });
+    } catch (err) {
+      console.error('Speaker mapping error:', err);
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  router.post('/api/transcribe/:id/resummarize', async (req, res) => {
+    try {
+      const job = getJob(req.params.id);
+      if (!job) {
+        res.status(404).json({ error: 'Job not found' });
+        return;
+      }
+      if (job.status !== 'completed' || !job.result) {
+        res.status(400).json({ error: 'Transcription not yet completed' });
+        return;
+      }
+
+      const summary = await generateSummary(job.result.text, config, job.speakerMap);
+      updateJob(job.id, {
+        result: { ...job.result, summary },
+      });
+
+      res.json({ ok: true, summary });
+    } catch (err) {
+      console.error('Resummarize error:', err);
+      res.status(500).json({ error: 'Summary generation failed' });
+    }
+  });
+
   router.get('/api/transcribe/:id/download', async (req, res) => {
     const job = getJob(req.params.id);
     if (!job || !job.result) {
@@ -794,6 +859,334 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
         text = `SUMMARY\n${'='.repeat(40)}\n${job.result.summary}\n\nTRANSCRIPT\n${'='.repeat(40)}\n${text}`;
       }
       res.send(text);
+    }
+  });
+
+  // ---- Community API ----
+  router.get('/api/communities', async (req, res) => {
+    try {
+      const level = parseInt(req.query.level as string, 10) || 0;
+      const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 200);
+      const sort = req.query.sort === 'recent' ? 'c.updated_at DESC' : 'c.member_count DESC';
+
+      const { rows: communities } = await pool.query(
+        `SELECT c.id, c.level, c.title, c.summary, c.full_report, c.member_count,
+                c.created_at, c.updated_at
+         FROM communities c
+         WHERE c.level = $1
+         ORDER BY ${sort}
+         LIMIT $2`,
+        [level, limit]
+      );
+
+      // Fetch members for each community
+      const result = [];
+      for (const community of communities) {
+        const { rows: members } = await pool.query(
+          `SELECT e.id, e.name, e.entity_type, e.mention_count
+           FROM entity_communities ec
+           JOIN entities e ON e.id = ec.entity_id
+           WHERE ec.community_id = $1
+           ORDER BY e.mention_count DESC`,
+          [community.id]
+        );
+        result.push({ ...community, members });
+      }
+
+      const { rows: [totalRow] } = await pool.query(
+        `SELECT COUNT(*) as total FROM communities WHERE level = $1`,
+        [level]
+      );
+
+      res.json({
+        communities: result,
+        total: parseInt(totalRow.total, 10),
+      });
+    } catch (err) {
+      console.error('Communities list error:', err);
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  router.get('/api/communities/:id', async (req, res) => {
+    try {
+      const { rows: [community] } = await pool.query(
+        `SELECT id, level, title, summary, full_report, member_count, created_at, updated_at
+         FROM communities WHERE id = $1`,
+        [req.params.id]
+      );
+
+      if (!community) {
+        res.status(404).json({ error: 'Community not found' });
+        return;
+      }
+
+      const { rows: members } = await pool.query(
+        `SELECT e.id, e.name, e.entity_type, e.mention_count, e.profile_summary
+         FROM entity_communities ec
+         JOIN entities e ON e.id = ec.entity_id
+         WHERE ec.community_id = $1
+         ORDER BY e.mention_count DESC`,
+        [community.id]
+      );
+
+      const memberIds = members.map((m: { id: string }) => m.id);
+      const { rows: relationships } = memberIds.length > 0
+        ? await pool.query(
+            `SELECT er.description, er.weight, s.name as source_name, t.name as target_name
+             FROM entity_relationships er
+             JOIN entities s ON s.id = er.source_id
+             JOIN entities t ON t.id = er.target_id
+             WHERE er.source_id = ANY($1) AND er.target_id = ANY($1)
+               AND er.description IS NOT NULL AND er.invalid_at IS NULL
+             ORDER BY er.weight DESC`,
+            [memberIds]
+          )
+        : { rows: [] };
+
+      res.json({ ...community, members, relationships });
+    } catch (err) {
+      console.error('Community detail error:', err);
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  router.post('/api/communities/refresh', async (_req, res) => {
+    try {
+      const { detectCommunities } = await import('../processor/community-detector.js');
+      const result = await detectCommunities(pool);
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      console.error('Community refresh error:', err);
+      res.status(500).json({ error: 'Refresh failed' });
+    }
+  });
+
+  // ---- Graph API: neighborhood ----
+  // ?depth=1|2  &min_weight=N (default 2)  &limit=N (max neighbor nodes, default 50)
+  router.get('/api/graph/:entityId', async (req, res) => {
+    try {
+      const entityId = req.params.entityId;
+      const depth = Math.min(parseInt(req.query.depth as string, 10) || 1, 2);
+      const minWeight = Math.max(parseInt(req.query.min_weight as string, 10) || 2, 1);
+      const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 200);
+
+      // Verify entity exists
+      const { rows: [entity] } = await pool.query(
+        `SELECT id FROM entities WHERE id = $1`, [entityId]
+      );
+      if (!entity) {
+        res.status(404).json({ error: 'Entity not found' });
+        return;
+      }
+
+      let edgeRows: any[];
+      if (depth === 1) {
+        // Get top-N neighbors by weight, then all edges among them
+        const { rows } = await pool.query(
+          `WITH top_neighbors AS (
+             SELECT DISTINCT CASE WHEN source_id = $1 THEN target_id ELSE source_id END AS neighbor_id,
+                    MAX(weight) as max_weight
+             FROM entity_relationships
+             WHERE (source_id = $1 OR target_id = $1) AND invalid_at IS NULL AND weight >= $2
+             GROUP BY neighbor_id
+             ORDER BY max_weight DESC
+             LIMIT $3
+           ),
+           all_ids AS (
+             SELECT $1::uuid AS id UNION SELECT neighbor_id FROM top_neighbors
+           )
+           SELECT er.id, er.source_id, er.target_id, er.weight, er.description
+           FROM entity_relationships er
+           WHERE er.source_id IN (SELECT id FROM all_ids)
+             AND er.target_id IN (SELECT id FROM all_ids)
+             AND er.invalid_at IS NULL AND er.weight >= $2
+           ORDER BY er.weight DESC`,
+          [entityId, minWeight, limit]
+        );
+        edgeRows = rows;
+      } else {
+        // 2-hop: top-N 1-hop neighbors, then their edges among themselves
+        const { rows } = await pool.query(
+          `WITH hop1 AS (
+             SELECT DISTINCT CASE WHEN source_id = $1 THEN target_id ELSE source_id END AS entity_id,
+                    MAX(weight) as max_weight
+             FROM entity_relationships
+             WHERE (source_id = $1 OR target_id = $1) AND invalid_at IS NULL AND weight >= $2
+             GROUP BY entity_id
+             ORDER BY max_weight DESC
+             LIMIT $3
+           ),
+           all_ids AS (
+             SELECT $1::uuid AS entity_id
+             UNION SELECT entity_id FROM hop1
+           )
+           SELECT er.id, er.source_id, er.target_id, er.weight, er.description
+           FROM entity_relationships er
+           WHERE (er.source_id IN (SELECT entity_id FROM all_ids)
+              OR er.target_id IN (SELECT entity_id FROM all_ids))
+             AND er.invalid_at IS NULL AND er.weight >= $2
+           ORDER BY er.weight DESC
+           LIMIT 500`,
+          [entityId, minWeight, limit]
+        );
+        edgeRows = rows;
+      }
+
+      // Collect unique node IDs
+      const nodeIds = new Set<string>([entityId]);
+      for (const e of edgeRows) {
+        nodeIds.add(e.source_id);
+        nodeIds.add(e.target_id);
+      }
+
+      const nodeIdArr = [...nodeIds];
+      const { rows: nodeRows } = nodeIdArr.length > 0
+        ? await pool.query(
+            `SELECT e.id, e.name, e.entity_type, e.mention_count, e.profile_summary,
+                    ec.community_id
+             FROM entities e
+             LEFT JOIN entity_communities ec ON ec.entity_id = e.id AND ec.level = 0
+             WHERE e.id = ANY($1)`,
+            [nodeIdArr]
+          )
+        : { rows: [] };
+
+      res.json({
+        center: entityId,
+        nodes: nodeRows,
+        edges: edgeRows.map((e: any) => ({
+          id: e.id, source: e.source_id, target: e.target_id,
+          weight: e.weight, description: e.description,
+        })),
+      });
+    } catch (err) {
+      console.error('Graph neighborhood error:', err);
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  // ---- Graph API: full graph ----
+  // ?min_weight=N (default 2)
+  router.get('/api/graph', async (req, res) => {
+    try {
+      const minWeight = Math.max(parseInt(req.query.min_weight as string, 10) || 2, 1);
+
+      // Only include entities that participate in edges above threshold
+      const { rows: edgeRows } = await pool.query(
+        `SELECT er.id, er.source_id, er.target_id, er.weight, er.description
+         FROM entity_relationships er
+         WHERE er.invalid_at IS NULL AND er.weight >= $1
+         ORDER BY er.weight DESC`,
+        [minWeight]
+      );
+
+      // Collect node IDs from edges (skip orphan entities)
+      const nodeIds = new Set<string>();
+      for (const e of edgeRows) {
+        nodeIds.add(e.source_id);
+        nodeIds.add(e.target_id);
+      }
+
+      const nodeIdArr = [...nodeIds];
+      const { rows: nodeRows } = nodeIdArr.length > 0
+        ? await pool.query(
+            `SELECT e.id, e.name, e.entity_type, e.mention_count, e.profile_summary,
+                    ec.community_id
+             FROM entities e
+             LEFT JOIN entity_communities ec ON ec.entity_id = e.id AND ec.level = 0
+             WHERE e.id = ANY($1)`,
+            [nodeIdArr]
+          )
+        : { rows: [] };
+
+      res.json({
+        center: null,
+        nodes: nodeRows,
+        edges: edgeRows.map((e: any) => ({
+          id: e.id, source: e.source_id, target: e.target_id,
+          weight: e.weight, description: e.description,
+        })),
+      });
+    } catch (err) {
+      console.error('Full graph error:', err);
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  // ---- Entity detail API (for graph panel) ----
+  router.get('/api/entity/:entityId/detail', async (req, res) => {
+    try {
+      const entityId = req.params.entityId;
+
+      const { rows: [entity] } = await pool.query(
+        `SELECT id, name, entity_type, canonical_name, aliases,
+                profile_summary, mention_count, last_seen_at, metadata,
+                created_at, updated_at
+         FROM entities WHERE id = $1`,
+        [entityId]
+      );
+      if (!entity) {
+        res.status(404).json({ error: 'Entity not found' });
+        return;
+      }
+
+      // Recent thoughts linked to this entity
+      const { rows: recentThoughts } = await pool.query(
+        `SELECT t.id, t.summary, LEFT(t.content, 200) as content_preview,
+                t.thought_type, t.source, te.relationship, t.created_at
+         FROM thought_entities te
+         JOIN thoughts t ON t.id = te.thought_id
+         WHERE te.entity_id = $1
+         ORDER BY t.created_at DESC
+         LIMIT 10`,
+        [entityId]
+      );
+
+      // Connected entities (co-occurrence + explicit edges)
+      const { rows: connected } = await pool.query(
+        `SELECT e.id, e.name, e.entity_type,
+                COALESCE(co.shared_thought_count, 0)::int as shared_thought_count,
+                COALESCE(er.weight, 0)::int as relationship_weight,
+                er.description as relationship_description
+         FROM (
+           SELECT te2.entity_id, COUNT(*) as shared_thought_count
+           FROM thought_entities te1
+           JOIN thought_entities te2 ON te1.thought_id = te2.thought_id AND te1.entity_id != te2.entity_id
+           WHERE te1.entity_id = $1
+           GROUP BY te2.entity_id
+         ) co
+         FULL OUTER JOIN (
+           SELECT
+             CASE WHEN source_id = $1 THEN target_id ELSE source_id END as entity_id,
+             description, weight
+           FROM entity_relationships
+           WHERE (source_id = $1 OR target_id = $1) AND invalid_at IS NULL
+         ) er ON co.entity_id = er.entity_id
+         JOIN entities e ON e.id = COALESCE(co.entity_id, er.entity_id)
+         ORDER BY COALESCE(er.weight, 0) + COALESCE(co.shared_thought_count, 0) DESC
+         LIMIT 30`,
+        [entityId]
+      );
+
+      // Communities
+      const { rows: communities } = await pool.query(
+        `SELECT c.id, c.title
+         FROM entity_communities ec
+         JOIN communities c ON c.id = ec.community_id
+         WHERE ec.entity_id = $1`,
+        [entityId]
+      );
+
+      res.json({
+        entity,
+        recent_thoughts: recentThoughts,
+        connected_entities: connected,
+        communities,
+      });
+    } catch (err) {
+      console.error('Entity detail error:', err);
+      res.status(500).json({ error: 'Internal error' });
     }
   });
 
