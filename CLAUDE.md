@@ -20,7 +20,7 @@ See `docs/vision/` for detailed use cases and architecture vision.
 
 - **PostgreSQL + pgvector** on DGX Spark for storage and vector search
 - **Ollama** on DGX Spark for embeddings (nomic-embed-text) and all LLM tasks (llama3.3:70b — extraction, summarization, profiles, chat, relationship descriptions). 2 models kept resident via `OLLAMA_MAX_LOADED_MODELS=2` + `OLLAMA_KEEP_ALIVE=24h`
-- **MCP server** (HTTP/SSE transport) with 8 tools (4 thought tools + 4 entity tools)
+- **MCP server** (HTTP/SSE transport) with 13 tools (4 thought + 4 entity + 3 relationship + 2 community)
 - **Entity knowledge graph**: first-class entities linked to thoughts + entity-to-entity relationship edges with temporal tracking
 - **Profile generation**: LLM-generated entity profiles with vector embeddings for entity-level semantic search
 - **Approvals queue**: confidence-gated proposal system for human-in-the-loop quality control
@@ -29,6 +29,7 @@ See `docs/vision/` for detailed use cases and architecture vision.
 - **Fathom webhook**: meeting transcript ingestion from Fathom (opt-in via config)
 - **Slack webhook** capture through Cloudflare Tunnel
 - **Telegram webhook** as second input channel (opt-in via config)
+- **Community detection**: Louvain algorithm (graphology) clusters related entities; LLM-generated summaries with vector embeddings for global search
 - **Cloudflare Tunnel + Zero Trust** for remote access (no open ports)
 
 ## Project Structure
@@ -39,10 +40,12 @@ packages/service/        # MCP server, processing pipeline, Slack + Telegram int
   src/processor/         # chunker, embedder, extractor, summarizer, pipeline,
                          # entity-resolver, profile-generator, queue-poller,
                          # relationship-builder, relationship-describer,
+                         # community-detector, community-summarizer,
                          # slack-notifier, telegram-notifier
   src/mcp/               # MCP server + 8 tool handlers
     tools/               # semantic-search, list-recent, stats, save-thought,
-                         # get-entity, list-entities, get-context, get-timeline
+                         # get-entity, list-entities, get-context, get-timeline,
+                         # get-communities, global-search
   src/slack/             # Webhook handler + signature verification
   src/telegram/          # Webhook handler + secret token verification
   src/fathom/            # Webhook handler + svix signature verification + transcript fetcher
@@ -76,6 +79,7 @@ migrations/              # 15 SQL migration files
   024 add_extraction_columns # New extraction fields on thoughts
   025 backfill_entity_last_seen # Backfill entity last_seen_at from thoughts
   026 add_queue_retry_after # retry_after column + partial index for backoff
+  029 create_communities   # communities + entity_communities tables, HNSW index
   020 add_relationship_columns # weight, description, valid_at/invalid_at, source_thought_ids
 scripts/migrate.ts       # Migration runner
 docker/                  # docker-compose.yml (prod) + docker-compose.test.yml (test)
@@ -123,6 +127,10 @@ npm run migrate                # Run SQL migrations against DATABASE_URL
 - **list_entities**: Browse/search by type, name prefix, sort by mentions/recency/name
 - **get_context**: Briefing from entity intersection — "prep me for meeting with Alice about Project X"
 - **get_timeline**: Chronological view for an entity, grouped by date, filterable by source
+
+### Community Tools (2 new)
+- **get_communities**: List detected communities (clusters of related entities), filter by level, entity membership, or search
+- **global_search**: Semantic search over community-level summaries for broad questions ("What is the team working on?")
 
 ## Entity Graph
 
@@ -220,7 +228,13 @@ General-purpose, confidence-gated proposal system. Any operation where confidenc
 - **Anti-hallucination system prompt**: explicit grounding rules ("ONLY state facts from context", "do not fabricate", "flag inferences"). Replaced permissive v1 prompt.
 - **streamChat returns fullResponse**: accumulated text returned so caller can persist assistant messages with context_data JSONB
 - **Queue retry with backoff**: Exponential backoff (30s → 2min → 10min with ±20% jitter) on transient failures, max 3 retries. Inspired by Sidekiq/pg-boss patterns. Items in backoff stay `pending` with `retry_after` timestamp; only marked `failed` after max retries exceeded. Pipeline uses ON CONFLICT upsert for idempotent retries.
+- **Community detection (Louvain)**: Pure graph algorithm via graphology, runs hourly, milliseconds on 500 nodes. No Ollama needed. Persists via communities + entity_communities tables
+- **Community summarization**: Background poller (every 5 min, Ollama mutex), batch of 5. LLM generates title/summary/full_report JSON, summary embedded via nomic-embed-text for vector search
+- **Community change detection**: SHA-256 hash of sorted membership sets; skip re-write if unchanged
+- **Global search is vector-only**: No LLM in query path. Agent (Claude/GPT via MCP) synthesizes community context
+- **Model decisions register**: `docs/plans/model-decisions.md` documents current model selection, alternatives, and upgrade triggers
 - **Planning process**: Before building new features, research how comparable platforms handle the same problem. Check `docs/reference/` projects first, then industry-standard tools.
+- **Graph visualization: Cytoscape.js + cose**: Evaluated Cytoscape.js, Sigma.js, vis-network, D3-force, force-graph. Sigma.js ForceAtlas2 requires bundler (no CDN UMD). Cytoscape.js works from CDN but fcose extension fails to auto-register — using built-in `cose` layout with post-layout position scaling for proper spacing. Graph API uses server-side weight filtering (default min_weight=2) and neighbor limits (default 50) for performance on heavily-connected nodes.
 
 ## Environment Variables
 
@@ -250,8 +264,8 @@ See `.env.example` for all required/optional vars. Key ones:
 - [x] Phase 5: Entity Relationships + Temporal Edges (co-occurrence edges, 70B descriptions, contradiction detection, proposals)
 - [x] Phase 6: Hybrid Retrieval (BM25 + tsvector + RRF, upgraded chat context)
 - [x] Phase 6b: Chat v2 — conversation persistence, projects, anti-hallucination
-- [ ] Phase 7: Community Detection + Global Search (Louvain via graphology, community summaries, simplified global search)
-- [ ] Phase 7b: Relationship Explorer (Cytoscape.js graph visualization, community clusters, entity/edge filtering, detail panels, graph API endpoint)
+- [x] Phase 7: Community Detection + Global Search (Louvain via graphology, community summaries, simplified global search)
+- [x] Phase 7b: Relationship Explorer (Cytoscape.js graph visualization, community clusters, entity/edge filtering, detail panels, graph API endpoint)
 - [ ] Phase 8: Agent Interface Enhancement (new MCP tools, agent personas, research mode, dual-level keywords)
 - [ ] Phase 9: Permissions + Multi-User (visibility scoping, access_keys, selective sharing)
 - [ ] Phase 10: Infrastructure + Polish (Cloudflare Tunnel, cross-encoder reranking, source-specific chunking, logging, backup)

@@ -6,7 +6,6 @@
   <title>Entity Explorer - TopiaBrain</title>
   <link rel="stylesheet" href="style.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/cytoscape-fcose@2.2.0/cytoscape-fcose.js"></script>
   <script src="https://unpkg.com/@popperjs/core@2"></script>
   <script src="https://unpkg.com/tippy.js@6"></script>
 </head>
@@ -774,12 +773,8 @@
           });
         });
 
-        var bb2 = cy.nodes().boundingBox();
-        console.log('Bounding box after scale:', bb2.w.toFixed(0), 'x', bb2.h.toFixed(0), '| nodes:', nodeCount, '| scale:', scale.toFixed(1));
-
         // Fit then cap zoom
         cy.fit(undefined, 40);
-        console.log('Zoom after fit:', cy.zoom().toFixed(2));
 
         var maxZoom = nodeCount > 30 ? 0.6 : nodeCount > 15 ? 0.9 : 1.2;
         if (cy.zoom() > maxZoom) {

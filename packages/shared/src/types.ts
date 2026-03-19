@@ -221,6 +221,24 @@ export interface ChatProject {
   updated_at: Date;
 }
 
+export interface Community {
+  id: string;
+  level: number;
+  title: string | null;
+  summary: string | null;
+  full_report: string | null;
+  embedding: number[] | null;
+  member_count: number;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface EntityCommunity {
+  entity_id: string;
+  community_id: string;
+  level: number;
+}
+
 export interface SearchResult {
   id: string;
   content: string;
