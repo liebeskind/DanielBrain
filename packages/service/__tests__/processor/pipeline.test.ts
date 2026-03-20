@@ -251,4 +251,59 @@ describe('processThought', () => {
     const insertCall = mockPool.query.mock.calls[0];
     expect(insertCall[1]).toContain('slack');
   });
+
+  it('skips LLM extraction when directMetadata is provided', async () => {
+    const sourceMeta = {
+      hubspot_id: '101',
+      object_type: 'contact',
+      channel_type: 'crm',
+      directMetadata: {
+        people: ['Alice Smith'],
+        companies: ['Acme Corp'],
+        topics: ['customer'],
+        thought_type: 'contact',
+        summary: 'HubSpot Contact: Alice Smith',
+      },
+    };
+
+    const result = await processThought(
+      'HubSpot Contact: Alice Smith',
+      'hubspot',
+      mockPool as any,
+      mockConfig,
+      sourceMeta,
+      'hubspot-contact-101',
+    );
+
+    // Extractor should NOT be called
+    expect(extractor.extractMetadata).not.toHaveBeenCalled();
+    // Embedder should still be called
+    expect(embedder.embed).toHaveBeenCalled();
+    // Metadata should come from directMetadata
+    expect(result.metadata.thought_type).toBe('contact');
+    expect(result.metadata.people).toEqual(['Alice Smith']);
+    expect(result.metadata.companies).toEqual(['Acme Corp']);
+    expect(result.metadata.topics).toEqual(['customer']);
+  });
+
+  it('falls back to LLM extraction when directMetadata has no thought_type', async () => {
+    const sourceMeta = {
+      hubspot_id: '401',
+      object_type: 'note',
+      channel_type: 'crm',
+      directMetadata: {},
+    };
+
+    await processThought(
+      'HubSpot Note: Follow up',
+      'hubspot',
+      mockPool as any,
+      mockConfig,
+      sourceMeta,
+      'hubspot-note-401',
+    );
+
+    // Extractor should be called for notes (no thought_type in directMetadata)
+    expect(extractor.extractMetadata).toHaveBeenCalled();
+  });
 });

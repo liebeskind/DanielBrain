@@ -75,7 +75,7 @@ export interface StructuredData {
   companies?: Array<{ name: string; record_url?: string }>;
 }
 
-export type ChannelType = 'public' | 'private' | 'dm' | 'group_dm' | 'meeting' | 'manual';
+export type ChannelType = 'public' | 'private' | 'dm' | 'group_dm' | 'meeting' | 'manual' | 'crm';
 
 export interface AccessKey {
   id: string;

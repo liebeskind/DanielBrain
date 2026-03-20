@@ -24,6 +24,10 @@ const configSchema = z.object({
   whisperModel: z.string().default('large-v3'),
   transcribeDir: z.string().default('./data/transcriptions'),
   jwtSecret: z.string().min(32).optional(),
+  hubspotAccessToken: z.string().min(1).optional(),
+  hubspotWebhookSecret: z.string().min(1).optional(),
+  hubspotPollIntervalMs: z.number().int().default(300_000),
+  hubspotObjectTypes: z.string().default('contacts,companies,deals'),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -53,5 +57,9 @@ export function loadConfig(): Config {
     whisperModel: process.env.WHISPER_MODEL || undefined,
     transcribeDir: process.env.TRANSCRIBE_DIR || undefined,
     jwtSecret: process.env.JWT_SECRET || undefined,
+    hubspotAccessToken: process.env.HUBSPOT_ACCESS_TOKEN || undefined,
+    hubspotWebhookSecret: process.env.HUBSPOT_WEBHOOK_SECRET || undefined,
+    hubspotPollIntervalMs: process.env.HUBSPOT_POLL_INTERVAL_MS ? parseInt(process.env.HUBSPOT_POLL_INTERVAL_MS, 10) : undefined,
+    hubspotObjectTypes: process.env.HUBSPOT_OBJECT_TYPES || undefined,
   });
 }

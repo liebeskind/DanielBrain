@@ -34,6 +34,17 @@ export function computeSourceVisibility(
   sourceMeta?: Record<string, unknown> | null,
   ownerId?: string | null,
 ): string[] {
+  // HubSpot: per-object-type visibility
+  if (source === 'hubspot' && sourceMeta) {
+    const objectType = sourceMeta.object_type as string | undefined;
+    if (objectType && ['contact', 'company', 'deal'].includes(objectType)) {
+      return ['company'];
+    }
+    // Emails and notes are private to the record owner
+    if (ownerId) return [`user:${ownerId}`];
+    return ['owner'];
+  }
+
   if (source === 'slack' && sourceMeta) {
     const channelType = sourceMeta.channel_type as string | undefined;
     const channelId = sourceMeta.channel_id as string | undefined;

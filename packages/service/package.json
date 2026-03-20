@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@danielbrain/shared": "*",
+    "@hubspot/api-client": "^13.5.0",
     "@modelcontextprotocol/sdk": "^1.6.0",
     "express": "^4.21.0",
     "graphology": "^0.26.0",

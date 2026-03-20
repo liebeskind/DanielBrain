@@ -33,6 +33,31 @@ describe('computeSourceVisibility', () => {
     expect(computeSourceVisibility('telegram', {})).toEqual(['owner']);
   });
 
+  it('returns company for hubspot contacts', () => {
+    expect(computeSourceVisibility('hubspot', { object_type: 'contact' }))
+      .toEqual(['company']);
+  });
+
+  it('returns company for hubspot companies', () => {
+    expect(computeSourceVisibility('hubspot', { object_type: 'company' }))
+      .toEqual(['company']);
+  });
+
+  it('returns company for hubspot deals', () => {
+    expect(computeSourceVisibility('hubspot', { object_type: 'deal' }))
+      .toEqual(['company']);
+  });
+
+  it('returns owner for hubspot notes', () => {
+    expect(computeSourceVisibility('hubspot', { object_type: 'note' }))
+      .toEqual(['owner']);
+  });
+
+  it('uses ownerId for hubspot notes when provided', () => {
+    expect(computeSourceVisibility('hubspot', { object_type: 'note' }, 'user-123'))
+      .toEqual(['user:user-123']);
+  });
+
   it('returns owner for fathom', () => {
     expect(computeSourceVisibility('fathom', {})).toEqual(['owner']);
   });

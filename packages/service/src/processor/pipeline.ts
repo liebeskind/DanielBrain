@@ -65,6 +65,35 @@ function mergeActionItems(
   return { items: merged, structured: mergedStructured };
 }
 
+/** Build ThoughtMetadata from pre-extracted directMetadata (structured CRM sources) */
+function buildMetadataFromDirect(direct: {
+  people?: string[];
+  companies?: string[];
+  topics?: string[];
+  thought_type?: string;
+  summary?: string;
+}): ThoughtMetadata {
+  return {
+    thought_type: direct.thought_type ?? null,
+    people: direct.people ?? [],
+    topics: direct.topics ?? [],
+    action_items: [],
+    dates_mentioned: [],
+    sentiment: null,
+    summary: direct.summary ?? null,
+    companies: direct.companies ?? [],
+    products: [],
+    projects: [],
+    department: null,
+    confidentiality: null,
+    themes: [],
+    key_decisions: [],
+    key_insights: [],
+    meeting_participants: [],
+    action_items_structured: [],
+  };
+}
+
 export async function processThought(
   content: string,
   source: string,
@@ -94,11 +123,14 @@ async function processShort(
 ): Promise<ProcessResult> {
   const { structured } = parseEnvelope(sourceMeta);
   const visibility = computeSourceVisibility(source, sourceMeta, ownerId);
+  const direct = (sourceMeta?.directMetadata as { people?: string[]; companies?: string[]; topics?: string[]; thought_type?: string; summary?: string } | undefined);
 
-  // Parallel: embed + extract metadata
+  // Parallel: embed + extract metadata (skip extraction if directMetadata provided)
   const [embedding, metadata] = await Promise.all([
     embed(content, config),
-    extractMetadata(content, config),
+    direct?.thought_type
+      ? Promise.resolve(buildMetadataFromDirect(direct))
+      : extractMetadata(content, config),
   ]);
 
   // Merge structured action items

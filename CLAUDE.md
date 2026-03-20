@@ -27,6 +27,7 @@ See `docs/vision/` for detailed use cases and architecture vision.
 - **Admin dashboard**: web UI at `/admin` for reviewing proposals, entity overview, and stats
 - **LinkedIn enricher**: background poller using SerpAPI (optional, 33/day on Starter plan)
 - **Fathom webhook**: meeting transcript ingestion from Fathom (opt-in via config)
+- **HubSpot integration**: CRM entity ingestion (contacts, companies, deals) via polling + webhook, direct field mapping bypasses LLM extraction
 - **Slack webhook** capture through Cloudflare Tunnel
 - **Telegram webhook** as second input channel (opt-in via config)
 - **Community detection**: Louvain algorithm (graphology) clusters related entities; LLM-generated summaries with vector embeddings for global search
@@ -49,6 +50,7 @@ packages/service/        # MCP server, processing pipeline, Slack + Telegram int
   src/slack/             # Webhook handler + signature verification
   src/telegram/          # Webhook handler + secret token verification
   src/fathom/            # Webhook handler + svix signature verification + transcript fetcher
+  src/hubspot/           # HubSpot CRM integration (client, sync, format, webhook, verify)
   src/proposals/          # Approvals queue: applier, reverter, helpers, REST routes
   src/enrichers/          # Background enrichment pollers (LinkedIn via Google CSE)
   src/chat/               # Chat interface: routes, context builder, ollama streaming, conversation/project CRUD
@@ -81,6 +83,7 @@ migrations/              # 15 SQL migration files
   026 add_queue_retry_after # retry_after column + partial index for backoff
   029 create_communities   # communities + entity_communities tables, HNSW index
   020 add_relationship_columns # weight, description, valid_at/invalid_at, source_thought_ids
+  037 hubspot_sync_state  # HubSpot sync state tracking (singleton row)
 scripts/migrate.ts       # Migration runner
 docker/                  # docker-compose.yml (prod) + docker-compose.test.yml (test)
 docs/
@@ -113,9 +116,9 @@ npm run migrate                # Run SQL migrations against DATABASE_URL
 - Full TDD: every module has tests written before implementation
 - Unit tests mock Ollama calls (fast, no GPU needed)
 - Integration tests use real Postgres via docker-compose.test.yml (port 5433)
-- Run: `npm test` (814 unit tests across 78 files, ~2s)
+- Run: `npm test` (867 unit tests across 83 files, ~2s)
 - Run: `npm run test:integration` (135 integration tests across 10 files, ~2s)
-- Total: 949 tests across 88 files
+- Total: 1002 tests across 93 files
 
 ### Integration test setup
 ```bash
@@ -252,6 +255,12 @@ General-purpose, confidence-gated proposal system. Any operation where confidenc
 - **Source-determined visibility**: `computeSourceVisibility()` computes tags from source + source_meta. Slack public → `['company']`, Slack private → `['channel:C123']`, Slack DM → `['user:U1', 'user:U2']`, everything else → `['owner']` or `['user:<ownerId>']`.
 - **Selective sharing**: `thought_shares` table records visibility promotions. Owner or admin can append tags to `thoughts.visibility`.
 - **Explicit parameter passing for visibility**: Not AsyncLocalStorage. Consistent with existing pool/config pattern, easier to test.
+- **HubSpot opt-in**: poller only starts when `HUBSPOT_ACCESS_TOKEN` is set; webhook requires `HUBSPOT_WEBHOOK_SECRET`
+- **HubSpot direct metadata bypass**: structured CRM records (contacts, companies, deals) skip LLM extraction via `directMetadata` in `source_meta`. Notes still use full pipeline. Saves ~2-5s per record and avoids hallucination on structured data.
+- **HubSpot per-object visibility**: contacts/companies/deals → `['company']`, notes/emails → `['user:{ownerId}']`. Branching on `source_meta.object_type`, not source.
+- **HubSpot SDK**: `@hubspot/api-client` with built-in Bottleneck rate limiting (190 req/10sec). No manual throttling needed.
+- **HubSpot incremental sync**: search API with `lastmodifieddate > lastSyncTimestamp`. Full list on first sync, search on subsequent. `hubspot_sync_state` singleton table tracks cursor + timestamp.
+- **HubSpot webhook v3 verification**: HMAC-SHA256 with app secret, signed content = method + URI + body + timestamp, 5-minute timestamp expiry
 - **Team-scoped visibility deferred to Phase 10**: The TEXT[] model already supports `team:engineering` tags, but needs a teams table + `buildVisibilityTags()` expansion + Slack channel auto-mapping.
 
 ## Environment Variables
@@ -264,6 +273,10 @@ See `.env.example` for all required/optional vars. Key ones:
 - `OLLAMA_BASE_URL` — defaults to http://localhost:11434
 - `SERPAPI_KEY` — SerpAPI key for LinkedIn enrichment (optional)
 - `FATHOM_API_KEY` / `FATHOM_WEBHOOK_SECRET` — Fathom meeting transcript integration (optional)
+- `HUBSPOT_ACCESS_TOKEN` — HubSpot private app access token (optional, enables CRM sync)
+- `HUBSPOT_WEBHOOK_SECRET` — HubSpot app secret for webhook signature verification (optional)
+- `HUBSPOT_POLL_INTERVAL_MS` — Polling interval in ms (default: 300000 / 5 min)
+- `HUBSPOT_OBJECT_TYPES` — Comma-separated object types to sync (default: `contacts,companies,deals`)
 - `EXTRACTION_MODEL` — Ollama model for extraction/summarization/profiles (default: `llama3.3:70b`)
 - `CHAT_MODEL` — Ollama model for chat (default: `llama3.3:70b`)
 - `RELATIONSHIP_MODEL` — Ollama model for relationship description/contradiction (optional, e.g. `llama3.3:70b`)

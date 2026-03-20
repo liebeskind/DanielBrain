@@ -32,6 +32,11 @@ import { handleFathomEvent } from './fathom/webhook.js';
 import { createCorrectionRoutes } from './corrections/routes.js';
 import { describeUndescribedRelationships } from './processor/relationship-describer.js';
 import { acquireOllama, releaseOllama } from './ollama-mutex.js';
+import { createHubSpotClient } from './hubspot/client.js';
+import { syncHubSpot } from './hubspot/sync.js';
+import { verifyHubSpotSignature } from './hubspot/verify.js';
+import { handleHubSpotEvents } from './hubspot/webhook.js';
+import type { HubSpotObjectType } from './hubspot/types.js';
 import { detectCommunities } from './processor/community-detector.js';
 import { summarizeUnsummarizedCommunities } from './processor/community-summarizer.js';
 
@@ -185,6 +190,43 @@ if (config.fathomApiKey && config.fathomWebhookSecret) {
   });
 }
 
+// --- HubSpot webhook (optional — only if configured) ---
+if (config.hubspotAccessToken && config.hubspotWebhookSecret) {
+  const hubspotWebhookClient = createHubSpotClient(config.hubspotAccessToken);
+  app.post('/hubspot/events', express.raw({ type: '*/*' }), async (req, res) => {
+    const body = req.body.toString();
+
+    const valid = verifyHubSpotSignature({
+      signature: req.headers['x-hubspot-signature-v3'] as string | undefined,
+      timestamp: req.headers['x-hubspot-request-timestamp'] as string | undefined,
+      requestMethod: 'POST',
+      requestUri: `${req.protocol}://${req.get('host')}${req.originalUrl}`,
+      body,
+      secret: config.hubspotWebhookSecret!,
+    });
+
+    if (!valid) {
+      res.status(401).json({ error: 'Invalid signature' });
+      return;
+    }
+
+    try {
+      const events = JSON.parse(body);
+      res.status(200).json({ ok: true });
+
+      const result = await handleHubSpotEvents(events, pool, hubspotWebhookClient);
+      if (result.processed > 0) {
+        console.log(`HubSpot webhook: ${result.processed} processed, ${result.skipped} skipped, ${result.errors} errors`);
+      }
+    } catch (err) {
+      console.error('HubSpot webhook error:', err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Internal error' });
+      }
+    }
+  });
+}
+
 // --- Proposal API (JSON body parsing) ---
 app.use('/api/proposals', express.json(), createProposalRoutes(pool));
 
@@ -228,13 +270,12 @@ app.use('/mcp', async (req, res, next) => {
 app.use('/mcp', optionalAuth(pool, config.brainAccessKey));
 
 // --- MCP SSE transport ---
-const mcpServer = createMcpServer(pool, config);
-
-// Map to track active transports by session
+// Each SSE connection gets its own McpServer instance (SDK requires 1:1 server↔transport).
 const transports = new Map<string, SSEServerTransport>();
 
 app.get('/mcp/sse', async (req, res) => {
   const transport = new SSEServerTransport('/mcp/messages', res);
+  const mcpServer = createMcpServer(pool, config);
   transports.set(transport.sessionId, transport);
 
   res.on('close', () => {
@@ -370,6 +411,38 @@ function startCommunitySummarizer() {
   }, COMMUNITY_SUMMARY_INTERVAL_MS);
 }
 
+// --- HubSpot sync poller (optional — only if configured) ---
+let hubspotInterval: ReturnType<typeof setInterval> | undefined;
+
+function startHubSpotSync() {
+  if (!config.hubspotAccessToken) return;
+
+  const hsClient = createHubSpotClient(config.hubspotAccessToken);
+  const objectTypes = config.hubspotObjectTypes.split(',').map(s => s.trim()) as HubSpotObjectType[];
+
+  // Run initial sync immediately, then on interval
+  syncHubSpot(hsClient, pool, objectTypes)
+    .then(result => {
+      const total = result.contacts + result.companies + result.deals;
+      if (total > 0) {
+        console.log(`HubSpot initial sync: ${result.contacts} contacts, ${result.companies} companies, ${result.deals} deals queued`);
+      }
+    })
+    .catch(err => console.error('HubSpot initial sync error:', err));
+
+  hubspotInterval = setInterval(async () => {
+    try {
+      const result = await syncHubSpot(hsClient, pool, objectTypes);
+      const total = result.contacts + result.companies + result.deals;
+      if (total > 0) {
+        console.log(`HubSpot sync: ${result.contacts} contacts, ${result.companies} companies, ${result.deals} deals queued`);
+      }
+    } catch (err) {
+      console.error('HubSpot sync error:', err);
+    }
+  }, config.hubspotPollIntervalMs);
+}
+
 // --- Model preloading ---
 async function preloadModels() {
   const models = new Map<string, 'embed' | 'llm'>();
@@ -420,6 +493,7 @@ function shutdown() {
   if (relationshipInterval) clearInterval(relationshipInterval);
   if (communityDetectionInterval) clearInterval(communityDetectionInterval);
   if (communitySummaryInterval) clearInterval(communitySummaryInterval);
+  if (hubspotInterval) clearInterval(hubspotInterval);
 
   // Wait for in-flight operations to settle, then close pool
   // Short delay lets active poller iterations complete
@@ -455,6 +529,10 @@ function startPollers() {
   console.log(`  Community detection: every ${COMMUNITY_DETECTION_INTERVAL_MS / 1000}s`);
   startCommunitySummarizer();
   console.log(`  Community summarizer: every ${COMMUNITY_SUMMARY_INTERVAL_MS / 1000}s`);
+  startHubSpotSync();
+  if (config.hubspotAccessToken) {
+    console.log(`  HubSpot sync: every ${config.hubspotPollIntervalMs / 1000}s (${config.hubspotObjectTypes})`);
+  }
   preloadModels().catch(err => console.error('Model preload error:', err));
 }
 
@@ -464,6 +542,8 @@ function logStartup() {
   if (config.slackBotToken) console.log(`  Slack webhook: /slack/events`);
   if (config.telegramBotToken) console.log(`  Telegram webhook: /telegram/updates`);
   if (config.fathomApiKey) console.log(`  Fathom webhook: /fathom/events`);
+  if (config.hubspotAccessToken) console.log(`  HubSpot sync: polling`);
+  if (config.hubspotWebhookSecret) console.log(`  HubSpot webhook: /hubspot/events`);
   console.log(`  Admin dashboard: /admin`);
   console.log(`  Chat: /chat`);
 }
