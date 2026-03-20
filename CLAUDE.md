@@ -103,6 +103,7 @@ docs/
 ```bash
 npm install                    # Install all workspace dependencies
 npm test                       # Run all unit tests (vitest)
+npm run test:integration       # Run integration tests (requires test DB)
 npm run dev                    # Start service (requires .env + Postgres + Ollama)
 npm run migrate                # Run SQL migrations against DATABASE_URL
 ```
@@ -112,7 +113,16 @@ npm run migrate                # Run SQL migrations against DATABASE_URL
 - Full TDD: every module has tests written before implementation
 - Unit tests mock Ollama calls (fast, no GPU needed)
 - Integration tests use real Postgres via docker-compose.test.yml (port 5433)
-- Run: `npx vitest run` (330 tests across 44 files)
+- Run: `npm test` (814 unit tests across 78 files, ~2s)
+- Run: `npm run test:integration` (135 integration tests across 10 files, ~2s)
+- Total: 949 tests across 88 files
+
+### Integration test setup
+```bash
+docker compose -f docker/docker-compose.test.yml up -d   # Start test DB (port 5433)
+DATABASE_URL="postgresql://danielbrain_test:test_password@localhost:5433/danielbrain_test" npm run migrate
+npm run test:integration
+```
 
 ## MCP Tools
 
@@ -235,6 +245,14 @@ General-purpose, confidence-gated proposal system. Any operation where confidenc
 - **Model decisions register**: `docs/plans/model-decisions.md` documents current model selection, alternatives, and upgrade triggers
 - **Planning process**: Before building new features, research how comparable platforms handle the same problem. Check `docs/reference/` projects first, then industry-standard tools.
 - **Graph visualization: Cytoscape.js + cose**: Evaluated Cytoscape.js, Sigma.js, vis-network, D3-force, force-graph. Sigma.js ForceAtlas2 requires bundler (no CDN UMD). Cytoscape.js works from CDN but fcose extension fails to auto-register — using built-in `cose` layout with post-layout position scaling for proper spacing. Graph API uses server-side weight filtering (default min_weight=2) and neighbor limits (default 50) for performance on heavily-connected nodes.
+- **Phase 8.5 architecture review**: Full audit of Phases 1-8. Fixed: transaction safety in entity merge + chunk writes, connection pool configuration (max=20), graceful shutdown, SQL injection pattern in stats.ts, XSS in admin markdown, N+1 queries in semantic search + get-context, relationship normalization mismatch, profile refresh boundary loop. See `docs/plans/architecture-review-findings.md`.
+- **Multi-user auth (Phase 9)**: Users table + SHA-256 hashed API keys linked to users. `UserContext` propagated via `req.userContext`. Owner role = no filtering, member/admin = `visibility && visibilityTags` filtering.
+- **Visibility enforcement**: `TEXT[] + GIN` index on `thoughts.visibility`. `hybrid_search()` gains `filter_visibility text[]` parameter (12th arg, DEFAULT NULL). All thought-querying MCP tools pass visibility through. Entities remain globally visible.
+- **MCP OAuth 2.0**: SDK's `mcpAuthRouter()` handles /.well-known, /authorize, /token, /register, /revoke. Custom authorize page (API key login form). JWT access tokens signed with `jose` HS256. Dynamic Client Registration for Claude Desktop. In-memory auth codes + refresh tokens (lost on restart = re-auth). Conditional on `JWT_SECRET` env var.
+- **Source-determined visibility**: `computeSourceVisibility()` computes tags from source + source_meta. Slack public → `['company']`, Slack private → `['channel:C123']`, Slack DM → `['user:U1', 'user:U2']`, everything else → `['owner']` or `['user:<ownerId>']`.
+- **Selective sharing**: `thought_shares` table records visibility promotions. Owner or admin can append tags to `thoughts.visibility`.
+- **Explicit parameter passing for visibility**: Not AsyncLocalStorage. Consistent with existing pool/config pattern, easier to test.
+- **Team-scoped visibility deferred to Phase 10**: The TEXT[] model already supports `team:engineering` tags, but needs a teams table + `buildVisibilityTags()` expansion + Slack channel auto-mapping.
 
 ## Environment Variables
 
@@ -249,6 +267,7 @@ See `.env.example` for all required/optional vars. Key ones:
 - `EXTRACTION_MODEL` — Ollama model for extraction/summarization/profiles (default: `llama3.3:70b`)
 - `CHAT_MODEL` — Ollama model for chat (default: `llama3.3:70b`)
 - `RELATIONSHIP_MODEL` — Ollama model for relationship description/contradiction (optional, e.g. `llama3.3:70b`)
+- `JWT_SECRET` — 32+ char secret for OAuth JWT signing (optional, enables MCP OAuth)
 
 ## Build Phases
 
@@ -267,7 +286,8 @@ See `.env.example` for all required/optional vars. Key ones:
 - [x] Phase 7: Community Detection + Global Search (Louvain via graphology, community summaries, simplified global search)
 - [x] Phase 7b: Relationship Explorer (Cytoscape.js graph visualization, community clusters, entity/edge filtering, detail panels, graph API endpoint)
 - [ ] Phase 8: Agent Interface Enhancement (new MCP tools, agent personas, research mode, dual-level keywords)
-- [ ] Phase 9: Permissions + Multi-User (visibility scoping, access_keys, selective sharing)
+- [x] Phase 8.5: Architecture Review (full audit, 40 findings, critical+major fixes)
+- [x] Phase 9: Permissions + Multi-User (users, API key auth, visibility enforcement, MCP OAuth, source-determined visibility, selective sharing)
 - [ ] Phase 10: Infrastructure + Polish (Cloudflare Tunnel, cross-encoder reranking, source-specific chunking, logging, backup)
 - [ ] Phase 11: Advanced Knowledge Quality (fact-level dedup, atomic fact extraction, recursive splitting)
 - [ ] Phase 12: Automation + Calendar (scheduled monitoring, meeting prep autopilot, action item lifecycle)

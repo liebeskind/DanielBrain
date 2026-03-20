@@ -18,6 +18,7 @@ export async function handleAsk(
   input: AskInput,
   pool: pg.Pool,
   config: AskConfig,
+  visibilityTags?: string[] | null,
 ) {
   // Step 1: Extract keywords (entities + themes) and get query embedding
   const keywords = await extractKeywords(input.query, pool, config);
@@ -32,6 +33,7 @@ export async function handleAsk(
       { query: input.query, limit: input.limit, threshold: 0.2, days_back: input.days_back },
       pool,
       config,
+      visibilityTags,
     ),
     // Community search (reuse embedding)
     searchCommunitiesWithEmbedding(vectorStr, pool),

@@ -51,7 +51,7 @@ describe('handleSemanticSearch', () => {
     expect(embedder.embedQuery).toHaveBeenCalledWith('AI meetings', mockConfig);
     const queryCall = mockPool.query.mock.calls[0];
     expect(queryCall[0]).toContain('hybrid_search');
-    expect(queryCall[1]).toHaveLength(11);
+    expect(queryCall[1]).toHaveLength(12);
     // Params: vectorStr, query_text, threshold, limit, filters..., rrf_k, vector_weight, bm25_weight
     expect(queryCall[1][1]).toBe('AI meetings'); // raw query text for BM25
     expect(queryCall[1][8]).toBe(RRF_K);
@@ -79,7 +79,7 @@ describe('handleSemanticSearch', () => {
     );
 
     const queryCall = mockPool.query.mock.calls[0];
-    expect(queryCall[1]).toHaveLength(11);
+    expect(queryCall[1]).toHaveLength(12);
     expect(queryCall[1][1]).toBe('test'); // query text
     expect(queryCall[1][2]).toBe(0.6);   // threshold
     expect(queryCall[1][3]).toBe(5);     // limit

@@ -35,6 +35,12 @@ export function createConversationRoutes(pool: pg.Pool, config: Config): Router 
         FROM conversations WHERE is_deleted = FALSE`;
       const params: (string | number)[] = [];
 
+      // Scope to current user if authenticated
+      if (req.userContext) {
+        params.push(req.userContext.userId);
+        query += ` AND (user_id = $${params.length} OR user_id IS NULL)`;
+      }
+
       if (projectId) {
         params.push(projectId);
         query += ` AND project_id = $${params.length}`;
@@ -56,10 +62,10 @@ export function createConversationRoutes(pool: pg.Pool, config: Config): Router 
     try {
       const { title, project_id } = req.body;
       const { rows: [row] } = await pool.query(
-        `INSERT INTO conversations (title, project_id)
-         VALUES ($1, $2)
+        `INSERT INTO conversations (title, project_id, user_id)
+         VALUES ($1, $2, $3)
          RETURNING id, title, project_id, created_at, updated_at`,
-        [title || null, project_id || null],
+        [title || null, project_id || null, req.userContext?.userId ?? null],
       );
       res.json(row);
     } catch (err) {
@@ -168,7 +174,11 @@ export function createConversationRoutes(pool: pg.Pool, config: Config): Router 
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders();
 
-    acquireOllama('chat');
+    if (!acquireOllama('chat')) {
+      res.write(`data: ${JSON.stringify({ error: 'LLM is busy. Please try again shortly.' })}\n\n`);
+      res.end();
+      return;
+    }
     try {
       // Save user message
       await pool.query(
@@ -191,7 +201,8 @@ export function createConversationRoutes(pool: pg.Pool, config: Config): Router 
       // Build RAG context (with timeout so chat doesn't hang if Ollama is busy)
       let context: Awaited<ReturnType<typeof buildContext>>;
       try {
-        const contextPromise = buildContext(message, pool, config);
+        const visTags = req.userContext?.visibilityTags?.length ? req.userContext.visibilityTags : null;
+        const contextPromise = buildContext(message, pool, config, visTags);
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('Context retrieval timed out — Ollama may be busy')), 90_000),
         );

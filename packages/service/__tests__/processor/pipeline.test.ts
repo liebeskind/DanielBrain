@@ -20,8 +20,14 @@ vi.mock('../../src/processor/entity-resolver.js', () => ({
   resolveEntities: vi.fn().mockResolvedValue(undefined),
 }));
 
+const mockClient = {
+  query: vi.fn(),
+  release: vi.fn(),
+};
+
 const mockPool = {
   query: vi.fn(),
+  connect: vi.fn().mockResolvedValue(mockClient),
 };
 
 const mockConfig = {
@@ -122,6 +128,7 @@ describe('processThought', () => {
 
   it('processes long content with chunking', async () => {
     const longText = 'This is a long sentence about various topics. '.repeat(700);
+    mockClient.query.mockResolvedValue({ rows: [] });
 
     // needsChunking will return true for this
     await processThought(longText, 'slack', mockPool as any, mockConfig);
@@ -130,8 +137,10 @@ describe('processThought', () => {
     expect(summarizer.summarize).toHaveBeenCalled();
     // Should embed summary for parent
     expect(embedder.embed).toHaveBeenCalled();
-    // Multiple inserts: parent + chunks
-    expect(mockPool.query).toHaveBeenCalled();
+    // Chunk inserts go through client (transaction)
+    expect(mockPool.connect).toHaveBeenCalled();
+    expect(mockClient.query).toHaveBeenCalled();
+    expect(mockClient.release).toHaveBeenCalled();
   });
 
   it('skips summarizer when structured.summary is available (long content)', async () => {
@@ -142,6 +151,7 @@ describe('processThought', () => {
         summary: 'Pre-computed meeting summary.',
       },
     };
+    mockClient.query.mockResolvedValue({ rows: [] });
 
     await processThought(longText, 'fathom', mockPool as any, mockConfig, sourceMeta, 'fathom-123');
 
@@ -207,8 +217,10 @@ describe('processThought', () => {
 
   it('uses ON CONFLICT upsert for parent in long content', async () => {
     const longText = 'This is a long sentence about various topics. '.repeat(700);
+    mockClient.query.mockResolvedValue({ rows: [] });
     await processThought(longText, 'fathom', mockPool as any, mockConfig, null, 'fathom-456');
 
+    // Parent insert goes through pool (not client)
     const insertCall = mockPool.query.mock.calls[0];
     expect(insertCall[0]).toContain('ON CONFLICT (source_id)');
     expect(insertCall[0]).toContain('DO UPDATE SET');
@@ -216,10 +228,11 @@ describe('processThought', () => {
 
   it('deletes old chunks before re-inserting in long content', async () => {
     const longText = 'This is a long sentence about various topics. '.repeat(700);
+    mockClient.query.mockResolvedValue({ rows: [] });
     await processThought(longText, 'fathom', mockPool as any, mockConfig, null, 'fathom-789');
 
-    // Find the DELETE FROM thoughts WHERE parent_id call
-    const deleteCall = mockPool.query.mock.calls.find(
+    // Chunk cleanup (DELETE) now goes through client (transaction)
+    const deleteCall = mockClient.query.mock.calls.find(
       (call: any[]) => typeof call[0] === 'string' && call[0].includes('DELETE FROM thoughts WHERE parent_id')
     );
     expect(deleteCall).toBeDefined();

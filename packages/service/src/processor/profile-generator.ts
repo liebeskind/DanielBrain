@@ -130,16 +130,19 @@ export async function refreshStaleProfiles(
   pool: pg.Pool,
   config: ProfileConfig,
 ): Promise<number> {
-  // Find entities that need profile refresh
+  // Find entities that need profile refresh.
+  // Note: mention_count-based staleness is checked on-demand in get_entity,
+  // but excluded from the background poller to avoid infinite refresh loops
+  // (entities that hit the threshold stay there, causing re-refresh every cycle).
   const { rows } = await pool.query(
     `SELECT id, profile_summary, mention_count, updated_at
      FROM entities
-     WHERE profile_summary IS NULL
-        OR updated_at < NOW() - ($1 || ' days')::interval
-        OR mention_count >= $2
+     WHERE mention_count > 0
+       AND (profile_summary IS NULL
+            OR updated_at < NOW() - ($1 || ' days')::interval)
      ORDER BY mention_count DESC
-     LIMIT $3`,
-    [ENTITY_STALE_DAYS, ENTITY_STALE_MENTIONS, PROFILE_REFRESH_BATCH_SIZE]
+     LIMIT $2`,
+    [ENTITY_STALE_DAYS, PROFILE_REFRESH_BATCH_SIZE]
   );
 
   let refreshed = 0;

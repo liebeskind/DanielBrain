@@ -42,6 +42,7 @@ export async function handleDeepResearch(
   input: DeepResearchInput,
   pool: pg.Pool,
   config: DeepResearchConfig,
+  visibilityTags?: string[] | null,
 ) {
   const startTime = Date.now();
   console.log(`[deep_research] Starting: "${input.question}" (synthesize=${input.synthesize})`);
@@ -67,6 +68,7 @@ export async function handleDeepResearch(
       input.include_community_context,
       pool,
       config,
+      visibilityTags,
     );
 
     // Step 3: Synthesize (if requested)
@@ -174,6 +176,7 @@ async function executeSubQuestions(
   includeCommunities: boolean,
   pool: pg.Pool,
   config: DeepResearchConfig,
+  visibilityTags?: string[] | null,
 ): Promise<SubQuestionResult[]> {
   const results = await Promise.all(
     subQuestions.map(async (question) => {
@@ -185,6 +188,7 @@ async function executeSubQuestions(
           { query: question, limit: DEEP_RESEARCH_RESULTS_PER_QUERY, threshold: DEEP_RESEARCH_SIMILARITY_THRESHOLD },
           pool,
           config,
+          visibilityTags,
         ),
         includeCommunities
           ? handleGlobalSearch({ query: question, level: 0, limit: 3 }, pool, config)

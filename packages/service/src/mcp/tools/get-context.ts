@@ -43,21 +43,26 @@ interface GetContextResult {
 export async function handleGetContext(
   input: GetContextInput,
   pool: pg.Pool,
+  visibilityTags?: string[] | null,
 ): Promise<GetContextResult> {
-  // Step 1: Resolve entity names to IDs
+  // Step 1: Resolve entity names to IDs (batch query)
+  const canonicalNames = input.entities.map(name => name.toLowerCase().trim());
+  const { rows: entityRows } = await pool.query(
+    `SELECT DISTINCT ON (canonical_name) id, name, entity_type, canonical_name
+     FROM entities
+     WHERE canonical_name = ANY($1) OR aliases && $1
+     ORDER BY canonical_name, mention_count DESC`,
+    [canonicalNames]
+  );
+
+  // Map resolved entities back to requested names
   const resolvedEntities: ResolvedEntity[] = [];
-
-  for (const name of input.entities) {
-    const canonical = name.toLowerCase().trim();
-    const { rows } = await pool.query(
-      `SELECT id, name, entity_type FROM entities
-       WHERE canonical_name = $1 OR $1 = ANY(aliases)
-       LIMIT 1`,
-      [canonical]
+  for (const name of canonicalNames) {
+    const match = entityRows.find(
+      (e: any) => e.canonical_name === name || (Array.isArray(e.aliases) && e.aliases.includes(name))
     );
-
-    if (rows.length > 0) {
-      resolvedEntities.push(rows[0]);
+    if (match) {
+      resolvedEntities.push({ id: match.id, name: match.name, entity_type: match.entity_type });
     }
   }
 
@@ -74,6 +79,12 @@ export async function handleGetContext(
   const entityIds = resolvedEntities.map(e => e.id);
 
   // Step 2: Find thoughts linked to the resolved entities, ranked by overlap then recency
+  const thoughtParams: unknown[] = [entityIds, input.days_back, input.max_thoughts];
+  let visClause = '';
+  if (visibilityTags) {
+    thoughtParams.push(visibilityTags);
+    visClause = ` AND t.visibility && $${thoughtParams.length}`;
+  }
   const { rows: thoughtRows } = await pool.query(
     `SELECT t.id, t.content, t.summary, t.thought_type, t.source, t.created_at,
             t.action_items, t.topics,
@@ -84,12 +95,12 @@ export async function handleGetContext(
      JOIN entities e ON e.id = te.entity_id
      WHERE te.entity_id = ANY($1)
        AND t.created_at >= NOW() - ($2 || ' days')::interval
-       AND t.parent_id IS NULL
+       AND t.parent_id IS NULL${visClause}
      GROUP BY t.id, t.content, t.summary, t.thought_type, t.source, t.created_at,
               t.action_items, t.topics
      ORDER BY entity_overlap DESC, t.created_at DESC
      LIMIT $3`,
-    [entityIds, input.days_back, input.max_thoughts]
+    thoughtParams
   );
 
   // Step 3: Fetch relationship edges between resolved entities

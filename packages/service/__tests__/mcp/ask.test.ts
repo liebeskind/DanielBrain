@@ -117,6 +117,7 @@ describe('handleAsk', () => {
       expect.objectContaining({ days_back: 7, limit: 5 }),
       expect.anything(),
       expect.anything(),
+      undefined,
     );
   });
 
@@ -150,5 +151,90 @@ describe('handleAsk', () => {
 
     expect(result.thoughts[0].content.length).toBeLessThan(600);
     expect(result.thoughts[0].content).toContain('...');
+  });
+
+  it('returns partial data when semantic search fails but other sources succeed', async () => {
+    const { handleSemanticSearch } = await import('../../src/mcp/tools/semantic-search.js');
+    vi.mocked(handleSemanticSearch).mockRejectedValueOnce(new Error('Embedding service down'));
+
+    const mockPool = createSmartPool({
+      'FROM entities': {
+        rows: [{ id: 'e1', name: 'Stride', entity_type: 'company', profile_summary: 'Ed tech company' }],
+      },
+      'FROM communities': {
+        rows: [{ id: 'c1', title: 'Partnerships', summary: 'Key partnerships', member_count: 3, similarity: '0.65' }],
+      },
+      'FROM entity_communities': {
+        rows: [{ name: 'Stride', entity_type: 'company' }],
+      },
+      'FROM entity_relationships': {
+        rows: [],
+      },
+    });
+
+    // handleAsk calls Promise.all which will reject if any promise rejects
+    await expect(
+      handleAsk({ query: 'Stride partnership', limit: 10 }, mockPool as any, mockConfig),
+    ).rejects.toThrow('Embedding service down');
+  });
+
+  it('returns empty entities when no keyword entity matches found', async () => {
+    const mockPool = createSmartPool({
+      // Entity keyword match returns nothing
+      'FROM entities': { rows: [] },
+      // Community search also returns nothing
+      'FROM communities': { rows: [] },
+      // No entity relationships to fetch
+      'FROM entity_relationships': { rows: [] },
+    });
+
+    const result = await handleAsk(
+      { query: 'something with no matching entities', limit: 10 },
+      mockPool as any,
+      mockConfig,
+    );
+
+    expect(result.entities).toHaveLength(0);
+    // Thoughts still come from semantic search mock (default mock returns 1 result)
+    expect(result.thoughts).toHaveLength(1);
+  });
+
+  it('returns empty communities when community search returns no rows', async () => {
+    const mockPool = createSmartPool({
+      'FROM entities': { rows: [] },
+      // Community query returns empty
+      'FROM communities': { rows: [] },
+      'FROM entity_relationships': { rows: [] },
+    });
+
+    const result = await handleAsk(
+      { query: 'obscure topic', limit: 10 },
+      mockPool as any,
+      mockConfig,
+    );
+
+    expect(result.communities).toHaveLength(0);
+  });
+
+  it('passes visibilityTags through to semantic search', async () => {
+    const { handleSemanticSearch } = await import('../../src/mcp/tools/semantic-search.js');
+    vi.mocked(handleSemanticSearch).mockResolvedValueOnce([]);
+
+    const mockPool = createSmartPool({});
+    const visTags = ['company', 'user:u1'];
+
+    await handleAsk(
+      { query: 'test', limit: 10 },
+      mockPool as any,
+      mockConfig,
+      visTags,
+    );
+
+    expect(handleSemanticSearch).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      visTags,
+    );
   });
 });

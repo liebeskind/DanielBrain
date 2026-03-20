@@ -160,6 +160,7 @@ describe('buildContext', () => {
       { query: 'test query', limit: 15, threshold: 0.2 },
       pool,
       config,
+      undefined,
     );
   });
 

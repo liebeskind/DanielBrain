@@ -7,13 +7,21 @@ export function createProjectRoutes(pool: pg.Pool): Router {
   router.use(express.json());
 
   // List projects
-  router.get('/', async (_req, res) => {
+  router.get('/', async (req, res) => {
     try {
-      const { rows } = await pool.query(
-        `SELECT id, name, created_at, updated_at
-         FROM projects WHERE is_deleted = FALSE
-         ORDER BY name ASC`,
-      );
+      const userId = req.userContext?.userId;
+      const { rows } = userId
+        ? await pool.query(
+            `SELECT id, name, created_at, updated_at
+             FROM projects WHERE is_deleted = FALSE AND (user_id = $1 OR user_id IS NULL)
+             ORDER BY name ASC`,
+            [userId],
+          )
+        : await pool.query(
+            `SELECT id, name, created_at, updated_at
+             FROM projects WHERE is_deleted = FALSE
+             ORDER BY name ASC`,
+          );
       res.json(rows);
     } catch (err) {
       console.error('List projects error:', err);
@@ -30,9 +38,9 @@ export function createProjectRoutes(pool: pg.Pool): Router {
         return;
       }
       const { rows: [row] } = await pool.query(
-        `INSERT INTO projects (name) VALUES ($1)
+        `INSERT INTO projects (name, user_id) VALUES ($1, $2)
          RETURNING id, name, created_at, updated_at`,
-        [name.trim()],
+        [name.trim(), req.userContext?.userId ?? null],
       );
       res.json(row);
     } catch (err) {

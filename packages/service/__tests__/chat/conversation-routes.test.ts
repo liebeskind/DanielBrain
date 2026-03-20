@@ -239,6 +239,244 @@ describe('conversation routes', () => {
       expect(mockRelease).toHaveBeenCalledWith('chat');
     });
   });
+
+  describe('POST /:id/messages (SSE)', () => {
+    it('sets correct SSE headers', async () => {
+      const router = createConversationRoutes(mockPool, mockConfig);
+      const handler = getHandler(router, 'post', '/:id/messages');
+
+      // Conversation exists
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ id: 'conv-1' }] }) // conv check
+        .mockResolvedValueOnce({ rows: [] }) // insert user msg
+        .mockResolvedValueOnce({ rows: [{ role: 'user', content: 'hi' }] }) // history
+        .mockResolvedValueOnce({ rows: [] }) // insert assistant msg
+        .mockResolvedValueOnce({ rows: [{ count: '2' }] }) // count
+        .mockResolvedValueOnce({ rows: [] }) // update title
+        .mockResolvedValueOnce({ rows: [] }); // update timestamp
+
+      const res = {
+        status: vi.fn().mockReturnThis(),
+        json: vi.fn(),
+        setHeader: vi.fn(),
+        flushHeaders: vi.fn(),
+        write: vi.fn(),
+        end: vi.fn(),
+        writableEnded: false,
+      };
+
+      await handler({ params: { id: 'conv-1' }, body: { message: 'test' } } as any, res as any);
+
+      expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'text/event-stream');
+      expect(res.setHeader).toHaveBeenCalledWith('Cache-Control', 'no-cache');
+      expect(res.setHeader).toHaveBeenCalledWith('Connection', 'keep-alive');
+      expect(res.flushHeaders).toHaveBeenCalled();
+    });
+
+    it('auto-titles on first exchange (2 messages)', async () => {
+      const router = createConversationRoutes(mockPool, mockConfig);
+      const handler = getHandler(router, 'post', '/:id/messages');
+
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ id: 'conv-1' }] }) // conv check
+        .mockResolvedValueOnce({ rows: [] }) // insert user msg
+        .mockResolvedValueOnce({ rows: [{ role: 'user', content: 'What are the Q1 priorities for the engineering team?' }] }) // history
+        .mockResolvedValueOnce({ rows: [] }) // insert assistant msg
+        .mockResolvedValueOnce({ rows: [{ count: '2' }] }) // count = 2 → first exchange
+        .mockResolvedValueOnce({ rows: [] }) // update title
+        .mockResolvedValueOnce({ rows: [] }); // update timestamp
+
+      const res = {
+        status: vi.fn().mockReturnThis(),
+        json: vi.fn(),
+        setHeader: vi.fn(),
+        flushHeaders: vi.fn(),
+        write: vi.fn(),
+        end: vi.fn(),
+        writableEnded: false,
+      };
+
+      await handler({
+        params: { id: 'conv-1' },
+        body: { message: 'What are the Q1 priorities for the engineering team?' },
+      } as any, res as any);
+
+      // Find the UPDATE conversations SET title call
+      const titleUpdateCall = mockQuery.mock.calls.find(
+        (call: any[]) => typeof call[0] === 'string' && call[0].includes('SET title') && call[0].includes('title IS NULL')
+      );
+      expect(titleUpdateCall).toBeDefined();
+      // Title should be the user message (or truncated)
+      expect(titleUpdateCall![1][0]).toContain('Q1 priorities');
+    });
+
+    it('does not auto-title on subsequent exchanges', async () => {
+      const router = createConversationRoutes(mockPool, mockConfig);
+      const handler = getHandler(router, 'post', '/:id/messages');
+
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ id: 'conv-1' }] }) // conv check
+        .mockResolvedValueOnce({ rows: [] }) // insert user msg
+        .mockResolvedValueOnce({ rows: [{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'hello' }, { role: 'user', content: 'more' }] }) // history
+        .mockResolvedValueOnce({ rows: [] }) // insert assistant msg
+        .mockResolvedValueOnce({ rows: [{ count: '4' }] }) // count = 4 → not first exchange
+        .mockResolvedValueOnce({ rows: [] }); // update timestamp
+
+      const res = {
+        status: vi.fn().mockReturnThis(),
+        json: vi.fn(),
+        setHeader: vi.fn(),
+        flushHeaders: vi.fn(),
+        write: vi.fn(),
+        end: vi.fn(),
+        writableEnded: false,
+      };
+
+      await handler({ params: { id: 'conv-1' }, body: { message: 'more' } } as any, res as any);
+
+      // Should NOT find a title update call
+      const titleUpdateCall = mockQuery.mock.calls.find(
+        (call: any[]) => typeof call[0] === 'string' && call[0].includes('SET title') && call[0].includes('title IS NULL')
+      );
+      expect(titleUpdateCall).toBeUndefined();
+    });
+
+    it('sends LLM busy error when mutex unavailable', async () => {
+      mockAcquire.mockReturnValueOnce(false);
+      const router = createConversationRoutes(mockPool, mockConfig);
+      const handler = getHandler(router, 'post', '/:id/messages');
+
+      mockQuery.mockResolvedValueOnce({ rows: [{ id: 'conv-1' }] }); // conv check
+
+      const written: string[] = [];
+      const res = {
+        status: vi.fn().mockReturnThis(),
+        json: vi.fn(),
+        setHeader: vi.fn(),
+        flushHeaders: vi.fn(),
+        write: vi.fn((d: string) => written.push(d)),
+        end: vi.fn(),
+        writableEnded: false,
+      };
+
+      await handler({ params: { id: 'conv-1' }, body: { message: 'hi' } } as any, res as any);
+
+      expect(written.some(w => w.includes('LLM is busy'))).toBe(true);
+      expect(res.end).toHaveBeenCalled();
+    });
+
+    it('releases ollama mutex even on error', async () => {
+      const router = createConversationRoutes(mockPool, mockConfig);
+      const handler = getHandler(router, 'post', '/:id/messages');
+
+      mockQuery
+        .mockResolvedValueOnce({ rows: [{ id: 'conv-1' }] }) // conv check
+        .mockRejectedValueOnce(new Error('DB insert failed')); // save user msg fails
+
+      const res = {
+        status: vi.fn().mockReturnThis(),
+        json: vi.fn(),
+        setHeader: vi.fn(),
+        flushHeaders: vi.fn(),
+        write: vi.fn(),
+        end: vi.fn(),
+        writableEnded: false,
+      };
+
+      await handler({ params: { id: 'conv-1' }, body: { message: 'hi' } } as any, res as any);
+
+      expect(mockRelease).toHaveBeenCalledWith('chat');
+    });
+  });
+
+  describe('GET / (list)', () => {
+    it('caps limit at 100', async () => {
+      const router = createConversationRoutes(mockPool, mockConfig);
+      const handler = getHandler(router, 'get', '/');
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+
+      const res = { json: vi.fn() };
+      await handler({ query: { limit: '999' } } as any, res as any);
+
+      const params = mockQuery.mock.calls[0][1];
+      // Last param is the limit, capped at 100
+      const limitParam = params[params.length - 1];
+      expect(limitParam).toBeLessThanOrEqual(100);
+    });
+
+    it('scopes to user when userContext is present', async () => {
+      const router = createConversationRoutes(mockPool, mockConfig);
+      const handler = getHandler(router, 'get', '/');
+      mockQuery.mockResolvedValueOnce({ rows: [] });
+
+      const res = { json: vi.fn() };
+      await handler({
+        query: {},
+        userContext: { userId: 'u1', role: 'member', visibilityTags: ['company', 'user:u1'] },
+      } as any, res as any);
+
+      const sql = mockQuery.mock.calls[0][0];
+      expect(sql).toContain('user_id = $');
+    });
+  });
+
+  describe('POST / (create)', () => {
+    it('passes title and project_id to insert', async () => {
+      const router = createConversationRoutes(mockPool, mockConfig);
+      const handler = getHandler(router, 'post', '/');
+      const newConv = { id: '1', title: 'My Chat', project_id: 'proj-1', created_at: new Date(), updated_at: new Date() };
+      mockQuery.mockResolvedValueOnce({ rows: [newConv] });
+
+      const res = { json: vi.fn() };
+      await handler({ body: { title: 'My Chat', project_id: 'proj-1' } } as any, res as any);
+
+      const params = mockQuery.mock.calls[0][1];
+      expect(params[0]).toBe('My Chat');
+      expect(params[1]).toBe('proj-1');
+    });
+
+    it('handles null title and project_id', async () => {
+      const router = createConversationRoutes(mockPool, mockConfig);
+      const handler = getHandler(router, 'post', '/');
+      const newConv = { id: '2', title: null, project_id: null, created_at: new Date(), updated_at: new Date() };
+      mockQuery.mockResolvedValueOnce({ rows: [newConv] });
+
+      const res = { json: vi.fn() };
+      await handler({ body: {} } as any, res as any);
+
+      const params = mockQuery.mock.calls[0][1];
+      expect(params[0]).toBeNull();
+      expect(params[1]).toBeNull();
+    });
+  });
+
+  describe('PATCH /:id', () => {
+    it('updates project_id', async () => {
+      const router = createConversationRoutes(mockPool, mockConfig);
+      const handler = getHandler(router, 'patch', '/:id');
+      const updated = { id: '1', title: 'Chat', project_id: 'proj-2', created_at: new Date(), updated_at: new Date() };
+      mockQuery.mockResolvedValueOnce({ rows: [updated] });
+
+      const res = { json: vi.fn() };
+      await handler({ params: { id: '1' }, body: { project_id: 'proj-2' } } as any, res as any);
+
+      const sql = mockQuery.mock.calls[0][0];
+      expect(sql).toContain('project_id');
+      expect(res.json).toHaveBeenCalledWith(updated);
+    });
+
+    it('handles server error gracefully', async () => {
+      const router = createConversationRoutes(mockPool, mockConfig);
+      const handler = getHandler(router, 'patch', '/:id');
+      mockQuery.mockRejectedValueOnce(new Error('DB error'));
+
+      const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+      await handler({ params: { id: '1' }, body: { title: 'x' } } as any, res as any);
+
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith({ error: 'Internal error' });
+    });
+  });
 });
 
 describe('generateTitle', () => {
@@ -255,5 +493,34 @@ describe('generateTitle', () => {
 
   it('collapses whitespace', () => {
     expect(generateTitle('  hello   world  ')).toBe('hello world');
+  });
+
+  it('handles exactly 60 character message', () => {
+    const exact = 'a'.repeat(60);
+    expect(generateTitle(exact)).toBe(exact);
+    expect(generateTitle(exact)).not.toContain('...');
+  });
+
+  it('handles 61 character message (just over limit)', () => {
+    // 61 chars total — should truncate
+    const msg = 'a'.repeat(25) + ' ' + 'b'.repeat(35);
+    const result = generateTitle(msg);
+    expect(result.endsWith('...')).toBe(true);
+    expect(result.length).toBeLessThanOrEqual(63);
+  });
+
+  it('falls back to hard cut when no space after position 20', () => {
+    // A single long word with no spaces after position 20
+    const longWord = 'a'.repeat(70);
+    const result = generateTitle(longWord);
+    expect(result).toBe('a'.repeat(60) + '...');
+  });
+
+  it('handles empty string', () => {
+    expect(generateTitle('')).toBe('');
+  });
+
+  it('handles single word', () => {
+    expect(generateTitle('Hello')).toBe('Hello');
   });
 });

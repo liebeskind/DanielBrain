@@ -45,6 +45,7 @@ export async function handleGetEntity(
   input: GetEntityInput,
   pool: pg.Pool,
   _config: PipelineConfig,
+  visibilityTags?: string[] | null,
 ): Promise<GetEntityResult> {
   let entity: Entity;
 
@@ -83,15 +84,21 @@ export async function handleGetEntity(
     }
   }
 
-  // Fetch recent linked thoughts
+  // Fetch recent linked thoughts (filtered by visibility)
+  const thoughtParams: unknown[] = [entity.id];
+  let visClause = '';
+  if (visibilityTags) {
+    thoughtParams.push(visibilityTags);
+    visClause = ` AND t.visibility && $${thoughtParams.length}`;
+  }
   const { rows: thoughts } = await pool.query(
     `SELECT t.id, t.content, t.summary, t.thought_type, te.relationship, t.source, t.created_at
      FROM thought_entities te
      JOIN thoughts t ON t.id = te.thought_id
-     WHERE te.entity_id = $1
+     WHERE te.entity_id = $1${visClause}
      ORDER BY t.created_at DESC
      LIMIT 20`,
-    [entity.id]
+    thoughtParams
   );
 
   // Fetch connected entities (entities sharing thoughts + explicit relationship edges)

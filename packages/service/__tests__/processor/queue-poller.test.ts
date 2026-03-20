@@ -68,6 +68,21 @@ describe('calculateRetryAfter', () => {
     expect(diffMs).toBeGreaterThan(479000);
     expect(diffMs).toBeLessThan(721000);
   });
+
+  it('always returns a Date in the future', () => {
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      const result = calculateRetryAfter(attempt);
+      expect(result.getTime()).toBeGreaterThan(Date.now() - 100); // small tolerance for timing
+      expect(result).toBeInstanceOf(Date);
+    }
+  });
+
+  it('applies jitter so successive calls for the same attempt differ', () => {
+    const results = Array.from({ length: 20 }, () => calculateRetryAfter(1).getTime());
+    const unique = new Set(results);
+    // With 20 samples and random jitter, we should get multiple unique values
+    expect(unique.size).toBeGreaterThan(1);
+  });
 });
 
 describe('pollQueue', () => {
@@ -213,5 +228,117 @@ describe('pollQueue', () => {
     const failCall = mockPool.query.mock.calls[1];
     expect(failCall[0]).toContain('failed');
     expect(failCall[0]).toContain('retry_after = NULL');
+  });
+
+  it('processes multiple items in a batch', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({
+        rows: [
+          { id: 'q1', content: 'Thought A', source: 'slack', source_id: null, source_meta: null, originated_at: null, attempts: 0 },
+          { id: 'q2', content: 'Thought B', source: 'telegram', source_id: null, source_meta: null, originated_at: null, attempts: 0 },
+        ],
+      })
+      // q1: mark processing
+      .mockResolvedValueOnce({ rows: [] })
+      // q1: mark completed
+      .mockResolvedValueOnce({ rows: [] })
+      // q2: mark processing
+      .mockResolvedValueOnce({ rows: [] })
+      // q2: mark completed
+      .mockResolvedValueOnce({ rows: [] });
+
+    await pollQueue(mockPool as any, mockConfig);
+
+    expect(pipeline.processThought).toHaveBeenCalledTimes(2);
+    expect(pipeline.processThought).toHaveBeenCalledWith(
+      'Thought A', 'slack', mockPool, mockConfig, null, null, null,
+    );
+    expect(pipeline.processThought).toHaveBeenCalledWith(
+      'Thought B', 'telegram', mockPool, mockConfig, null, null, null,
+    );
+  });
+
+  it('parses source_meta from JSON string', async () => {
+    const sourceMeta = JSON.stringify({ channel: 'C123', ts: '1234.5678' });
+    mockPool.query
+      .mockResolvedValueOnce({
+        rows: [{ id: 'q1', content: 'Slack msg', source: 'slack', source_id: null, source_meta: sourceMeta, originated_at: null, attempts: 0 }],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await pollQueue(mockPool as any, mockConfig);
+
+    expect(pipeline.processThought).toHaveBeenCalledWith(
+      'Slack msg', 'slack', mockPool, mockConfig,
+      { channel: 'C123', ts: '1234.5678' },
+      null, null,
+    );
+  });
+
+  it('passes source_meta object directly if already parsed', async () => {
+    const sourceMeta = { chat_id: 12345, message_id: 67890 };
+    mockPool.query
+      .mockResolvedValueOnce({
+        rows: [{ id: 'q1', content: 'Telegram msg', source: 'telegram', source_id: null, source_meta: sourceMeta, originated_at: null, attempts: 0 }],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await pollQueue(mockPool as any, mockConfig);
+
+    expect(pipeline.processThought).toHaveBeenCalledWith(
+      'Telegram msg', 'telegram', mockPool, mockConfig,
+      sourceMeta,
+      null, null,
+    );
+  });
+
+  it('uses batchSize from config for LIMIT', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+    await pollQueue(mockPool as any, { ...mockConfig, batchSize: 10 });
+
+    const selectCall = mockPool.query.mock.calls[0];
+    expect(selectCall[1]).toEqual([10]);
+  });
+
+  it('marks processing with incremented attempts before calling pipeline', async () => {
+    mockPool.query
+      .mockResolvedValueOnce({
+        rows: [{ id: 'q1', content: 'Test', source: 'mcp', source_id: null, source_meta: null, originated_at: null, attempts: 1 }],
+      })
+      .mockResolvedValueOnce({ rows: [] }) // mark processing
+      .mockResolvedValueOnce({ rows: [] }); // mark completed
+
+    await pollQueue(mockPool as any, mockConfig);
+
+    // Second call should be the "mark as processing" update
+    const processingCall = mockPool.query.mock.calls[1];
+    expect(processingCall[0]).toContain('processing');
+    expect(processingCall[0]).toContain('attempts = attempts + 1');
+    expect(processingCall[1]).toEqual(['q1']);
+  });
+
+  it('stores thought_id in completed update', async () => {
+    vi.mocked(pipeline.processThought).mockResolvedValueOnce({
+      id: 'thought-999',
+      metadata: sampleMetadata,
+    });
+
+    mockPool.query
+      .mockResolvedValueOnce({
+        rows: [{ id: 'q1', content: 'Test', source: 'mcp', source_id: null, source_meta: null, originated_at: null, attempts: 0 }],
+      })
+      .mockResolvedValueOnce({ rows: [] }) // mark processing
+      .mockResolvedValueOnce({ rows: [] }); // mark completed
+
+    await pollQueue(mockPool as any, mockConfig);
+
+    const completedCall = mockPool.query.mock.calls[2];
+    expect(completedCall[0]).toContain('completed');
+    expect(completedCall[0]).toContain('thought_id');
+    expect(completedCall[1][0]).toBe('thought-999');
+    expect(completedCall[1][1]).toBe('q1');
   });
 });

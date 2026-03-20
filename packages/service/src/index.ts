@@ -7,7 +7,9 @@ import pg from 'pg';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { loadConfig } from './config.js';
 import { createMcpServer } from './mcp/server.js';
-import { verifyAccessKey } from './auth.js';
+import { verifyAccessKey, optionalAuth } from './auth.js';
+import { createUserRoutes } from './admin/user-routes.js';
+import { BrainOAuthProvider } from './auth/oauth-provider.js';
 import { verifySlackSignature } from './slack/verify.js';
 import { handleSlackEvent } from './slack/webhook.js';
 import { verifyTelegramSecret } from './telegram/verify.js';
@@ -34,13 +36,57 @@ import { detectCommunities } from './processor/community-detector.js';
 import { summarizeUnsummarizedCommunities } from './processor/community-summarizer.js';
 
 const config = loadConfig();
-const pool = new pg.Pool({ connectionString: config.databaseUrl });
+const pool = new pg.Pool({
+  connectionString: config.databaseUrl,
+  max: 20,
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 5_000,
+});
 
 const app = express();
 
 // --- Ensure data directories exist ---
 fs.mkdirSync(config.rawFilesDir, { recursive: true });
 fs.mkdirSync(config.transcribeDir, { recursive: true });
+
+// --- OAuth provider (optional — only when JWT_SECRET is configured) ---
+let oauthProvider: BrainOAuthProvider | null = null;
+
+async function setupOAuth() {
+  if (!config.jwtSecret) return;
+
+  const { mcpAuthRouter } = await import('@modelcontextprotocol/sdk/server/auth/router.js');
+
+  oauthProvider = new BrainOAuthProvider(pool, config.jwtSecret);
+  const issuerUrl = new URL(`http://localhost:${config.mcpPort}`);
+
+  // Mount SDK OAuth router (handles /.well-known, /authorize, /token, /register, /revoke)
+  app.use(mcpAuthRouter({
+    provider: oauthProvider,
+    issuerUrl,
+    scopesSupported: ['read', 'write'],
+  }));
+
+  // Custom callback route for the API-key login form
+  app.post('/authorize/callback', express.urlencoded({ extended: false }), async (req, res) => {
+    try {
+      await oauthProvider!.handleAuthorizeCallback(
+        req.body.api_key,
+        req.body.client_id,
+        req.body.redirect_uri,
+        req.body.code_challenge,
+        req.body.state || undefined,
+        res,
+      );
+    } catch (err) {
+      console.error('OAuth callback error:', err);
+      res.status(500).json({ error: 'Authorization failed' });
+    }
+  });
+
+  // Cleanup expired codes/tokens every 10 minutes
+  setInterval(() => oauthProvider!.cleanup(), 600_000);
+}
 
 // --- Health check ---
 app.get('/health', (_req, res) => {
@@ -148,21 +194,38 @@ app.use('/api/corrections', express.json(), createCorrectionRoutes(pool));
 // --- Admin dashboard ---
 app.use('/admin', createAdminRoutes(pool, config));
 
-// --- Chat interface ---
-app.use('/chat', createChatRoutes(pool, config));
+// --- User management API (admin) ---
+app.use('/admin/api/users', express.json(), createUserRoutes(pool));
 
-// --- API key auth middleware for MCP routes ---
-// Temporarily authless to support Claude Desktop (no custom header support).
-// Network-level access via Cloudflare Tunnel provides perimeter security.
-// Phase 9 will add per-user OAuth/JWT auth for MCP.
-app.use('/mcp', (req, res, next) => {
-  const key = req.headers['x-brain-key'] as string | undefined;
-  if (key && !verifyAccessKey(key, config.brainAccessKey)) {
-    res.status(403).json({ error: 'Forbidden' });
-    return;
+// --- Chat interface (optional auth for user scoping) ---
+app.use('/chat', optionalAuth(pool, config.brainAccessKey), createChatRoutes(pool, config));
+
+// --- Auth middleware for MCP routes ---
+// Bearer auth (JWT from OAuth) checked first if available, then API key / CF JWT fallback.
+app.use('/mcp', async (req, res, next) => {
+  if (oauthProvider && req.headers.authorization?.startsWith('Bearer ')) {
+    try {
+      const authInfo = await oauthProvider.verifyAccessToken(
+        req.headers.authorization.slice(7),
+      );
+      (req as any).auth = authInfo;
+      req.userContext = {
+        userId: authInfo.extra?.userId as string,
+        email: authInfo.extra?.email as string,
+        displayName: authInfo.extra?.displayName as string,
+        role: authInfo.extra?.role as any,
+        visibilityTags: (authInfo.extra?.visibilityTags as string[]) || [],
+      };
+      next();
+      return;
+    } catch {
+      res.status(401).json({ error: 'Invalid or expired token' });
+      return;
+    }
   }
   next();
 });
+app.use('/mcp', optionalAuth(pool, config.brainAccessKey));
 
 // --- MCP SSE transport ---
 const mcpServer = createMcpServer(pool, config);
@@ -343,18 +406,32 @@ async function preloadModels() {
 }
 
 // --- Graceful shutdown ---
+let isShuttingDown = false;
+
 function shutdown() {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
   console.log('Shutting down...');
+
+  // Stop all pollers
   clearInterval(pollInterval);
   clearInterval(profileInterval);
   if (linkedinInterval) clearInterval(linkedinInterval);
   if (relationshipInterval) clearInterval(relationshipInterval);
   if (communityDetectionInterval) clearInterval(communityDetectionInterval);
   if (communitySummaryInterval) clearInterval(communitySummaryInterval);
-  pool.end().then(() => {
-    console.log('Database pool closed');
+
+  // Wait for in-flight operations to settle, then close pool
+  // Short delay lets active poller iterations complete
+  setTimeout(async () => {
+    try {
+      await pool.end();
+      console.log('Database pool closed');
+    } catch (err) {
+      console.error('Error closing pool:', err);
+    }
     process.exit(0);
-  });
+  }, 2000);
 }
 
 process.on('SIGINT', shutdown);
@@ -391,13 +468,21 @@ function logStartup() {
   console.log(`  Chat: /chat`);
 }
 
-// HTTP server
-app.listen(config.mcpPort, () => {
-  console.log(`DanielBrain HTTP on port ${config.mcpPort}`);
-  console.log(`  MCP SSE: http://localhost:${config.mcpPort}/mcp/sse`);
-  logStartup();
-  startPollers();
-});
+// HTTP server — setup OAuth before listening
+setupOAuth()
+  .then(() => {
+    app.listen(config.mcpPort, () => {
+      console.log(`DanielBrain HTTP on port ${config.mcpPort}`);
+      console.log(`  MCP SSE: http://localhost:${config.mcpPort}/mcp/sse`);
+      if (oauthProvider) console.log('  OAuth: enabled');
+      logStartup();
+      startPollers();
+    });
+  })
+  .catch((err) => {
+    console.error('OAuth setup failed:', err);
+    process.exit(1);
+  });
 
 // HTTPS server (for MCP clients that require TLS, e.g. Claude Desktop over Tailscale)
 const certPath = path.resolve(process.cwd(), 'certs/cert.pem');

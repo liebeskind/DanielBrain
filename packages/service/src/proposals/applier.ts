@@ -104,65 +104,84 @@ async function applyEntityMerge(proposal: Proposal, pool: pg.Pool): Promise<void
     throw new Error('entity_merge proposal missing winner_id or loser_id');
   }
 
-  // Reassign all thought_entities from loser to winner
-  await pool.query(
-    `UPDATE thought_entities SET entity_id = $1
-     WHERE entity_id = $2
-     AND NOT EXISTS (
-       SELECT 1 FROM thought_entities
-       WHERE entity_id = $1 AND thought_id = thought_entities.thought_id AND relationship = thought_entities.relationship
-     )`,
-    [winner_id, loser_id]
-  );
+  // Wrap entire merge in a transaction to prevent partial state on failure
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
 
-  // Delete any remaining duplicate links
-  await pool.query(
-    `DELETE FROM thought_entities WHERE entity_id = $1`,
-    [loser_id]
-  );
+    // Reassign all thought_entities from loser to winner
+    await client.query(
+      `UPDATE thought_entities SET entity_id = $1
+       WHERE entity_id = $2
+       AND NOT EXISTS (
+         SELECT 1 FROM thought_entities te2
+         WHERE te2.entity_id = $1 AND te2.thought_id = thought_entities.thought_id AND te2.relationship = thought_entities.relationship
+       )`,
+      [winner_id, loser_id]
+    );
 
-  // Merge aliases from loser into winner
-  await pool.query(
-    `UPDATE entities SET
-       aliases = (SELECT array_agg(DISTINCT a) FROM unnest(e1.aliases || e2.aliases) AS a),
-       mention_count = e1.mention_count + e2.mention_count,
-       updated_at = NOW()
-     FROM entities e1, entities e2
-     WHERE entities.id = $1 AND e1.id = $1 AND e2.id = $2`,
-    [winner_id, loser_id]
-  );
+    // Delete any remaining duplicate links
+    await client.query(
+      `DELETE FROM thought_entities WHERE entity_id = $1`,
+      [loser_id]
+    );
 
-  // Reassign entity_relationships from loser to winner (both source_id and target_id)
-  // Update source_id references (skip if would create duplicate)
-  await pool.query(
-    `UPDATE entity_relationships SET source_id = $1
-     WHERE source_id = $2
-     AND NOT EXISTS (
-       SELECT 1 FROM entity_relationships er2
-       WHERE er2.source_id = $1 AND er2.target_id = entity_relationships.target_id AND er2.relationship = entity_relationships.relationship
-     )`,
-    [winner_id, loser_id]
-  );
+    // Merge aliases from loser into winner
+    await client.query(
+      `UPDATE entities SET
+         aliases = (SELECT array_agg(DISTINCT a) FROM unnest(e1.aliases || e2.aliases) AS a),
+         mention_count = e1.mention_count + e2.mention_count,
+         updated_at = NOW()
+       FROM entities e1, entities e2
+       WHERE entities.id = $1 AND e1.id = $1 AND e2.id = $2`,
+      [winner_id, loser_id]
+    );
 
-  // Update target_id references (skip if would create duplicate)
-  await pool.query(
-    `UPDATE entity_relationships SET target_id = $1
-     WHERE target_id = $2
-     AND NOT EXISTS (
-       SELECT 1 FROM entity_relationships er2
-       WHERE er2.source_id = entity_relationships.source_id AND er2.target_id = $1 AND er2.relationship = entity_relationships.relationship
-     )`,
-    [winner_id, loser_id]
-  );
+    // Reassign entity_relationships from loser to winner (both source_id and target_id)
+    // Update source_id references (skip if would create duplicate edge)
+    await client.query(
+      `UPDATE entity_relationships SET source_id = $1
+       WHERE source_id = $2
+       AND NOT EXISTS (
+         SELECT 1 FROM entity_relationships er2
+         WHERE er2.source_id = $1 AND er2.target_id = entity_relationships.target_id
+       )`,
+      [winner_id, loser_id]
+    );
 
-  // Delete any remaining duplicate relationship edges referencing loser
-  await pool.query(
-    `DELETE FROM entity_relationships WHERE source_id = $1 OR target_id = $1`,
-    [loser_id]
-  );
+    // Update target_id references (skip if would create duplicate edge)
+    await client.query(
+      `UPDATE entity_relationships SET target_id = $1
+       WHERE target_id = $2
+       AND NOT EXISTS (
+         SELECT 1 FROM entity_relationships er2
+         WHERE er2.source_id = entity_relationships.source_id AND er2.target_id = $1
+       )`,
+      [winner_id, loser_id]
+    );
 
-  // Delete loser entity
-  await pool.query(`DELETE FROM entities WHERE id = $1`, [loser_id]);
+    // Delete any remaining relationship edges referencing loser
+    await client.query(
+      `DELETE FROM entity_relationships WHERE source_id = $1 OR target_id = $1`,
+      [loser_id]
+    );
+
+    // Remove loser from community memberships
+    await client.query(
+      `DELETE FROM entity_communities WHERE entity_id = $1`,
+      [loser_id]
+    );
+
+    // Delete loser entity
+    await client.query(`DELETE FROM entities WHERE id = $1`, [loser_id]);
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 async function applyEntityRelationship(proposal: Proposal, pool: pg.Pool): Promise<void> {

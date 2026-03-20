@@ -234,4 +234,175 @@ describe('summarizeUnsummarizedCommunities', () => {
     const count = await summarizeUnsummarizedCommunities(mockPool as any, mockConfig);
     expect(count).toBe(1); // Only comm-2 succeeded
   });
+
+  it('continues when LLM throws (non-fatal per community)', async () => {
+    // 2 communities
+    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'comm-1' }, { id: 'comm-2' }] });
+
+    // comm-1: has members but LLM fails
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ id: 'e1', name: 'Dan', entity_type: 'person', profile_summary: null, mention_count: 10 }],
+    });
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // relationships
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ summary: 'Context', content: 'text', source: 'slack', created_at: new Date() }],
+    });
+    // LLM 500 error
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      text: () => Promise.resolve('Internal Server Error'),
+    });
+
+    // comm-2: succeeds
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ id: 'e2', name: 'Eve', entity_type: 'person', profile_summary: null, mention_count: 5 }],
+    });
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ summary: 'Other context', content: 'text2', source: 'fathom', created_at: new Date() }],
+    });
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      mockFetchResponse(JSON.stringify({ title: 'T2', summary: 'S2.', full_report: 'R2.' }))
+    );
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // update
+
+    const count = await summarizeUnsummarizedCommunities(mockPool as any, mockConfig);
+    expect(count).toBe(1); // Only comm-2 succeeded, comm-1 error was caught
+  });
+
+  it('respects COMMUNITY_SUMMARY_BATCH_SIZE limit in query', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+    await summarizeUnsummarizedCommunities(mockPool as any, mockConfig);
+
+    const [sql, params] = mockPool.query.mock.calls[0];
+    expect(sql).toContain('LIMIT $1');
+    // COMMUNITY_SUMMARY_BATCH_SIZE = 5
+    expect(params[0]).toBe(5);
+  });
+
+  it('orders unsummarized communities by member_count DESC', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+    await summarizeUnsummarizedCommunities(mockPool as any, mockConfig);
+
+    const [sql] = mockPool.query.mock.calls[0];
+    expect(sql).toContain('ORDER BY member_count DESC');
+  });
+
+  it('returns 0 when no unsummarized communities exist', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+    const count = await summarizeUnsummarizedCommunities(mockPool as any, mockConfig);
+    expect(count).toBe(0);
+  });
+});
+
+describe('summarizeCommunity edge cases', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal('fetch', vi.fn());
+  });
+
+  it('uses content fallback when thought has no summary', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ id: 'e1', name: 'Alice', entity_type: 'person', profile_summary: null, mention_count: 5 }],
+    });
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // relationships
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{
+        summary: null,
+        content: 'Very long content that should be sliced to first 300 chars...' + 'x'.repeat(500),
+        source: 'manual',
+        created_at: new Date(),
+      }],
+    });
+
+    const llmResponse = JSON.stringify({
+      title: 'Test',
+      summary: 'Test summary.',
+      full_report: 'Test report.',
+    });
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(mockFetchResponse(llmResponse));
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // update
+
+    await summarizeCommunity('comm-1', mockPool as any, mockConfig);
+
+    // Verify the prompt sent to LLM uses content slice (not null summary)
+    const fetchCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body);
+    const userMsg = body.messages[1].content;
+    expect(userMsg).toContain('Very long content');
+    expect(userMsg).not.toContain('null');
+  });
+
+  it('shows "No relationship descriptions" text when no relationships exist', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ id: 'e1', name: 'Alice', entity_type: 'person', profile_summary: null, mention_count: 5 }],
+    });
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // no relationships
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ summary: 'Context', content: 'text', source: 'slack', created_at: new Date() }],
+    });
+
+    const llmResponse = JSON.stringify({
+      title: 'Solo',
+      summary: 'Solo member.',
+      full_report: 'Solo report.',
+    });
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(mockFetchResponse(llmResponse));
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+    await summarizeCommunity('comm-1', mockPool as any, mockConfig);
+
+    const fetchCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body);
+    const userMsg = body.messages[1].content;
+    expect(userMsg).toContain('No relationship descriptions available yet.');
+  });
+
+  it('includes profile_summary in member text when available', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ id: 'e1', name: 'Alice', entity_type: 'person', profile_summary: 'VP of Engineering at Acme', mention_count: 10 }],
+    });
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ summary: 'Context', content: 'text', source: 'slack', created_at: new Date() }],
+    });
+
+    const llmResponse = JSON.stringify({
+      title: 'Test',
+      summary: 'Test summary.',
+      full_report: 'Test report.',
+    });
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(mockFetchResponse(llmResponse));
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+    await summarizeCommunity('comm-1', mockPool as any, mockConfig);
+
+    const fetchCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body);
+    const userMsg = body.messages[1].content;
+    expect(userMsg).toContain('VP of Engineering at Acme');
+  });
+
+  it('throws when LLM returns HTTP error', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ id: 'e1', name: 'Alice', entity_type: 'person', profile_summary: null, mention_count: 5 }],
+    });
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ summary: 'Context', content: 'text', source: 'slack', created_at: new Date() }],
+    });
+
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      text: () => Promise.resolve('Service Unavailable'),
+    });
+
+    await expect(summarizeCommunity('comm-1', mockPool as any, mockConfig))
+      .rejects.toThrow('Ollama community summary failed (503)');
+  });
 });

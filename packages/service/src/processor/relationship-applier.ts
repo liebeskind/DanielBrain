@@ -1,12 +1,6 @@
 import type pg from 'pg';
 import type { ExtractedRelationship } from './relationship-extractor.js';
-
-/**
- * Normalize entity name for matching (lowercase, trim).
- */
-function normalizeForMatch(name: string): string {
-  return name.toLowerCase().trim();
-}
+import { normalizeName } from './entity-resolver.js';
 
 /**
  * Apply explicitly extracted relationships to the entity_relationships table.
@@ -22,8 +16,8 @@ export async function applyExtractedRelationships(
   for (const rel of relationships) {
     try {
       // Resolve entity names to IDs
-      const sourceNorm = normalizeForMatch(rel.source);
-      const targetNorm = normalizeForMatch(rel.target);
+      const sourceNorm = normalizeName(rel.source);
+      const targetNorm = normalizeName(rel.target);
 
       const { rows: sourceRows } = await pool.query(
         `SELECT id FROM entities WHERE canonical_name = $1 LIMIT 1`,

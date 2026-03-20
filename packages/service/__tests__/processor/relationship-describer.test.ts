@@ -275,4 +275,187 @@ describe('describeUndescribedRelationships', () => {
     const count = await describeUndescribedRelationships(mockPool as any, mockConfig);
     expect(count).toBe(1); // Only edge-1 succeeded
   });
+
+  it('batch query filters by weight >= 2', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+    await describeUndescribedRelationships(mockPool as any, mockConfig);
+
+    const [sql] = mockPool.query.mock.calls[0];
+    expect(sql).toContain('weight >= 2');
+  });
+
+  it('batch query limits by RELATIONSHIP_DESCRIPTION_BATCH_SIZE', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+    await describeUndescribedRelationships(mockPool as any, mockConfig);
+
+    const [sql, params] = mockPool.query.mock.calls[0];
+    expect(sql).toContain('LIMIT $1');
+    // RELATIONSHIP_DESCRIPTION_BATCH_SIZE = 5
+    expect(params[0]).toBe(5);
+  });
+
+  it('batch continues processing when individual edge throws', async () => {
+    // 2 edges
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ id: 'edge-1' }, { id: 'edge-2' }],
+    });
+
+    // Edge 1: fetch throws
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{
+        id: 'edge-1', source_id: 's1', target_id: 't1',
+        source_name: 'A', source_type: 'person', target_name: 'B', target_type: 'person',
+        description: null, weight: 3, source_thought_ids: ['t1'],
+      }],
+    });
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ content: 'ctx', summary: 'sum', source: 'slack', created_at: new Date() }],
+    });
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('LLM timeout'));
+
+    // Edge 2: succeeds
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{
+        id: 'edge-2', source_id: 's2', target_id: 't2',
+        source_name: 'C', source_type: 'person', target_name: 'D', target_type: 'person',
+        description: null, weight: 4, source_thought_ids: ['t2'],
+      }],
+    });
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ content: 'ctx2', summary: 'sum2', source: 'fathom', created_at: new Date() }],
+    });
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // save
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(mockFetchResponse('C and D collaborate.'));
+
+    const count = await describeUndescribedRelationships(mockPool as any, mockConfig);
+    expect(count).toBe(1); // Edge 2 succeeded, edge 1 failed gracefully
+  });
+
+  it('batch orders by weight DESC', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+    await describeUndescribedRelationships(mockPool as any, mockConfig);
+
+    const [sql] = mockPool.query.mock.calls[0];
+    expect(sql).toContain('ORDER BY weight DESC');
+  });
+});
+
+describe('describeRelationship additional cases', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal('fetch', vi.fn());
+  });
+
+  it('handles LLM timeout (fetch rejects with abort error)', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{
+        id: 'edge-1', source_id: 's1', target_id: 't1',
+        source_name: 'Alice', source_type: 'person', target_name: 'Bob', target_type: 'person',
+        description: null, weight: 3, source_thought_ids: ['t1'],
+        source_profile: null, target_profile: null,
+      }],
+    });
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ content: 'context', summary: 'sum', source: 'slack', created_at: new Date() }],
+    });
+
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new DOMException('The operation was aborted', 'AbortError')
+    );
+
+    await expect(describeRelationship('edge-1', mockPool as any, mockConfig))
+      .rejects.toThrow('aborted');
+  });
+
+  it('handles LLM returning non-ok response', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{
+        id: 'edge-1', source_id: 's1', target_id: 't1',
+        source_name: 'Alice', source_type: 'person', target_name: 'Bob', target_type: 'person',
+        description: null, weight: 3, source_thought_ids: ['t1'],
+        source_profile: null, target_profile: null,
+      }],
+    });
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ content: 'context', summary: 'sum', source: 'slack', created_at: new Date() }],
+    });
+
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      text: () => Promise.resolve('Service Unavailable'),
+    });
+
+    await expect(describeRelationship('edge-1', mockPool as any, mockConfig))
+      .rejects.toThrow('Ollama relationship description failed (503)');
+  });
+
+  it('returns null when edge has no source_thought_ids', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{
+        id: 'edge-1', source_id: 's1', target_id: 't1',
+        source_name: 'Alice', source_type: 'person', target_name: 'Bob', target_type: 'person',
+        description: null, weight: 3, source_thought_ids: null,
+        source_profile: null, target_profile: null,
+      }],
+    });
+
+    const result = await describeRelationship('edge-1', mockPool as any, mockConfig);
+    expect(result).toBeNull();
+  });
+
+  it('contradiction check returns null on unparseable LLM response', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{
+        id: 'edge-1', source_id: 's1', target_id: 't1',
+        source_name: 'Alice', source_type: 'person', target_name: 'Bob', target_type: 'person',
+        description: 'They work together.',
+        weight: 5, source_thought_ids: ['t1'],
+        relationship: 'co_occurs',
+      }],
+    });
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ content: 'ctx', summary: 'sum', source: 'slack', created_at: new Date() }],
+    });
+
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      mockFetchResponse('I cannot determine the relationship. Maybe they work together?')
+    );
+
+    const result = await describeRelationship('edge-1', mockPool as any, mockConfig);
+    // Unparseable contradiction response returns null
+    expect(result).toBeNull();
+  });
+
+  it('uses summary over content for thought context when available', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{
+        id: 'edge-1', source_id: 's1', target_id: 't1',
+        source_name: 'Alice', source_type: 'person', target_name: 'Acme', target_type: 'company',
+        description: null, weight: 3, source_thought_ids: ['t1'],
+        source_profile: null, target_profile: null,
+      }],
+    });
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{
+        content: 'Very long raw content that is not as useful',
+        summary: 'Alice joined Acme as VP',
+        source: 'fathom',
+        created_at: new Date(),
+      }],
+    });
+    mockPool.query.mockResolvedValueOnce({ rows: [] }); // save
+
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(mockFetchResponse('Alice is VP at Acme.'));
+
+    await describeRelationship('edge-1', mockPool as any, mockConfig);
+
+    const fetchCall = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse(fetchCall[1].body);
+    const userMsg = body.messages[1].content;
+    expect(userMsg).toContain('Alice joined Acme as VP');
+  });
 });

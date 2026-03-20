@@ -66,6 +66,7 @@ export async function buildContext(
   userMessage: string,
   pool: pg.Pool,
   config: ContextConfig,
+  visibilityTags?: string[] | null,
 ): Promise<ContextResult> {
   // Run semantic search and entity lookup in parallel
   const [searchResults, entityResults] = await Promise.all([
@@ -73,6 +74,7 @@ export async function buildContext(
       { query: userMessage, limit: CHAT_CONTEXT_SEARCH_LIMIT, threshold: CHAT_CONTEXT_SEARCH_THRESHOLD },
       pool,
       config,
+      visibilityTags,
     ),
     findMatchingEntities(userMessage, pool),
   ]);

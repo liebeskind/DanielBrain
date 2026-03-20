@@ -33,6 +33,7 @@ interface GetTimelineResult {
 export async function handleGetTimeline(
   input: GetTimelineInput,
   pool: pg.Pool,
+  visibilityTags?: string[] | null,
 ): Promise<GetTimelineResult> {
   // Resolve entity
   let entityId: string;
@@ -75,6 +76,11 @@ export async function handleGetTimeline(
   if (input.sources && input.sources.length > 0) {
     conditions.push(`t.source = ANY($${paramIdx})`);
     params.push(input.sources);
+    paramIdx++;
+  }
+  if (visibilityTags) {
+    conditions.push(`t.visibility && $${paramIdx}`);
+    params.push(visibilityTags);
     paramIdx++;
   }
 

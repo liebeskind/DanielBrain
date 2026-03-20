@@ -239,6 +239,31 @@ export interface EntityCommunity {
   level: number;
 }
 
+// --- User types (Phase 9) ---
+
+export type Role = 'owner' | 'admin' | 'member';
+
+export interface User {
+  id: string;
+  email: string;
+  display_name: string;
+  role: Role;
+  entity_id: string | null;
+  slack_user_id: string | null;
+  telegram_user_id: string | null;
+  active: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface UserContext {
+  userId: string;
+  email: string;
+  displayName: string;
+  role: Role;
+  visibilityTags: string[];
+}
+
 export interface SearchResult {
   id: string;
   content: string;

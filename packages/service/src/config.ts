@@ -23,6 +23,7 @@ const configSchema = z.object({
   whisperBaseUrl: z.string().default('http://localhost:8001'),
   whisperModel: z.string().default('large-v3'),
   transcribeDir: z.string().default('./data/transcriptions'),
+  jwtSecret: z.string().min(32).optional(),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -51,5 +52,6 @@ export function loadConfig(): Config {
     whisperBaseUrl: process.env.WHISPER_BASE_URL || undefined,
     whisperModel: process.env.WHISPER_MODEL || undefined,
     transcribeDir: process.env.TRANSCRIBE_DIR || undefined,
+    jwtSecret: process.env.JWT_SECRET || undefined,
   });
 }

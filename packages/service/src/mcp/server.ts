@@ -37,6 +37,16 @@ import { handleAsk } from './tools/ask.js';
 import { handleDeepResearch } from './tools/deep-research.js';
 import type { Config } from '../config.js';
 
+/**
+ * Extract visibility tags from the MCP extra.authInfo parameter.
+ * Returns null (no filtering) when no auth info or owner role.
+ */
+function getVisibility(extra: any): string[] | null {
+  const tags = extra?.authInfo?.extra?.visibilityTags;
+  if (!tags || !Array.isArray(tags) || tags.length === 0) return null;
+  return tags;
+}
+
 export function createMcpServer(pool: pg.Pool, config: Config): McpServer {
   const server = new McpServer({
     name: 'DanielBrain',
@@ -58,9 +68,9 @@ EXAMPLE: ask({ query: "What do we know about the Stride partnership?", limit: 10
       days_back: askInputSchema.shape.days_back,
       limit: askInputSchema.shape.limit,
     },
-    async (params) => {
+    async (params, extra) => {
       const input = askInputSchema.parse(params);
-      const result = await handleAsk(input, pool, config);
+      const result = await handleAsk(input, pool, config, getVisibility(extra));
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
       };
@@ -79,10 +89,10 @@ EXAMPLE: deep_research({ question: "What are the key decisions made about the K1
       include_community_context: deepResearchInputSchema.shape.include_community_context,
       synthesize: deepResearchInputSchema.shape.synthesize,
     },
-    async (params) => {
+    async (params, extra) => {
       const input = deepResearchInputSchema.parse(params);
       try {
-        const result = await handleDeepResearch(input, pool, config);
+        const result = await handleDeepResearch(input, pool, config, getVisibility(extra));
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
           isError: 'error' in result,
@@ -118,9 +128,9 @@ EXAMPLE: semantic_search({ query: "budget planning for Q2", person: "Chris", day
       source: semanticSearchInputSchema.shape.source,
       sources: semanticSearchInputSchema.shape.sources,
     },
-    async (params) => {
+    async (params, extra) => {
       const input = semanticSearchInputSchema.parse(params);
-      const results = await handleSemanticSearch(input, pool, config);
+      const results = await handleSemanticSearch(input, pool, config, getVisibility(extra));
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
       };
@@ -139,9 +149,9 @@ EXAMPLE: list_recent({ days: 7, source: "fathom", limit: 10 })`,
       thought_type: listRecentInputSchema.shape.thought_type,
       source: listRecentInputSchema.shape.source,
     },
-    async (params) => {
+    async (params, extra) => {
       const input = listRecentInputSchema.parse(params);
-      const results = await handleListRecent(input, pool);
+      const results = await handleListRecent(input, pool, getVisibility(extra));
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
       };
@@ -157,9 +167,9 @@ EXAMPLE: stats({ period: "month" })`,
     {
       period: statsInputSchema.shape.period,
     },
-    async (params) => {
+    async (params, extra) => {
       const input = statsInputSchema.parse(params);
-      const results = await handleStats(input, pool);
+      const results = await handleStats(input, pool, getVisibility(extra));
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
       };
@@ -225,7 +235,7 @@ EXAMPLE: get_entity({ name: "Chris Psiaki" })`,
       name: z.string().min(1).optional().describe('Name to search for'),
       entity_type: z.enum(['person', 'company', 'topic', 'product', 'project', 'place']).optional().describe('Filter by entity type'),
     },
-    async (params) => {
+    async (params, extra) => {
       if (!params.entity_id && !params.name) {
         return {
           content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Either entity_id or name must be provided' }) }],
@@ -233,7 +243,7 @@ EXAMPLE: get_entity({ name: "Chris Psiaki" })`,
         };
       }
       try {
-        const result = await handleGetEntity(params, pool, config);
+        const result = await handleGetEntity(params, pool, config, getVisibility(extra));
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
         };
@@ -279,9 +289,9 @@ EXAMPLE: get_context({ entities: ["Chris Psiaki", "K12 Zone"], days_back: 30 })`
       include_action_items: getContextInputSchema.shape.include_action_items,
       max_thoughts: getContextInputSchema.shape.max_thoughts,
     },
-    async (params) => {
+    async (params, extra) => {
       const input = getContextInputSchema.parse(params);
-      const result = await handleGetContext(input, pool);
+      const result = await handleGetContext(input, pool, getVisibility(extra));
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
       };
@@ -301,7 +311,7 @@ EXAMPLE: get_timeline({ entity_name: "Topia", days_back: 60, sources: ["fathom"]
       limit: z.number().int().min(1).max(100).default(50).describe('Max entries to return'),
       sources: z.array(z.string()).optional().describe('Filter by source (e.g., ["slack", "telegram"])'),
     },
-    async (params) => {
+    async (params, extra) => {
       if (!params.entity_id && !params.entity_name) {
         return {
           content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Either entity_id or entity_name must be provided' }) }],
@@ -309,7 +319,7 @@ EXAMPLE: get_timeline({ entity_name: "Topia", days_back: 60, sources: ["fathom"]
         };
       }
       try {
-        const result = await handleGetTimeline(params as any, pool);
+        const result = await handleGetTimeline(params as any, pool, getVisibility(extra));
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
         };

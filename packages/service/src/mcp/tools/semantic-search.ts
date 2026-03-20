@@ -32,13 +32,14 @@ interface SearchResultWithParent extends SearchResult {
 export async function handleSemanticSearch(
   input: SemanticSearchInput,
   pool: pg.Pool,
-  config: EmbedConfig
+  config: EmbedConfig,
+  visibilityTags?: string[] | null,
 ): Promise<SearchResultWithParent[]> {
   const queryEmbedding = await embedQuery(input.query, config);
   const vectorStr = `[${queryEmbedding.join(',')}]`;
 
   const { rows } = await pool.query(
-    `SELECT * FROM hybrid_search($1::vector, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+    `SELECT * FROM hybrid_search($1::vector, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
     [
       vectorStr,
       input.query,
@@ -51,6 +52,7 @@ export async function handleSemanticSearch(
       RRF_K,
       HYBRID_VECTOR_WEIGHT,
       HYBRID_BM25_WEIGHT,
+      visibilityTags ?? null,
     ]
   );
 
@@ -63,28 +65,32 @@ export async function handleSemanticSearch(
     filtered = rows.filter((r: { source: string }) => sourceSet.has(r.source));
   }
 
-  // For chunks, fetch parent context
-  const results: SearchResultWithParent[] = [];
-  for (const row of filtered) {
-    const result: SearchResultWithParent = { ...row };
+  // Batch-fetch parent context for all chunks (avoids N+1 queries)
+  const parentIds = [...new Set(filtered.filter((r: any) => r.parent_id).map((r: any) => r.parent_id))];
+  const parentMap = new Map<string, { summary: string | null; thought_type: string | null; people: string[]; topics: string[] }>();
 
-    if (row.parent_id) {
-      const { rows: parentRows } = await pool.query(
-        `SELECT id, summary, thought_type, people, topics FROM thoughts WHERE id = $1`,
-        [row.parent_id]
-      );
-      if (parentRows.length > 0) {
-        result.parent_context = {
-          summary: parentRows[0].summary,
-          thought_type: parentRows[0].thought_type,
-          people: parentRows[0].people,
-          topics: parentRows[0].topics,
-        };
-      }
+  if (parentIds.length > 0) {
+    const { rows: parentRows } = await pool.query(
+      `SELECT id, summary, thought_type, people, topics FROM thoughts WHERE id = ANY($1)`,
+      [parentIds]
+    );
+    for (const p of parentRows) {
+      parentMap.set(p.id, {
+        summary: p.summary,
+        thought_type: p.thought_type,
+        people: p.people,
+        topics: p.topics,
+      });
     }
-
-    results.push(result);
   }
+
+  const results: SearchResultWithParent[] = filtered.map((row: any) => {
+    const result: SearchResultWithParent = { ...row };
+    if (row.parent_id) {
+      result.parent_context = parentMap.get(row.parent_id) ?? undefined;
+    }
+    return result;
+  });
 
   return results;
 }

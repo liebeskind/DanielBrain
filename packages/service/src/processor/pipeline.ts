@@ -5,6 +5,7 @@ import { extractMetadata } from './extractor.js';
 import { chunkText, needsChunking } from './chunker.js';
 import { summarize } from './summarizer.js';
 import { resolveEntities } from './entity-resolver.js';
+import { computeSourceVisibility } from '../visibility.js';
 
 interface PipelineConfig {
   ollamaBaseUrl: string;
@@ -71,12 +72,13 @@ export async function processThought(
   config: PipelineConfig,
   sourceMeta?: Record<string, unknown> | null,
   sourceId?: string | null,
-  createdAt?: Date | null
+  createdAt?: Date | null,
+  ownerId?: string | null,
 ): Promise<ProcessResult> {
   if (!needsChunking(content)) {
-    return processShort(content, source, pool, config, sourceMeta, sourceId, createdAt);
+    return processShort(content, source, pool, config, sourceMeta, sourceId, createdAt, ownerId);
   } else {
-    return processLong(content, source, pool, config, sourceMeta, sourceId, createdAt);
+    return processLong(content, source, pool, config, sourceMeta, sourceId, createdAt, ownerId);
   }
 }
 
@@ -87,9 +89,11 @@ async function processShort(
   config: PipelineConfig,
   sourceMeta?: Record<string, unknown> | null,
   sourceId?: string | null,
-  createdAt?: Date | null
+  createdAt?: Date | null,
+  ownerId?: string | null,
 ): Promise<ProcessResult> {
   const { structured } = parseEnvelope(sourceMeta);
+  const visibility = computeSourceVisibility(source, sourceMeta, ownerId);
 
   // Parallel: embed + extract metadata
   const [embedding, metadata] = await Promise.all([
@@ -140,7 +144,7 @@ async function processShort(
       source,
       sourceId ?? null,
       sourceMeta ? JSON.stringify(sourceMeta) : null,
-      ['owner'],
+      visibility,
       metadata.key_decisions,
       metadata.key_insights,
       metadata.themes,
@@ -169,10 +173,12 @@ async function processLong(
   config: PipelineConfig,
   sourceMeta?: Record<string, unknown> | null,
   sourceId?: string | null,
-  createdAt?: Date | null
+  createdAt?: Date | null,
+  ownerId?: string | null,
 ): Promise<ProcessResult> {
   const ts = createdAt ?? new Date();
   const { structured } = parseEnvelope(sourceMeta);
+  const visibility = computeSourceVisibility(source, sourceMeta, ownerId);
 
   // Step 1: Insert parent thought (raw text, no embedding yet) — upsert for retry idempotency
   const { rows: parentRows } = await pool.query(
@@ -181,7 +187,7 @@ async function processLong(
      ON CONFLICT (source_id) WHERE source_id IS NOT NULL
      DO UPDATE SET content = EXCLUDED.content, source_meta = EXCLUDED.source_meta, updated_at = NOW()
      RETURNING id`,
-    [content, source, sourceId ?? null, sourceMeta ? JSON.stringify(sourceMeta) : null, ['owner'], ts]
+    [content, source, sourceId ?? null, sourceMeta ? JSON.stringify(sourceMeta) : null, visibility, ts]
   );
   const parentId = parentRows[0].id;
 
@@ -232,21 +238,31 @@ async function processLong(
   );
 
   // Step 4: Clean up old chunks (idempotent retry) then chunk + batch-embed
-  await pool.query(`DELETE FROM thoughts WHERE parent_id = $1`, [parentId]);
   const chunks = chunkText(content);
   const chunkEmbeddings = await embedBatch(chunks, config);
 
-  await Promise.all(
-    chunks.map(async (chunk, index) => {
-      const chunkVectorStr = `[${chunkEmbeddings[index].join(',')}]`;
+  // Write all chunks in a transaction to prevent partial state
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`DELETE FROM thoughts WHERE parent_id = $1`, [parentId]);
 
-      await pool.query(
+    for (let index = 0; index < chunks.length; index++) {
+      const chunkVectorStr = `[${chunkEmbeddings[index].join(',')}]`;
+      await client.query(
         `INSERT INTO thoughts (content, embedding, parent_id, chunk_index, source, visibility, created_at, processed_at)
          VALUES ($1, $2::vector, $3, $4, $5, $6, $7, NOW())`,
-        [chunk, chunkVectorStr, parentId, index, source, ['owner'], ts]
+        [chunks[index], chunkVectorStr, parentId, index, source, visibility, ts]
       );
-    })
-  );
+    }
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 
   // Non-blocking entity resolution
   try {

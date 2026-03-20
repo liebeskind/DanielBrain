@@ -9,9 +9,10 @@ interface ListRecentInput {
 
 export async function handleListRecent(
   input: ListRecentInput,
-  pool: pg.Pool
+  pool: pg.Pool,
+  visibilityTags?: string[] | null,
 ) {
-  const params: (number | string)[] = [input.days, input.limit];
+  const params: (number | string | string[])[] = [input.days, input.limit];
   let filterClauses = '';
 
   if (input.thought_type) {
@@ -21,6 +22,10 @@ export async function handleListRecent(
   if (input.source) {
     params.push(input.source);
     filterClauses += ` AND source = $${params.length}`;
+  }
+  if (visibilityTags) {
+    params.push(visibilityTags);
+    filterClauses += ` AND visibility && $${params.length}`;
   }
 
   const { rows } = await pool.query(
