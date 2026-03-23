@@ -99,8 +99,11 @@ Source-determined: public channels → `['company']`, DMs → `['user:U1', 'user
 ### Hybrid Retrieval
 `hybrid_search()` SQL function: vector cosine + BM25 via Reciprocal Rank Fusion (k=60). 3x oversampling, FULL OUTER JOIN dedup. Stop-words degrade gracefully to vector-only.
 
-### Chunking
-2000 estimated token threshold. Chunks ~1000 tokens with 100-token overlap. Parent thought gets summary embedding; child chunks get individual embeddings.
+### Semantic Chunking
+Structural hierarchy (LangChain RecursiveCharacterTextSplitter pattern): code blocks (atomic) → speaker turns (meeting source) → headings → paragraphs → list blocks → sentences. 500 token target, 50 overlap. `SourceHint` from `channel_type`: Fathom meetings get speaker-turn splitting. Parent gets summary embedding; child chunks get individual embeddings.
+
+### Intent-Aware Retrieval
+Khoj-inspired two-layer hybrid: Layer 1 (heuristic fast-path) detects temporal keywords ("last week" → days_back=7) and action keywords ("action items" → thought_type filter). Layer 2 (LLM via llama3.3:70b) classifies ambiguous queries with structured JSON output + optional query reformulation. Wired into `handleAsk` (MCP) and `buildContext` (chat). User-provided params always override intent adjustments.
 
 ### HubSpot Direct Metadata Bypass
 Structured CRM records (contacts, companies, deals) skip LLM extraction via `directMetadata` in `source_meta`. Notes use full pipeline. Per-object visibility branches on `source_meta.object_type`.

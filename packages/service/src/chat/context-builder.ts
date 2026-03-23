@@ -1,5 +1,6 @@
 import type pg from 'pg';
 import { handleSemanticSearch } from '../mcp/tools/semantic-search.js';
+import { detectIntent } from '../processor/intent-detector.js';
 import {
   CHAT_CONTEXT_SEARCH_LIMIT,
   CHAT_CONTEXT_SEARCH_THRESHOLD,
@@ -12,6 +13,7 @@ import {
 interface ContextConfig {
   ollamaBaseUrl: string;
   embeddingModel: string;
+  extractionModel: string;
   rerankerModel?: string;
 }
 
@@ -69,16 +71,22 @@ export async function buildContext(
   config: ContextConfig,
   visibilityTags?: string[] | null,
 ): Promise<ContextResult> {
-  // Run semantic search and entity lookup in parallel
-  const [searchResults, entityResults] = await Promise.all([
-    handleSemanticSearch(
-      { query: userMessage, limit: CHAT_CONTEXT_SEARCH_LIMIT, threshold: CHAT_CONTEXT_SEARCH_THRESHOLD },
-      pool,
-      config,
-      visibilityTags,
-    ),
+  // Detect intent to adjust search params, run search + entity lookup in parallel
+  const [intent, entityResults] = await Promise.all([
+    detectIntent(userMessage, [], config),
     findMatchingEntities(userMessage, pool),
   ]);
+
+  const searchQuery = intent.reformulated_query || userMessage;
+  const searchThreshold = intent.adjustments.threshold ?? CHAT_CONTEXT_SEARCH_THRESHOLD;
+  const searchLimit = intent.adjustments.limit ?? CHAT_CONTEXT_SEARCH_LIMIT;
+
+  const searchResults = await handleSemanticSearch(
+    { query: searchQuery, limit: searchLimit, threshold: searchThreshold, days_back: intent.adjustments.days_back },
+    pool,
+    config,
+    visibilityTags,
+  );
 
   // Deduplicate chunks from the same parent thought
   const dedupedResults = deduplicateResults(searchResults as SearchResult[]);

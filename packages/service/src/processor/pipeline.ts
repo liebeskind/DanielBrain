@@ -3,6 +3,7 @@ import type { ThoughtMetadata, StructuredData, ChannelType } from '@danielbrain/
 import { embed, embedBatch } from './embedder.js';
 import { extractMetadata } from './extractor.js';
 import { chunkText, needsChunking } from './chunker.js';
+import type { SourceHint } from './chunker.js';
 import { summarize } from './summarizer.js';
 import { resolveEntities } from './entity-resolver.js';
 import { computeSourceVisibility } from '../visibility.js';
@@ -219,7 +220,8 @@ async function processLong(
   ownerId?: string | null,
 ): Promise<ProcessResult> {
   const ts = createdAt ?? new Date();
-  const { structured } = parseEnvelope(sourceMeta);
+  const { structured, channelType } = parseEnvelope(sourceMeta);
+  const sourceHint: SourceHint = channelType === 'meeting' ? 'meeting' : 'general';
   const visibility = computeSourceVisibility(source, sourceMeta, ownerId);
 
   // Step 1: Insert parent thought (raw text, no embedding yet) — upsert for retry idempotency
@@ -280,7 +282,7 @@ async function processLong(
   );
 
   // Step 4: Clean up old chunks (idempotent retry) then chunk + batch-embed
-  const chunks = chunkText(content);
+  const chunks = chunkText(content, undefined, undefined, sourceHint);
   const chunkEmbeddings = await embedBatch(chunks, config);
 
   // Write all chunks in a transaction to prevent partial state

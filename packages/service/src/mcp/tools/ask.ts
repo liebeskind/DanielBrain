@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import { handleSemanticSearch } from './semantic-search.js';
 import { extractKeywords } from '../../processor/keyword-extractor.js';
+import { detectIntent } from '../../processor/intent-detector.js';
 import { CHAT_CONTEXT_ENTITY_RELATIONSHIP_LIMIT } from '@danielbrain/shared';
 
 interface AskInput {
@@ -12,6 +13,7 @@ interface AskInput {
 interface AskConfig {
   ollamaBaseUrl: string;
   embeddingModel: string;
+  extractionModel: string;
   rerankerModel?: string;
 }
 
@@ -24,26 +26,33 @@ export async function handleAsk(
   // Step 1: Extract keywords (entities + themes) and get query embedding
   const keywords = await extractKeywords(input.query, pool, config);
 
-  // Step 2: Run semantic search and community member enrichment in parallel
+  // Step 2: Detect intent (fast-path heuristics + LLM fallback)
+  const intent = await detectIntent(input.query, keywords.entities, config);
+
+  // Merge intent adjustments with explicit user params (user always wins)
+  const searchQuery = intent.reformulated_query || input.query;
+  const searchThreshold = intent.adjustments.threshold ?? 0.2;
+  const searchDaysBack = input.days_back ?? intent.adjustments.days_back;
+  const searchLimit = input.limit;
+
+  // Step 3: Run semantic search and community member enrichment in parallel
   // Reuse the query embedding from keyword extraction to avoid duplicate Ollama call
   const vectorStr = `[${keywords.queryEmbedding.join(',')}]`;
 
   const [thoughts, communityResults, entityDetails] = await Promise.all([
-    // Hybrid search over thoughts
     handleSemanticSearch(
-      { query: input.query, limit: input.limit, threshold: 0.2, days_back: input.days_back },
+      { query: searchQuery, limit: searchLimit, threshold: searchThreshold, days_back: searchDaysBack },
       pool,
       config,
       visibilityTags,
     ),
-    // Community search (reuse embedding)
     searchCommunitiesWithEmbedding(vectorStr, pool),
-    // Enrich matched entities with relationships
     fetchEntityDetails(keywords.entities, pool),
   ]);
 
   return {
     query: input.query,
+    intent: { type: intent.intent, confidence: intent.confidence, reasoning: intent.reasoning },
     entities: entityDetails,
     thoughts: thoughts.map((t) => ({
       id: t.id,
