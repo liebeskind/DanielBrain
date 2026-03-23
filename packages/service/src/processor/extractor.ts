@@ -1,4 +1,7 @@
 import { metadataSchema, type ThoughtMetadata, OLLAMA_LLM_TIMEOUT_MS } from '@danielbrain/shared';
+import { createChildLogger } from '../logger.js';
+
+const log = createChildLogger('extractor');
 
 interface ExtractConfig {
   ollamaBaseUrl: string;
@@ -201,6 +204,29 @@ Output:
   "key_decisions": ["Launch K12 Zone beta on March 15"],
   "key_insights": [],
   "action_items_structured": [{"action": "Gordon to test LTI 1.3 by Wednesday", "assignee": "Gordon Smith", "deadline": null, "status": "open"}]
+}
+
+EXAMPLE 3 (CRM note — short, telegraphic):
+Input: "HubSpot Note on Chris Psiaki (Topia):\nAuthor: Daniel Liebeskind\nSpoke with Chris about K12 Zone renewal. Pricing concerns — will send revised proposal by end of week. Chris mentioned Stride may want to add 3 more schools."
+Output:
+{
+  "thought_type": "conversation",
+  "people": ["Chris Psiaki", "Daniel Liebeskind"],
+  "topics": ["K12 Zone renewal", "pricing", "school expansion"],
+  "action_items": ["Daniel Liebeskind to send revised proposal by end of week"],
+  "dates_mentioned": [],
+  "sentiment": "neutral",
+  "summary": "Daniel Liebeskind spoke with Chris Psiaki about the K12 Zone renewal. Chris Psiaki raised pricing concerns, and Daniel Liebeskind will send a revised proposal by end of week. Chris Psiaki mentioned Stride may want to add 3 more schools.",
+  "companies": ["Topia", "Stride"],
+  "products": ["K12 Zone"],
+  "projects": [],
+  "department": "sales",
+  "confidentiality": "internal",
+  "meeting_participants": [],
+  "themes": ["customer_success", "partnerships"],
+  "key_decisions": [],
+  "key_insights": ["Stride may want to expand by 3 more schools"],
+  "action_items_structured": [{"action": "Daniel Liebeskind to send revised proposal by end of week", "assignee": "Daniel Liebeskind", "deadline": null, "status": "open"}]
 }`;
 
 const GLEANING_SCHEMA = {
@@ -352,7 +378,7 @@ export async function extractMetadata(
     return mergeGleanedMetadata(base, gleaned);
   } catch (err) {
     // Gleaning is best-effort — don't fail extraction if it errors
-    console.error('Gleaning pass failed (non-fatal):', err);
+    log.error({ err }, 'Gleaning pass failed (non-fatal)');
     return base;
   }
 }

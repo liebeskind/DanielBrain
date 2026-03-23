@@ -2,6 +2,9 @@ import { Router } from 'express';
 import type pg from 'pg';
 import { createCorrectionExampleSchema, listCorrectionExamplesSchema } from '@danielbrain/shared';
 import { createCorrectionExample, listCorrectionExamples, deleteCorrectionExample } from './store.js';
+import { createChildLogger } from '../logger.js';
+
+const log = createChildLogger('corrections');
 
 export function createCorrectionRoutes(pool: pg.Pool): Router {
   const router = Router();
@@ -20,7 +23,7 @@ export function createCorrectionRoutes(pool: pg.Pool): Router {
       const result = await listCorrectionExamples(input, pool);
       res.json(result);
     } catch (err) {
-      console.error('List corrections error:', err);
+      log.error({ err }, 'List corrections error');
       res.status(400).json({ error: (err as Error).message });
     }
   });
@@ -32,7 +35,7 @@ export function createCorrectionRoutes(pool: pg.Pool): Router {
       const id = await createCorrectionExample(input, pool);
       res.status(201).json({ id });
     } catch (err) {
-      console.error('Create correction error:', err);
+      log.error({ err }, 'Create correction error');
       res.status(400).json({ error: (err as Error).message });
     }
   });
@@ -47,7 +50,7 @@ export function createCorrectionRoutes(pool: pg.Pool): Router {
       }
       res.json({ ok: true });
     } catch (err) {
-      console.error('Delete correction error:', err);
+      log.error({ err }, 'Delete correction error');
       res.status(500).json({ error: 'Internal error' });
     }
   });

@@ -1,6 +1,9 @@
 import { Router } from 'express';
 import express from 'express';
 import type pg from 'pg';
+import { createChildLogger } from '../logger.js';
+
+const log = createChildLogger('chat-projects');
 
 export function createProjectRoutes(pool: pg.Pool): Router {
   const router = Router();
@@ -24,7 +27,7 @@ export function createProjectRoutes(pool: pg.Pool): Router {
           );
       res.json(rows);
     } catch (err) {
-      console.error('List projects error:', err);
+      log.error({ err }, 'List projects error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -44,7 +47,7 @@ export function createProjectRoutes(pool: pg.Pool): Router {
       );
       res.json(row);
     } catch (err) {
-      console.error('Create project error:', err);
+      log.error({ err }, 'Create project error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -68,7 +71,7 @@ export function createProjectRoutes(pool: pg.Pool): Router {
       }
       res.json(rows[0]);
     } catch (err) {
-      console.error('Update project error:', err);
+      log.error({ err }, 'Update project error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -91,7 +94,7 @@ export function createProjectRoutes(pool: pg.Pool): Router {
       }
       res.json({ ok: true });
     } catch (err) {
-      console.error('Delete project error:', err);
+      log.error({ err }, 'Delete project error');
       res.status(500).json({ error: 'Internal error' });
     }
   });

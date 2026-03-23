@@ -1,4 +1,5 @@
 import type pg from 'pg';
+import { logger } from './logger.js';
 
 export interface AuditEntry {
   userId?: string | null;
@@ -26,6 +27,13 @@ export function logAudit(pool: pg.Pool, entry: AuditEntry): void {
       entry.ipAddress ?? null,
     ],
   ).catch((err) => {
-    console.error('Audit log failed (non-fatal):', err.message);
+    logger.warn({ err }, 'Audit log failed (non-fatal)');
   });
+}
+
+/** Extract client IP from an Express request */
+export function getClientIp(req: { headers: Record<string, string | string[] | undefined>; socket?: { remoteAddress?: string } }): string | null {
+  const xff = req.headers['x-forwarded-for'];
+  if (typeof xff === 'string') return xff.split(',')[0].trim();
+  return req.socket?.remoteAddress ?? null;
 }

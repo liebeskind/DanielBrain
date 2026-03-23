@@ -1,6 +1,9 @@
 import type pg from 'pg';
 import { RELATIONSHIP_DESCRIPTION_BATCH_SIZE, OLLAMA_LLM_TIMEOUT_MS } from '@danielbrain/shared';
 import { createRelationshipProposal } from '../proposals/helpers.js';
+import { createChildLogger } from '../logger.js';
+
+const log = createChildLogger('relationship-describer');
 
 interface DescriberConfig {
   ollamaBaseUrl: string;
@@ -197,7 +200,7 @@ Has the relationship materially changed? Return JSON only.`;
     if (!jsonMatch) throw new Error('No JSON found');
     result = JSON.parse(jsonMatch[0]);
   } catch {
-    console.error('Failed to parse contradiction response:', raw);
+    log.error({ raw }, 'Failed to parse contradiction response');
     return null;
   }
 
@@ -243,7 +246,7 @@ Has the relationship materially changed? Return JSON only.`;
         confidence: result.confidence,
       }, pool);
     } catch (err) {
-      console.error('Failed to create relationship proposal:', err);
+      log.error({ err }, 'Failed to create relationship proposal');
     }
   }
 
@@ -268,7 +271,7 @@ export async function describeUndescribedRelationships(
       const result = await describeRelationship(edge.id, pool, config);
       if (result) described++;
     } catch (err) {
-      console.error(`Relationship description failed for edge ${edge.id}:`, err);
+      log.error({ err, edgeId: edge.id }, 'Relationship description failed');
     }
   }
 

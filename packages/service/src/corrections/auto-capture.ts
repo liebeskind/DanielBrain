@@ -1,6 +1,9 @@
 import type pg from 'pg';
 import type { Proposal } from '@danielbrain/shared';
 import { createCorrectionExample } from './store.js';
+import { createChildLogger } from '../logger.js';
+
+const log = createChildLogger('corrections');
 
 export async function captureFromApproval(
   proposal: Proposal,
@@ -60,7 +63,7 @@ export async function captureFromApproval(
 
     return null;
   } catch (err) {
-    console.error('Failed to capture correction from approval:', err);
+    log.error({ err }, 'Failed to capture correction from approval');
     return null;
   }
 }
@@ -103,7 +106,7 @@ export async function captureFromRejection(
 
     return null;
   } catch (err) {
-    console.error('Failed to capture correction from rejection:', err);
+    log.error({ err }, 'Failed to capture correction from rejection');
     return null;
   }
 }

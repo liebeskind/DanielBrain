@@ -11,10 +11,49 @@ import {
   DEAL_PROPERTIES,
   NOTE_PROPERTIES,
 } from './types.js';
+import { createChildLogger } from '../logger.js';
+
+const log = createChildLogger('hubspot-client');
 
 /** Create a configured HubSpot client with built-in rate limiting */
 export function createHubSpotClient(accessToken: string): Client {
-  return new Client({ accessToken });
+  return new Client({
+    accessToken,
+    numberOfApiCallRetries: 0, // We handle retries ourselves with withRetry
+    limiterOptions: {
+      minTime: 150,       // ~6.6 req/sec — conservative to avoid 429s
+      maxConcurrent: 3,   // Low concurrency
+      reservoir: 80,      // Well under HubSpot's 100/10sec free tier limit
+      reservoirRefreshAmount: 80,
+      reservoirRefreshInterval: 10_000, // Refill every 10 seconds
+    },
+  });
+}
+
+const TRANSIENT_CODES = new Set<number | string>([429, 'ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'EPIPE']);
+
+function isTransient(err: any): boolean {
+  return TRANSIENT_CODES.has(err?.code) || TRANSIENT_CODES.has(err?.statusCode);
+}
+
+/** Retry wrapper for transient errors (429 rate limits, network errors) */
+export async function withRetry<T>(fn: () => Promise<T>, label: string, maxRetries = 5): Promise<T> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      if (!isTransient(err) || attempt === maxRetries) throw err;
+      // Base delay of 10s for rate limits (clears HubSpot's 10-second rolling window)
+      // Shorter 2s base for network errors
+      const isRateLimit = err?.code === 429 || err?.statusCode === 429;
+      const baseDelay = isRateLimit ? 10_000 : 2_000;
+      const delay = baseDelay * Math.pow(2, attempt - 1);
+      const reason = isRateLimit ? 'rate limited' : err?.code ?? 'network error';
+      log.info({ reason, label, delay: delay / 1000, attempt, maxRetries }, 'HubSpot retry');
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  throw new Error('unreachable');
 }
 
 /** Get property list for an object type */
@@ -50,13 +89,14 @@ export async function listObjects(
   limit = 100,
 ): Promise<HubSpotListResponse> {
   const properties = [...getPropertiesForType(objectType)];
-  const api = (client.crm as any)[objectType]?.basicApi;
+  const typeApi = (client.crm as any)[objectType]?.basicApi;
 
-  if (!api) {
-    throw new Error(`Unsupported object type: ${objectType}`);
-  }
-
-  const response = await api.getPage(limit, after, properties);
+  const response = await withRetry(
+    () => typeApi
+      ? typeApi.getPage(limit, after, properties)
+      : client.crm.objects.basicApi.getPage(objectType, limit, after, properties),
+    `listObjects(${objectType})`,
+  );
   return {
     results: (response.results ?? []).map(normalizeRecord),
     paging: response.paging,
@@ -73,11 +113,7 @@ export async function searchModifiedSince(
 ): Promise<HubSpotSearchResponse> {
   const properties = [...getPropertiesForType(objectType)];
   const lastModProp = getLastModifiedProperty(objectType);
-  const api = (client.crm as any)[objectType]?.searchApi;
-
-  if (!api) {
-    throw new Error(`Unsupported object type for search: ${objectType}`);
-  }
+  const typeApi = (client.crm as any)[objectType]?.searchApi;
 
   const searchRequest = {
     filterGroups: [{
@@ -92,7 +128,12 @@ export async function searchModifiedSince(
     after: after || '0',
   };
 
-  const response = await api.doSearch(searchRequest);
+  const response = await withRetry(
+    () => typeApi
+      ? typeApi.doSearch(searchRequest)
+      : client.crm.objects.searchApi.doSearch(objectType, searchRequest),
+    `searchModifiedSince(${objectType})`,
+  );
   return {
     total: response.total ?? 0,
     results: (response.results ?? []).map(normalizeRecord),
@@ -108,13 +149,58 @@ export async function getAssociations(
   toObjectType: HubSpotObjectType,
 ): Promise<string[]> {
   try {
-    const response = await client.crm.associations.v4.basicApi.getPage(
-      objectType, objectId, toObjectType, undefined, 500,
+    const response = await withRetry(
+      () => client.crm.associations.v4.basicApi.getPage(
+        objectType, objectId, toObjectType, undefined, 500,
+      ),
+      `getAssociations(${objectType}/${objectId})`,
     );
     return (response.results ?? []).map((r: any) => String(r.toObjectId));
   } catch {
-    // 404 or no associations
+    // 404 or no associations (after retries exhausted for transient errors)
     return [];
+  }
+}
+
+/** Preload all owners into cache in a single paginated API call */
+export async function preloadOwners(
+  client: Client,
+  ownerCache: Map<string, string>,
+): Promise<void> {
+  let after: string | undefined;
+  do {
+    const response = await withRetry(
+      () => client.crm.owners.ownersApi.getPage(undefined, after, 100),
+      'preloadOwners',
+    );
+    for (const owner of response.results ?? []) {
+      const name = [owner.firstName, owner.lastName].filter(Boolean).join(' ') || '';
+      ownerCache.set(String(owner.id), name);
+    }
+    after = response.paging?.next?.after;
+  } while (after);
+}
+
+/** Resolve a HubSpot owner ID to a display name (with per-cycle cache) */
+export async function getOwnerName(
+  client: Client,
+  ownerId: string,
+  ownerCache: Map<string, string>,
+): Promise<string> {
+  const cached = ownerCache.get(ownerId);
+  if (cached !== undefined) return cached;
+
+  try {
+    const owner = await withRetry(
+      () => client.crm.owners.ownersApi.getById(Number(ownerId)),
+      `getOwnerName(${ownerId})`,
+    );
+    const name = [owner.firstName, owner.lastName].filter(Boolean).join(' ') || '';
+    ownerCache.set(ownerId, name);
+    return name;
+  } catch {
+    ownerCache.set(ownerId, '');
+    return '';
   }
 }
 
@@ -125,12 +211,13 @@ export async function getObject(
   objectId: string,
 ): Promise<HubSpotRecord> {
   const properties = [...getPropertiesForType(objectType)];
-  const api = (client.crm as any)[objectType]?.basicApi;
+  const typeApi = (client.crm as any)[objectType]?.basicApi;
 
-  if (!api) {
-    throw new Error(`Unsupported object type: ${objectType}`);
-  }
-
-  const response = await api.getById(objectId, properties);
+  const response = await withRetry(
+    () => typeApi
+      ? typeApi.getById(objectId, properties)
+      : client.crm.objects.basicApi.getById(objectType, objectId, properties),
+    `getObject(${objectType}/${objectId})`,
+  );
   return normalizeRecord(response);
 }

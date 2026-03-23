@@ -1,10 +1,12 @@
 import 'dotenv/config';
+import { randomUUID } from 'crypto';
 import fs from 'fs';
 import https from 'https';
 import path from 'path';
 import express from 'express';
 import pg from 'pg';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import pinoHttp from 'pino-http';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { loadConfig } from './config.js';
 import { createMcpServer } from './mcp/server.js';
 import { verifyAccessKey, optionalAuth } from './auth.js';
@@ -39,6 +41,11 @@ import { handleHubSpotEvents } from './hubspot/webhook.js';
 import type { HubSpotObjectType } from './hubspot/types.js';
 import { detectCommunities } from './processor/community-detector.js';
 import { summarizeUnsummarizedCommunities } from './processor/community-summarizer.js';
+import { logger, createChildLogger } from './logger.js';
+import { sanitizeError } from './errors.js';
+import { recordPollerSuccess, recordPollerError, getPollerStatuses } from './poller-status.js';
+import { authLimiter, uploadLimiter, mcpLimiter, chatLimiter, adminApiLimiter } from './rate-limit.js';
+import { logAudit } from './audit.js';
 
 const config = loadConfig();
 const pool = new pg.Pool({
@@ -49,6 +56,16 @@ const pool = new pg.Pool({
 });
 
 const app = express();
+
+// Trust first proxy (Cloudflare) for correct IP in rate limiters
+app.set('trust proxy', 1);
+
+// --- pino-http middleware (skip /health to reduce noise) ---
+app.use(pinoHttp({
+  logger,
+  genReqId: (req) => (req.headers['x-request-id'] as string) || randomUUID(),
+  autoLogging: { ignore: (req) => req.url === '/health' },
+}));
 
 // --- Ensure data directories exist ---
 fs.mkdirSync(config.rawFilesDir, { recursive: true });
@@ -72,6 +89,9 @@ async function setupOAuth() {
     scopesSupported: ['read', 'write'],
   }));
 
+  // Rate limit auth routes
+  app.use('/authorize', authLimiter);
+
   // Custom callback route for the API-key login form
   app.post('/authorize/callback', express.urlencoded({ extended: false }), async (req, res) => {
     try {
@@ -84,7 +104,7 @@ async function setupOAuth() {
         res,
       );
     } catch (err) {
-      console.error('OAuth callback error:', err);
+      logger.error({ err }, 'OAuth callback error');
       res.status(500).json({ error: 'Authorization failed' });
     }
   });
@@ -93,9 +113,43 @@ async function setupOAuth() {
   setInterval(() => oauthProvider!.cleanup(), 600_000);
 }
 
-// --- Health check ---
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+// --- Health check (enhanced readiness probe) ---
+app.get('/health', async (_req, res) => {
+  const checks: Record<string, unknown> = {};
+  let status: 'ok' | 'degraded' | 'unhealthy' = 'ok';
+
+  // Database connectivity
+  try {
+    await pool.query('SELECT 1');
+    checks.database = 'ok';
+  } catch {
+    checks.database = 'unavailable';
+    status = 'unhealthy';
+  }
+
+  // Ollama connectivity
+  try {
+    const resp = await fetch(`${config.ollamaBaseUrl}/api/tags`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    checks.ollama = resp.ok ? 'ok' : 'unavailable';
+    if (!resp.ok && status === 'ok') status = 'degraded';
+  } catch {
+    checks.ollama = 'unavailable';
+    if (status === 'ok') status = 'degraded';
+  }
+
+  // Poller health
+  checks.pollers = getPollerStatuses();
+
+  // Active MCP sessions
+  checks.mcpSessions = sessions.size;
+
+  res.status(status === 'unhealthy' ? 503 : 200).json({
+    status,
+    timestamp: new Date().toISOString(),
+    checks,
+  });
 });
 
 // --- Slack webhook (optional — only if configured) ---
@@ -129,7 +183,7 @@ if (config.slackBotToken && config.slackSigningSecret) {
 
       await handleSlackEvent(payload, pool);
     } catch (err) {
-      console.error('Slack webhook error:', err);
+      logger.error({ err }, 'Slack webhook error');
       if (!res.headersSent) {
         res.status(500).json({ error: 'Internal error' });
       }
@@ -151,7 +205,7 @@ if (config.telegramBotToken && config.telegramWebhookSecret) {
       res.json({ ok: true });
       await handleTelegramUpdate(req.body, pool, config.telegramBotToken);
     } catch (err) {
-      console.error('Telegram webhook error:', err);
+      logger.error({ err }, 'Telegram webhook error');
       if (!res.headersSent) {
         res.status(500).json({ error: 'Internal error' });
       }
@@ -182,7 +236,7 @@ if (config.fathomApiKey && config.fathomWebhookSecret) {
       res.json({ ok: true });
       await handleFathomEvent(meeting, pool);
     } catch (err) {
-      console.error('Fathom webhook error:', err);
+      logger.error({ err }, 'Fathom webhook error');
       if (!res.headersSent) {
         res.status(500).json({ error: 'Internal error' });
       }
@@ -214,12 +268,14 @@ if (config.hubspotAccessToken && config.hubspotWebhookSecret) {
       const events = JSON.parse(body);
       res.status(200).json({ ok: true });
 
-      const result = await handleHubSpotEvents(events, pool, hubspotWebhookClient);
+      const result = await handleHubSpotEvents(events, pool, hubspotWebhookClient, {
+        requireContactActivity: config.hubspotRequireContactActivity,
+      });
       if (result.processed > 0) {
-        console.log(`HubSpot webhook: ${result.processed} processed, ${result.skipped} skipped, ${result.errors} errors`);
+        logger.info({ processed: result.processed, skipped: result.skipped, errors: result.errors }, 'HubSpot webhook processed');
       }
     } catch (err) {
-      console.error('HubSpot webhook error:', err);
+      logger.error({ err }, 'HubSpot webhook error');
       if (!res.headersSent) {
         res.status(500).json({ error: 'Internal error' });
       }
@@ -234,6 +290,7 @@ app.use('/api/proposals', express.json(), createProposalRoutes(pool));
 app.use('/api/corrections', express.json(), createCorrectionRoutes(pool));
 
 // --- Admin dashboard ---
+app.use('/admin/api', adminApiLimiter);
 app.use('/admin', createAdminRoutes(pool, config));
 
 // --- User management API (admin) ---
@@ -261,6 +318,11 @@ app.use('/mcp', async (req, res, next) => {
       next();
       return;
     } catch {
+      logAudit(pool, {
+        userId: null,
+        action: 'auth_failed',
+        metadata: { reason: 'invalid_bearer_token', ip: getClientIp(req) },
+      });
       res.status(401).json({ error: 'Invalid or expired token' });
       return;
     }
@@ -269,35 +331,80 @@ app.use('/mcp', async (req, res, next) => {
 });
 app.use('/mcp', optionalAuth(pool, config.brainAccessKey));
 
-// --- MCP SSE transport ---
-// Each SSE connection gets its own McpServer instance (SDK requires 1:1 server↔transport).
-const transports = new Map<string, SSEServerTransport>();
+// --- MCP Streamable HTTP transport ---
+// Each session gets its own McpServer instance + transport (SDK requires 1:1 server↔transport).
+const sessions = new Map<string, StreamableHTTPServerTransport>();
 
-app.get('/mcp/sse', async (req, res) => {
-  const transport = new SSEServerTransport('/mcp/messages', res);
-  const mcpServer = createMcpServer(pool, config);
-  transports.set(transport.sessionId, transport);
+// Rate limit MCP protocol messages
+app.use('/mcp', mcpLimiter);
 
-  res.on('close', () => {
-    transports.delete(transport.sessionId);
-  });
+app.all('/mcp', async (req, res) => {
+  // For GET requests (standalone SSE stream) and DELETE (session teardown),
+  // look up existing session
+  const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
-  await mcpServer.connect(transport);
-});
-
-app.post('/mcp/messages', async (req, res) => {
-  const sessionId = req.query.sessionId as string;
-  const transport = transports.get(sessionId);
-
-  if (!transport) {
-    res.status(404).json({ error: 'Session not found' });
+  if (req.method === 'GET' || req.method === 'DELETE') {
+    if (!sessionId || !sessions.has(sessionId)) {
+      res.status(404).json({ error: 'Session not found' });
+      return;
+    }
+    const transport = sessions.get(sessionId)!;
+    await transport.handleRequest(req, res);
     return;
   }
 
-  await transport.handlePostMessage(req, res);
+  // POST — could be initialization or an existing session message
+  if (sessionId && sessions.has(sessionId)) {
+    const transport = sessions.get(sessionId)!;
+    await transport.handleRequest(req, res, req.body);
+    return;
+  }
+
+  // New session — create transport + MCP server
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => randomUUID(),
+  });
+
+  transport.onclose = () => {
+    const sid = transport.sessionId;
+    if (sid) {
+      sessions.delete(sid);
+      logger.info({ sessionId: sid }, 'MCP session closed');
+    }
+  };
+
+  const mcpServer = createMcpServer(pool, config);
+  await mcpServer.connect(transport);
+
+  await transport.handleRequest(req, res, req.body);
+
+  // After handling the init request, the transport has a sessionId
+  if (transport.sessionId) {
+    sessions.set(transport.sessionId, transport);
+    logger.info({ sessionId: transport.sessionId }, 'MCP session created');
+  }
+});
+
+// --- Backward compat: redirect old SSE endpoint ---
+app.get('/mcp/sse', (_req, res) => {
+  res.status(410).json({
+    error: 'SSE transport has been replaced by Streamable HTTP. Connect to POST /mcp instead.',
+  });
+});
+app.post('/mcp/messages', (_req, res) => {
+  res.status(410).json({
+    error: 'SSE transport has been replaced by Streamable HTTP. Connect to POST /mcp instead.',
+  });
+});
+
+// --- Express catch-all error handler ---
+app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  logger.error({ err }, 'Unhandled Express error');
+  res.status(500).json({ error: sanitizeError(err) });
 });
 
 // --- Queue poller ---
+const queueLog = createChildLogger('queue-poller');
 let pollInterval: ReturnType<typeof setInterval>;
 
 function startPoller() {
@@ -305,8 +412,10 @@ function startPoller() {
     if (!acquireOllama('ingestion')) return;
     try {
       await pollQueue(pool, config);
+      recordPollerSuccess('queue-poller');
     } catch (err) {
-      console.error('Queue poll error:', err);
+      queueLog.error({ err }, 'Queue poll error');
+      recordPollerError('queue-poller', (err as Error).message);
     } finally {
       releaseOllama('ingestion');
     }
@@ -314,6 +423,7 @@ function startPoller() {
 }
 
 // --- Profile refresh poller ---
+const profileLog = createChildLogger('profile-refresher');
 let profileInterval: ReturnType<typeof setInterval>;
 
 function startProfileRefresher() {
@@ -322,10 +432,12 @@ function startProfileRefresher() {
     try {
       const count = await refreshStaleProfiles(pool, config);
       if (count > 0) {
-        console.log(`Refreshed ${count} entity profile(s)`);
+        profileLog.info({ count }, 'Refreshed entity profiles');
       }
+      recordPollerSuccess('profile-refresher');
     } catch (err) {
-      console.error('Profile refresh error:', err);
+      profileLog.error({ err }, 'Profile refresh error');
+      recordPollerError('profile-refresher', (err as Error).message);
     } finally {
       releaseOllama('background');
     }
@@ -333,6 +445,7 @@ function startProfileRefresher() {
 }
 
 // --- LinkedIn enrichment poller (optional — only if configured) ---
+const linkedinLog = createChildLogger('linkedin-enricher');
 let linkedinInterval: ReturnType<typeof setInterval> | undefined;
 
 function startLinkedInEnricher() {
@@ -344,15 +457,18 @@ function startLinkedInEnricher() {
         serpApiKey: config.serpApiKey!,
       });
       if (count > 0) {
-        console.log(`Created ${count} LinkedIn enrichment proposal(s)`);
+        linkedinLog.info({ count }, 'Created LinkedIn enrichment proposals');
       }
+      recordPollerSuccess('linkedin-enricher');
     } catch (err) {
-      console.error('LinkedIn enrichment error:', err);
+      linkedinLog.error({ err }, 'LinkedIn enrichment error');
+      recordPollerError('linkedin-enricher', (err as Error).message);
     }
   }, LINKEDIN_ENRICHMENT_INTERVAL_MS);
 }
 
 // --- Relationship description poller (optional — only if configured) ---
+const relationshipLog = createChildLogger('relationship-describer');
 let relationshipInterval: ReturnType<typeof setInterval> | undefined;
 
 function startRelationshipDescriber() {
@@ -366,10 +482,12 @@ function startRelationshipDescriber() {
         relationshipModel: config.relationshipModel!,
       });
       if (count > 0) {
-        console.log(`Described ${count} relationship edge(s)`);
+        relationshipLog.info({ count }, 'Described relationship edges');
       }
+      recordPollerSuccess('relationship-describer');
     } catch (err) {
-      console.error('Relationship description error:', err);
+      relationshipLog.error({ err }, 'Relationship description error');
+      recordPollerError('relationship-describer', (err as Error).message);
     } finally {
       releaseOllama('background');
     }
@@ -377,6 +495,7 @@ function startRelationshipDescriber() {
 }
 
 // --- Community detection poller (pure graph algorithm, no Ollama needed) ---
+const communityDetectLog = createChildLogger('community-detector');
 let communityDetectionInterval: ReturnType<typeof setInterval> | undefined;
 
 function startCommunityDetection() {
@@ -384,15 +503,18 @@ function startCommunityDetection() {
     try {
       const result = await detectCommunities(pool);
       if (result.changed) {
-        console.log(`Detected ${result.communities} communities (changed)`);
+        communityDetectLog.info({ communities: result.communities }, 'Detected communities (changed)');
       }
+      recordPollerSuccess('community-detector');
     } catch (err) {
-      console.error('Community detection error:', err);
+      communityDetectLog.error({ err }, 'Community detection error');
+      recordPollerError('community-detector', (err as Error).message);
     }
   }, COMMUNITY_DETECTION_INTERVAL_MS);
 }
 
 // --- Community summarizer poller (needs Ollama) ---
+const communitySumLog = createChildLogger('community-summarizer');
 let communitySummaryInterval: ReturnType<typeof setInterval> | undefined;
 
 function startCommunitySummarizer() {
@@ -401,10 +523,12 @@ function startCommunitySummarizer() {
     try {
       const count = await summarizeUnsummarizedCommunities(pool, config);
       if (count > 0) {
-        console.log(`Summarized ${count} community/ies`);
+        communitySumLog.info({ count }, 'Summarized communities');
       }
+      recordPollerSuccess('community-summarizer');
     } catch (err) {
-      console.error('Community summary error:', err);
+      communitySumLog.error({ err }, 'Community summary error');
+      recordPollerError('community-summarizer', (err as Error).message);
     } finally {
       releaseOllama('background');
     }
@@ -412,6 +536,7 @@ function startCommunitySummarizer() {
 }
 
 // --- HubSpot sync poller (optional — only if configured) ---
+const hubspotLog = createChildLogger('hubspot-sync');
 let hubspotInterval: ReturnType<typeof setInterval> | undefined;
 
 function startHubSpotSync() {
@@ -419,28 +544,35 @@ function startHubSpotSync() {
 
   const hsClient = createHubSpotClient(config.hubspotAccessToken);
   const objectTypes = config.hubspotObjectTypes.split(',').map(s => s.trim()) as HubSpotObjectType[];
+  const hubspotSyncOptions = { requireContactActivity: config.hubspotRequireContactActivity };
 
-  // Run initial sync immediately, then on interval
-  syncHubSpot(hsClient, pool, objectTypes)
-    .then(result => {
-      const total = result.contacts + result.companies + result.deals;
-      if (total > 0) {
-        console.log(`HubSpot initial sync: ${result.contacts} contacts, ${result.companies} companies, ${result.deals} deals queued`);
-      }
-    })
-    .catch(err => console.error('HubSpot initial sync error:', err));
+  // Run initial sync immediately, then start interval AFTER it completes
+  let hubspotSyncing = false;
 
-  hubspotInterval = setInterval(async () => {
-    try {
-      const result = await syncHubSpot(hsClient, pool, objectTypes);
-      const total = result.contacts + result.companies + result.deals;
-      if (total > 0) {
-        console.log(`HubSpot sync: ${result.contacts} contacts, ${result.companies} companies, ${result.deals} deals queued`);
-      }
-    } catch (err) {
-      console.error('HubSpot sync error:', err);
+  async function runSync(label: string) {
+    if (hubspotSyncing) {
+      hubspotLog.debug('HubSpot sync already in progress, skipping');
+      return;
     }
-  }, config.hubspotPollIntervalMs);
+    hubspotSyncing = true;
+    try {
+      const result = await syncHubSpot(hsClient, pool, objectTypes, hubspotSyncOptions);
+      const total = result.contacts + result.companies + result.deals + result.notes;
+      if (total > 0 || result.fathomLinked > 0) {
+        hubspotLog.info({ contacts: result.contacts, companies: result.companies, deals: result.deals, notes: result.notes, fathomLinked: result.fathomLinked, skipped: result.skipped }, `HubSpot ${label}`);
+      }
+      recordPollerSuccess('hubspot-sync');
+    } catch (err) {
+      hubspotLog.error({ err }, `HubSpot ${label} error`);
+      recordPollerError('hubspot-sync', (err as Error).message);
+    } finally {
+      hubspotSyncing = false;
+    }
+  }
+
+  runSync('initial sync');
+
+  hubspotInterval = setInterval(() => runSync('sync'), config.hubspotPollIntervalMs);
 }
 
 // --- Model preloading ---
@@ -471,11 +603,18 @@ async function preloadModels() {
           signal: AbortSignal.timeout(300_000),
         });
       }
-      console.log(`  Preloaded ${model} (${((Date.now() - start) / 1000).toFixed(1)}s)`);
+      logger.info({ model, durationSec: ((Date.now() - start) / 1000).toFixed(1) }, 'Preloaded model');
     } catch (err) {
-      console.warn(`  Failed to preload ${model}:`, (err as Error).message);
+      logger.warn({ model, err }, 'Failed to preload model');
     }
   }
+}
+
+// --- Helper: extract client IP from request ---
+function getClientIp(req: express.Request): string | null {
+  const xff = req.headers['x-forwarded-for'];
+  if (typeof xff === 'string') return xff.split(',')[0].trim();
+  return req.socket?.remoteAddress ?? null;
 }
 
 // --- Graceful shutdown ---
@@ -484,7 +623,7 @@ let isShuttingDown = false;
 function shutdown() {
   if (isShuttingDown) return;
   isShuttingDown = true;
-  console.log('Shutting down...');
+  logger.info('Shutting down...');
 
   // Stop all pollers
   clearInterval(pollInterval);
@@ -495,14 +634,19 @@ function shutdown() {
   if (communitySummaryInterval) clearInterval(communitySummaryInterval);
   if (hubspotInterval) clearInterval(hubspotInterval);
 
+  // Close all MCP sessions
+  for (const [sid, transport] of sessions) {
+    transport.close().catch(() => {});
+    sessions.delete(sid);
+  }
+
   // Wait for in-flight operations to settle, then close pool
-  // Short delay lets active poller iterations complete
   setTimeout(async () => {
     try {
       await pool.end();
-      console.log('Database pool closed');
+      logger.info('Database pool closed');
     } catch (err) {
-      console.error('Error closing pool:', err);
+      logger.error({ err }, 'Error closing pool');
     }
     process.exit(0);
   }, 2000);
@@ -514,53 +658,53 @@ process.on('SIGTERM', shutdown);
 // --- Start ---
 function startPollers() {
   startPoller();
-  console.log(`  Queue poller: every ${config.pollIntervalMs}ms`);
+  logger.info({ intervalMs: config.pollIntervalMs }, 'Queue poller started');
   startProfileRefresher();
-  console.log(`  Profile refresh: every ${PROFILE_REFRESH_INTERVAL_MS / 1000}s`);
+  logger.info({ intervalMs: PROFILE_REFRESH_INTERVAL_MS }, 'Profile refresher started');
   startLinkedInEnricher();
   if (config.serpApiKey) {
-    console.log(`  LinkedIn enricher: every ${LINKEDIN_ENRICHMENT_INTERVAL_MS / 1000}s`);
+    logger.info({ intervalMs: LINKEDIN_ENRICHMENT_INTERVAL_MS }, 'LinkedIn enricher started');
   }
   startRelationshipDescriber();
   if (config.relationshipModel) {
-    console.log(`  Relationship describer: every ${RELATIONSHIP_DESCRIPTION_INTERVAL_MS / 1000}s (model: ${config.relationshipModel})`);
+    logger.info({ intervalMs: RELATIONSHIP_DESCRIPTION_INTERVAL_MS, model: config.relationshipModel }, 'Relationship describer started');
   }
   startCommunityDetection();
-  console.log(`  Community detection: every ${COMMUNITY_DETECTION_INTERVAL_MS / 1000}s`);
+  logger.info({ intervalMs: COMMUNITY_DETECTION_INTERVAL_MS }, 'Community detection started');
   startCommunitySummarizer();
-  console.log(`  Community summarizer: every ${COMMUNITY_SUMMARY_INTERVAL_MS / 1000}s`);
+  logger.info({ intervalMs: COMMUNITY_SUMMARY_INTERVAL_MS }, 'Community summarizer started');
   startHubSpotSync();
   if (config.hubspotAccessToken) {
-    console.log(`  HubSpot sync: every ${config.hubspotPollIntervalMs / 1000}s (${config.hubspotObjectTypes})`);
+    logger.info({ intervalMs: config.hubspotPollIntervalMs, objectTypes: config.hubspotObjectTypes }, 'HubSpot sync started');
   }
-  preloadModels().catch(err => console.error('Model preload error:', err));
+  preloadModels().catch(err => logger.error({ err }, 'Model preload error'));
 }
 
 function logStartup() {
   const uniqueModels = [...new Set([config.embeddingModel, config.extractionModel, config.chatModel, config.relationshipModel].filter(Boolean))];
-  console.log(`  Models: ${uniqueModels.join(', ')}`);
-  if (config.slackBotToken) console.log(`  Slack webhook: /slack/events`);
-  if (config.telegramBotToken) console.log(`  Telegram webhook: /telegram/updates`);
-  if (config.fathomApiKey) console.log(`  Fathom webhook: /fathom/events`);
-  if (config.hubspotAccessToken) console.log(`  HubSpot sync: polling`);
-  if (config.hubspotWebhookSecret) console.log(`  HubSpot webhook: /hubspot/events`);
-  console.log(`  Admin dashboard: /admin`);
-  console.log(`  Chat: /chat`);
+  logger.info({ models: uniqueModels }, 'Models configured');
+  if (config.slackBotToken) logger.info('Slack webhook: /slack/events');
+  if (config.telegramBotToken) logger.info('Telegram webhook: /telegram/updates');
+  if (config.fathomApiKey) logger.info('Fathom webhook: /fathom/events');
+  if (config.hubspotAccessToken) logger.info('HubSpot sync: polling');
+  if (config.hubspotWebhookSecret) logger.info('HubSpot webhook: /hubspot/events');
+  logger.info('Admin dashboard: /admin');
+  logger.info('Chat: /chat');
 }
 
 // HTTP server — setup OAuth before listening
 setupOAuth()
   .then(() => {
     app.listen(config.mcpPort, () => {
-      console.log(`DanielBrain HTTP on port ${config.mcpPort}`);
-      console.log(`  MCP SSE: http://localhost:${config.mcpPort}/mcp/sse`);
-      if (oauthProvider) console.log('  OAuth: enabled');
+      logger.info({ port: config.mcpPort }, 'DanielBrain HTTP server started');
+      logger.info({ endpoint: `http://localhost:${config.mcpPort}/mcp` }, 'MCP Streamable HTTP');
+      if (oauthProvider) logger.info('OAuth: enabled');
       logStartup();
       startPollers();
     });
   })
   .catch((err) => {
-    console.error('OAuth setup failed:', err);
+    logger.error({ err }, 'OAuth setup failed');
     process.exit(1);
   });
 
@@ -573,8 +717,8 @@ if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
     { cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) },
     app,
   ).listen(httpsPort, () => {
-    console.log(`DanielBrain HTTPS on port ${httpsPort}`);
-    console.log(`  MCP SSE: https://100.120.74.69:${httpsPort}/mcp/sse`);
+    logger.info({ port: httpsPort }, 'DanielBrain HTTPS server started');
+    logger.info({ endpoint: `https://100.120.74.69:${httpsPort}/mcp` }, 'MCP Streamable HTTP (HTTPS)');
   });
 }
 

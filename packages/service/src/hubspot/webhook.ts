@@ -4,6 +4,10 @@ import { createContentHash } from '@danielbrain/shared';
 import { getObject, getAssociations } from './client.js';
 import { formatContact, formatCompany, formatDeal, formatNote } from './format.js';
 import type { HubSpotObjectType, FormattedRecord } from './types.js';
+import { hasContactActivity } from './sync.js';
+import { createChildLogger } from '../logger.js';
+
+const log = createChildLogger('hubspot-webhook');
 
 interface HubSpotWebhookEvent {
   objectId: number;
@@ -92,7 +96,9 @@ export async function handleHubSpotEvents(
   events: HubSpotWebhookEvent[],
   pool: pg.Pool,
   client: Client,
+  options?: { requireContactActivity?: boolean },
 ): Promise<{ processed: number; skipped: number; errors: number }> {
+  const requireContactActivity = options?.requireContactActivity ?? true;
   let processed = 0;
   let skipped = 0;
   let errors = 0;
@@ -122,6 +128,15 @@ export async function handleHubSpotEvents(
     }
 
     try {
+      // Skip inactive contacts (no deals, emails, or notes)
+      if (requireContactActivity && objectType === 'contacts') {
+        const record = await getObject(client, objectType, String(event.objectId));
+        if (!hasContactActivity(record)) {
+          skipped++;
+          continue;
+        }
+      }
+
       const formatted = await fetchAndFormat(client, objectType, String(event.objectId));
       if (!formatted) {
         skipped++;
@@ -147,7 +162,7 @@ export async function handleHubSpotEvents(
       );
       processed++;
     } catch (err) {
-      console.error(`HubSpot webhook error for ${objectType}/${event.objectId}:`, err);
+      log.error({ err, objectType, objectId: event.objectId }, 'HubSpot webhook error');
       errors++;
     }
   }

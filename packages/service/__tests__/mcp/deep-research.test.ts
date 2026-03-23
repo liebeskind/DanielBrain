@@ -42,6 +42,10 @@ vi.mock('../../src/ollama-mutex.js', () => ({
   releaseOllama: vi.fn(),
 }));
 
+vi.mock('../../src/logger.js', () => ({
+  createChildLogger: () => ({ info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }),
+}));
+
 const mockPool = {
   query: vi.fn(),
 };

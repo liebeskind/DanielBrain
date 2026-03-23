@@ -2,6 +2,9 @@ import fs from 'fs';
 import { execFile } from 'child_process';
 import { updateJob, getJob } from './job-tracker.js';
 import type { Config } from '../config.js';
+import { createChildLogger } from '../logger.js';
+
+const log = createChildLogger('transcribe');
 
 export async function runTranscription(jobId: string, config: Config): Promise<void> {
   const job = getJob(jobId);
@@ -20,7 +23,7 @@ export async function runTranscription(jobId: string, config: Config): Promise<v
     try {
       summary = await generateSummary(transcriptResult.text, config);
     } catch (err) {
-      console.warn('Transcription summary failed (non-fatal):', (err as Error).message);
+      log.warn({ err }, 'Transcription summary failed (non-fatal)');
     }
 
     updateJob(jobId, {

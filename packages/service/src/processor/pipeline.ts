@@ -6,6 +6,9 @@ import { chunkText, needsChunking } from './chunker.js';
 import { summarize } from './summarizer.js';
 import { resolveEntities } from './entity-resolver.js';
 import { computeSourceVisibility } from '../visibility.js';
+import { createChildLogger } from '../logger.js';
+
+const log = createChildLogger('pipeline');
 
 interface PipelineConfig {
   ollamaBaseUrl: string;
@@ -133,6 +136,13 @@ async function processShort(
       : extractMetadata(content, config),
   ]);
 
+  // Override LLM-extracted people/companies with known HubSpot associations (hybrid extraction)
+  const hubspotAssoc = sourceMeta?.hubspotAssociations as { people?: string[]; companies?: string[] } | undefined;
+  if (hubspotAssoc) {
+    if (hubspotAssoc.people?.length) metadata.people = hubspotAssoc.people;
+    if (hubspotAssoc.companies?.length) metadata.companies = hubspotAssoc.companies;
+  }
+
   // Merge structured action items
   if (structured.action_items?.length) {
     const merged = mergeActionItems(metadata.action_items, metadata.action_items_structured, structured.action_items);
@@ -192,7 +202,7 @@ async function processShort(
   try {
     await resolveEntities(rows[0].id, metadata, content, pool, config, sourceMeta, createdAt ?? undefined);
   } catch (err) {
-    console.error('Entity resolution failed (non-fatal):', err);
+    log.error({ err }, 'Entity resolution failed (non-fatal)');
   }
 
   return { id: rows[0].id, metadata };
@@ -300,7 +310,7 @@ async function processLong(
   try {
     await resolveEntities(parentId, metadata, content, pool, config, sourceMeta, createdAt ?? undefined);
   } catch (err) {
-    console.error('Entity resolution failed (non-fatal):', err);
+    log.error({ err }, 'Entity resolution failed (non-fatal)');
   }
 
   return { id: parentId, metadata, chunks: chunks.length };

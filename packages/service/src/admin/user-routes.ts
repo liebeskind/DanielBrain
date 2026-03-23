@@ -3,10 +3,16 @@ import express from 'express';
 import type pg from 'pg';
 import { generateApiKey } from '../user-context.js';
 import { logAudit } from '../audit.js';
+import { createChildLogger } from '../logger.js';
 
 const VALID_ROLES = ['owner', 'admin', 'member'];
 
 export function createUserRoutes(pool: pg.Pool): Router {
+  const log = createChildLogger('user-admin');
+  const getIp = (req: any) => {
+    const xff = req.headers['x-forwarded-for'];
+    return typeof xff === 'string' ? xff.split(',')[0].trim() : req.socket?.remoteAddress ?? null;
+  };
   const router = Router();
   router.use(express.json());
 
@@ -23,7 +29,7 @@ export function createUserRoutes(pool: pg.Pool): Router {
       );
       res.json(rows);
     } catch (err) {
-      console.error('List users error:', err);
+      log.error({ err }, 'List users error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -65,6 +71,7 @@ export function createUserRoutes(pool: pg.Pool): Router {
         resourceType: 'user',
         resourceId: user.id,
         metadata: { email: user.email, role: user.role },
+        ipAddress: getIp(req),
       });
 
       res.json(user);
@@ -73,7 +80,7 @@ export function createUserRoutes(pool: pg.Pool): Router {
         res.status(409).json({ error: 'User with this email already exists' });
         return;
       }
-      console.error('Create user error:', err);
+      log.error({ err }, 'Create user error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -137,11 +144,12 @@ export function createUserRoutes(pool: pg.Pool): Router {
         resourceType: 'user',
         resourceId: req.params.id,
         metadata: { updates: Object.keys(req.body) },
+        ipAddress: getIp(req),
       });
 
       res.json(rows[0]);
     } catch (err) {
-      console.error('Update user error:', err);
+      log.error({ err }, 'Update user error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -169,6 +177,7 @@ export function createUserRoutes(pool: pg.Pool): Router {
         resourceType: 'access_key',
         resourceId: keyId,
         metadata: { for_user: req.params.id, name },
+        ipAddress: getIp(req),
       });
 
       res.json({
@@ -177,7 +186,7 @@ export function createUserRoutes(pool: pg.Pool): Router {
         message: 'Save this key — it will not be shown again.',
       });
     } catch (err) {
-      console.error('Generate key error:', err);
+      log.error({ err }, 'Generate key error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -194,7 +203,7 @@ export function createUserRoutes(pool: pg.Pool): Router {
       );
       res.json(rows);
     } catch (err) {
-      console.error('List keys error:', err);
+      log.error({ err }, 'List keys error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -216,11 +225,12 @@ export function createUserRoutes(pool: pg.Pool): Router {
         action: 'deactivate_key',
         resourceType: 'access_key',
         resourceId: req.params.keyId,
+        ipAddress: getIp(req),
       });
 
       res.json({ ok: true });
     } catch (err) {
-      console.error('Deactivate key error:', err);
+      log.error({ err }, 'Deactivate key error');
       res.status(500).json({ error: 'Internal error' });
     }
   });

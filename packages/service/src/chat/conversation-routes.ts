@@ -6,6 +6,8 @@ import { buildContext } from './context-builder.js';
 import { streamChat } from './ollama-stream.js';
 import { SYSTEM_PROMPT } from './system-prompt.js';
 import { acquireOllama, releaseOllama } from '../ollama-mutex.js';
+import { createChildLogger } from '../logger.js';
+import { sanitizeError } from '../errors.js';
 import {
   CHAT_MAX_HISTORY_MESSAGES,
   CONVERSATION_TITLE_MAX_LENGTH,
@@ -22,6 +24,7 @@ function generateTitle(message: string): string {
 }
 
 export function createConversationRoutes(pool: pg.Pool, config: Config): Router {
+  const log = createChildLogger('chat');
   const router = Router();
   router.use(express.json());
 
@@ -52,7 +55,7 @@ export function createConversationRoutes(pool: pg.Pool, config: Config): Router 
       const { rows } = await pool.query(query, params);
       res.json(rows);
     } catch (err) {
-      console.error('List conversations error:', err);
+      log.error({ err }, 'List conversations error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -69,7 +72,7 @@ export function createConversationRoutes(pool: pg.Pool, config: Config): Router 
       );
       res.json(row);
     } catch (err) {
-      console.error('Create conversation error:', err);
+      log.error({ err }, 'Create conversation error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -86,7 +89,7 @@ export function createConversationRoutes(pool: pg.Pool, config: Config): Router 
       );
       res.json(rows);
     } catch (err) {
-      console.error('Get messages error:', err);
+      log.error({ err }, 'Get messages error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -125,7 +128,7 @@ export function createConversationRoutes(pool: pg.Pool, config: Config): Router 
       }
       res.json(rows[0]);
     } catch (err) {
-      console.error('Update conversation error:', err);
+      log.error({ err }, 'Update conversation error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -143,7 +146,7 @@ export function createConversationRoutes(pool: pg.Pool, config: Config): Router 
       }
       res.json({ ok: true });
     } catch (err) {
-      console.error('Delete conversation error:', err);
+      log.error({ err }, 'Delete conversation error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -180,14 +183,7 @@ export function createConversationRoutes(pool: pg.Pool, config: Config): Router 
       return;
     }
     try {
-      // Save user message
-      await pool.query(
-        `INSERT INTO chat_messages (conversation_id, role, content)
-         VALUES ($1, 'user', $2)`,
-        [conversationId, message],
-      );
-
-      // Load recent history for context
+      // Load recent history for context (user message not yet persisted)
       const { rows: historyRows } = await pool.query(
         `SELECT role, content FROM chat_messages
          WHERE conversation_id = $1
@@ -195,8 +191,11 @@ export function createConversationRoutes(pool: pg.Pool, config: Config): Router 
          LIMIT $2`,
         [conversationId, CHAT_MAX_HISTORY_MESSAGES],
       );
-      // Reverse to get chronological order (we fetched DESC)
-      const history = historyRows.reverse();
+      // Reverse to get chronological order (we fetched DESC), then append current message
+      const history = [
+        ...historyRows.reverse(),
+        { role: 'user', content: message },
+      ];
 
       // Build RAG context (with timeout so chat doesn't hang if Ollama is busy)
       let context: Awaited<ReturnType<typeof buildContext>>;
@@ -208,13 +207,13 @@ export function createConversationRoutes(pool: pg.Pool, config: Config): Router 
         );
         context = await Promise.race([contextPromise, timeoutPromise]);
       } catch (ctxErr) {
-        console.error('Context build failed:', ctxErr);
+        log.error({ err: ctxErr }, 'Context build failed');
         // Fall back to no-context chat
         context = { contextText: '', sources: [], entities: [] };
       }
 
       // Log retrieval results for debugging
-      console.log(`Chat context: ${context.sources.length} sources, ${context.entities.length} entities for "${message.slice(0, 80)}"`);
+      log.info({ sourceCount: context.sources.length, entityCount: context.entities.length }, 'Chat context built');
 
       // Send context metadata
       res.write(`data: ${JSON.stringify({ type: 'context', sources: context.sources, entities: context.entities })}\n\n`);
@@ -235,7 +234,13 @@ export function createConversationRoutes(pool: pg.Pool, config: Config): Router 
       // Stream response
       const { fullResponse } = await streamChat(messages, config.chatModel, config.ollamaBaseUrl, res);
 
-      // Save assistant message with context data
+      // On success: persist both user and assistant messages (idempotent — safe to retry on failure)
+      await pool.query(
+        `INSERT INTO chat_messages (conversation_id, role, content)
+         VALUES ($1, 'user', $2)`,
+        [conversationId, message],
+      );
+
       if (fullResponse) {
         await pool.query(
           `INSERT INTO chat_messages (conversation_id, role, content, context_data)
@@ -263,9 +268,9 @@ export function createConversationRoutes(pool: pg.Pool, config: Config): Router 
         [conversationId],
       );
     } catch (err) {
-      console.error('Chat message error:', err);
+      log.error({ err }, 'Chat message error');
       if (!res.writableEnded) {
-        res.write(`data: ${JSON.stringify({ error: `Chat error: ${String(err)}` })}\n\n`);
+        res.write(`data: ${JSON.stringify({ error: sanitizeError(err, 'Chat error') })}\n\n`);
         res.end();
       }
     } finally {

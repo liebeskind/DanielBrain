@@ -1,6 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createAdminRoutes } from '../../src/admin/routes.js';
 
+vi.mock('../../src/logger.js', () => ({
+  logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn(), child: vi.fn(() => ({ info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() })) },
+  createChildLogger: vi.fn(() => ({ info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() })),
+}));
+vi.mock('../../src/audit.js', () => ({
+  logAudit: vi.fn(),
+  getClientIp: vi.fn(() => null),
+}));
+
 vi.mock('../../src/parsers/index.js', () => ({
   parseFile: vi.fn(),
 }));

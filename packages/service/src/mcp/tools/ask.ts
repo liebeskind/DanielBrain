@@ -12,6 +12,7 @@ interface AskInput {
 interface AskConfig {
   ollamaBaseUrl: string;
   embeddingModel: string;
+  rerankerModel?: string;
 }
 
 export async function handleAsk(

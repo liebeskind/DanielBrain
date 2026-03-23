@@ -1,4 +1,7 @@
 import type { ThoughtMetadata } from '@danielbrain/shared';
+import { createChildLogger } from '../logger.js';
+
+const log = createChildLogger('telegram-notifier');
 
 interface NotifyParams {
   chatId: number;
@@ -31,6 +34,6 @@ export async function notifyTelegram(params: NotifyParams): Promise<void> {
     });
   } catch {
     // Notification is best-effort — don't throw
-    console.error('Failed to send Telegram notification');
+    log.error('Failed to send Telegram notification');
   }
 }

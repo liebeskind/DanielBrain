@@ -1,10 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { listObjects, searchModifiedSince, getAssociations, getObject, getPropertiesForType } from '../../src/hubspot/client.js';
+import { listObjects, searchModifiedSince, getAssociations, getObject, getPropertiesForType, withRetry } from '../../src/hubspot/client.js';
 import { CONTACT_PROPERTIES, COMPANY_PROPERTIES, DEAL_PROPERTIES, NOTE_PROPERTIES } from '../../src/hubspot/types.js';
 
 // Mock the @hubspot/api-client module
 vi.mock('@hubspot/api-client', () => ({
   Client: vi.fn(),
+}));
+
+// Mock the logger module
+const mockLog = vi.hoisted(() => ({ info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }));
+vi.mock('../../src/logger.js', () => ({
+  createChildLogger: () => mockLog,
 }));
 
 function createMockClient() {
@@ -34,6 +40,78 @@ function createMockClient() {
     },
   } as any;
 }
+
+describe('withRetry', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('returns result on first success', async () => {
+    const fn = vi.fn().mockResolvedValue('ok');
+    const result = await withRetry(fn, 'test');
+    expect(result).toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries on 429 and succeeds', async () => {
+    const err = Object.assign(new Error('rate limited'), { statusCode: 429 });
+    const fn = vi.fn()
+      .mockRejectedValueOnce(err)
+      .mockResolvedValueOnce('ok');
+
+    const promise = withRetry(fn, 'test', 3);
+    await vi.advanceTimersByTimeAsync(10_000); // 10s base delay for rate limits
+    const result = await promise;
+    expect(result).toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(mockLog.info).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'rate limited', delay: 10 }),
+      'HubSpot retry',
+    );
+  });
+
+  it('retries on ETIMEDOUT and succeeds', async () => {
+    const err = Object.assign(new Error('timeout'), { code: 'ETIMEDOUT' });
+    const fn = vi.fn()
+      .mockRejectedValueOnce(err)
+      .mockResolvedValueOnce('ok');
+
+    const promise = withRetry(fn, 'test', 3);
+    await vi.advanceTimersByTimeAsync(2_000); // 2s base delay for network errors
+    const result = await promise;
+    expect(result).toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(mockLog.info).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'ETIMEDOUT' }),
+      'HubSpot retry',
+    );
+  });
+
+  it('exhausts retries and re-throws', async () => {
+    const err = Object.assign(new Error('rate limited'), { statusCode: 429 });
+    const fn = vi.fn().mockRejectedValue(err);
+
+    const promise = withRetry(fn, 'test', 3);
+    // 3 attempts: attempt 1 fails + 10s wait, attempt 2 fails + 20s wait, attempt 3 fails + throws
+    await vi.advanceTimersByTimeAsync(10_000); // after attempt 1
+    await vi.advanceTimersByTimeAsync(20_000); // after attempt 2
+    await expect(promise).rejects.toThrow('rate limited');
+    expect(fn).toHaveBeenCalledTimes(3);
+  });
+
+  it('passes through non-transient errors immediately', async () => {
+    const err = new Error('not found');
+    const fn = vi.fn().mockRejectedValue(err);
+
+    await expect(withRetry(fn, 'test', 3)).rejects.toThrow('not found');
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('getPropertiesForType', () => {
   it('returns contact properties', () => {

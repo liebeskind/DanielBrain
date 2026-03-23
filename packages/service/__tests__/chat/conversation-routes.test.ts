@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createConversationRoutes, generateTitle } from '../../src/chat/conversation-routes.js';
 
+vi.mock('../../src/logger.js', () => ({
+  logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn(), child: vi.fn(() => ({ info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() })) },
+  createChildLogger: vi.fn(() => ({ info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() })),
+}));
+vi.mock('../../src/errors.js', () => ({
+  sanitizeError: vi.fn((_err: unknown, msg?: string) => msg || 'Internal error'),
+}));
+
 // Mock dependencies
 vi.mock('../../src/chat/context-builder.js', () => ({
   buildContext: vi.fn().mockResolvedValue({
@@ -208,11 +216,11 @@ describe('conversation routes', () => {
       const router = createConversationRoutes(mockPool, mockConfig);
       const handler = getHandler(router, 'post', '/:id/messages');
 
-      // Mock sequence: conv check, save user msg, load history, save assistant msg, count msgs, update conv
+      // Mock sequence: conv check, load history, [stream], insert user msg, insert assistant msg, count msgs, update title, update timestamp
       mockQuery
         .mockResolvedValueOnce({ rows: [{ id: 'conv-1' }] }) // conv exists
-        .mockResolvedValueOnce({ rows: [] }) // insert user msg
-        .mockResolvedValueOnce({ rows: [{ role: 'user', content: 'hi' }] }) // history
+        .mockResolvedValueOnce({ rows: [{ role: 'user', content: 'hi' }] }) // history (existing)
+        .mockResolvedValueOnce({ rows: [] }) // insert user msg (after streaming)
         .mockResolvedValueOnce({ rows: [] }) // insert assistant msg
         .mockResolvedValueOnce({ rows: [{ count: '2' }] }) // message count
         .mockResolvedValueOnce({ rows: [] }) // update title
@@ -248,8 +256,8 @@ describe('conversation routes', () => {
       // Conversation exists
       mockQuery
         .mockResolvedValueOnce({ rows: [{ id: 'conv-1' }] }) // conv check
+        .mockResolvedValueOnce({ rows: [] }) // history (empty)
         .mockResolvedValueOnce({ rows: [] }) // insert user msg
-        .mockResolvedValueOnce({ rows: [{ role: 'user', content: 'hi' }] }) // history
         .mockResolvedValueOnce({ rows: [] }) // insert assistant msg
         .mockResolvedValueOnce({ rows: [{ count: '2' }] }) // count
         .mockResolvedValueOnce({ rows: [] }) // update title
@@ -279,8 +287,8 @@ describe('conversation routes', () => {
 
       mockQuery
         .mockResolvedValueOnce({ rows: [{ id: 'conv-1' }] }) // conv check
+        .mockResolvedValueOnce({ rows: [] }) // history (empty — first message)
         .mockResolvedValueOnce({ rows: [] }) // insert user msg
-        .mockResolvedValueOnce({ rows: [{ role: 'user', content: 'What are the Q1 priorities for the engineering team?' }] }) // history
         .mockResolvedValueOnce({ rows: [] }) // insert assistant msg
         .mockResolvedValueOnce({ rows: [{ count: '2' }] }) // count = 2 → first exchange
         .mockResolvedValueOnce({ rows: [] }) // update title
@@ -316,8 +324,8 @@ describe('conversation routes', () => {
 
       mockQuery
         .mockResolvedValueOnce({ rows: [{ id: 'conv-1' }] }) // conv check
-        .mockResolvedValueOnce({ rows: [] }) // insert user msg
         .mockResolvedValueOnce({ rows: [{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'hello' }, { role: 'user', content: 'more' }] }) // history
+        .mockResolvedValueOnce({ rows: [] }) // insert user msg
         .mockResolvedValueOnce({ rows: [] }) // insert assistant msg
         .mockResolvedValueOnce({ rows: [{ count: '4' }] }) // count = 4 → not first exchange
         .mockResolvedValueOnce({ rows: [] }); // update timestamp
@@ -371,7 +379,7 @@ describe('conversation routes', () => {
 
       mockQuery
         .mockResolvedValueOnce({ rows: [{ id: 'conv-1' }] }) // conv check
-        .mockRejectedValueOnce(new Error('DB insert failed')); // save user msg fails
+        .mockRejectedValueOnce(new Error('DB query failed')); // load history fails
 
       const res = {
         status: vi.fn().mockReturnThis(),

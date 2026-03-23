@@ -6,6 +6,10 @@ vi.mock('../../src/hubspot/client.js', () => ({
   getAssociations: vi.fn(),
 }));
 
+vi.mock('../../src/logger.js', () => ({
+  createChildLogger: () => ({ info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }),
+}));
+
 import { getObject, getAssociations } from '../../src/hubspot/client.js';
 
 const mockPool = {
@@ -22,7 +26,7 @@ describe('handleHubSpotEvents', () => {
   it('processes a contact creation event', async () => {
     (getObject as any).mockResolvedValue({
       id: '101',
-      properties: { firstname: 'Alice', lastname: 'Smith', email: 'alice@acme.com' },
+      properties: { firstname: 'Alice', lastname: 'Smith', email: 'alice@acme.com', num_associated_deals: '1' },
       createdAt: '2026-01-01',
       updatedAt: '2026-03-01',
     });
@@ -78,7 +82,7 @@ describe('handleHubSpotEvents', () => {
   it('deduplicates multiple events for same object', async () => {
     (getObject as any).mockResolvedValue({
       id: '101',
-      properties: { firstname: 'Alice', lastname: 'Smith' },
+      properties: { firstname: 'Alice', lastname: 'Smith', num_associated_deals: '2' },
       createdAt: '2026-01-01',
       updatedAt: '2026-03-01',
     });
@@ -142,10 +146,58 @@ describe('handleHubSpotEvents', () => {
     expect(result.processed).toBe(0);
   });
 
+  it('skips inactive contacts via webhook', async () => {
+    (getObject as any).mockResolvedValue({
+      id: '101',
+      properties: { firstname: 'Stale', lastname: 'Import' }, // no activity signals
+      createdAt: '2020-01-01',
+      updatedAt: '2020-01-01',
+    });
+    (getAssociations as any).mockResolvedValue([]);
+
+    const events = [{
+      objectId: 101,
+      objectTypeId: '0-1',
+      subscriptionType: 'contact.creation',
+      eventId: 1,
+      portalId: 12345,
+      occurredAt: Date.now(),
+    }];
+
+    const result = await handleHubSpotEvents(events, mockPool as any, mockClient);
+    expect(result.processed).toBe(0);
+    expect(result.skipped).toBe(1);
+    // No queue insert should have been called
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  it('allows inactive contacts via webhook when requireContactActivity is false', async () => {
+    (getObject as any).mockResolvedValue({
+      id: '101',
+      properties: { firstname: 'Stale', lastname: 'Import' }, // no activity signals
+      createdAt: '2020-01-01',
+      updatedAt: '2020-01-01',
+    });
+    (getAssociations as any).mockResolvedValue([]);
+    mockPool.query.mockResolvedValueOnce({ rowCount: 1 });
+
+    const events = [{
+      objectId: 101,
+      objectTypeId: '0-1',
+      subscriptionType: 'contact.creation',
+      eventId: 1,
+      portalId: 12345,
+      occurredAt: Date.now(),
+    }];
+
+    const result = await handleHubSpotEvents(events, mockPool as any, mockClient, { requireContactActivity: false });
+    expect(result.processed).toBe(1);
+  });
+
   it('updates existing queue entries on webhook re-delivery', async () => {
     (getObject as any).mockResolvedValue({
       id: '101',
-      properties: { firstname: 'Alice', lastname: 'Updated' },
+      properties: { firstname: 'Alice', lastname: 'Updated', num_associated_deals: '2' },
       createdAt: '2026-01-01',
       updatedAt: '2026-03-15',
     });

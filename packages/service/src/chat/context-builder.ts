@@ -12,6 +12,7 @@ import {
 interface ContextConfig {
   ollamaBaseUrl: string;
   embeddingModel: string;
+  rerankerModel?: string;
 }
 
 export interface ContextResult {

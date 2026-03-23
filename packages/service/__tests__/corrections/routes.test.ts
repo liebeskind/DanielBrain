@@ -8,6 +8,10 @@ vi.mock('../../src/corrections/store.js', () => ({
   deleteCorrectionExample: vi.fn().mockResolvedValue(true),
 }));
 
+vi.mock('../../src/logger.js', () => ({
+  createChildLogger: () => ({ info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }),
+}));
+
 import { createCorrectionExample, listCorrectionExamples, deleteCorrectionExample } from '../../src/corrections/store.js';
 
 const mockPool = { query: vi.fn() };

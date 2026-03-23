@@ -1,4 +1,7 @@
 import type { ThoughtMetadata } from '@danielbrain/shared';
+import { createChildLogger } from '../logger.js';
+
+const log = createChildLogger('slack-notifier');
 
 interface NotifyParams {
   channel: string;
@@ -32,6 +35,6 @@ export async function notifySlack(params: NotifyParams): Promise<void> {
     });
   } catch {
     // Notification is best-effort — don't throw
-    console.error('Failed to send Slack notification');
+    log.error('Failed to send Slack notification');
   }
 }

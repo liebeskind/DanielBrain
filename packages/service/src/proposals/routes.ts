@@ -4,8 +4,12 @@ import { listProposalsInputSchema, reviewProposalInputSchema } from '@danielbrai
 import { applyProposal, revertProposal } from './applier.js';
 import type { Proposal } from '@danielbrain/shared';
 import { captureFromApproval, captureFromRejection } from '../corrections/auto-capture.js';
+import { createChildLogger } from '../logger.js';
+import { sanitizeError } from '../errors.js';
+import { logAudit } from '../audit.js';
 
 export function createProposalRoutes(pool: pg.Pool): Router {
+  const log = createChildLogger('proposals');
   const router = Router();
 
   // List proposals
@@ -170,8 +174,8 @@ export function createProposalRoutes(pool: pg.Pool): Router {
         offset: input.offset,
       });
     } catch (err) {
-      console.error('List proposals error:', err);
-      res.status(400).json({ error: (err as Error).message });
+      log.error({ err }, 'List proposals error');
+      res.status(400).json({ error: sanitizeError(err, 'Invalid request') });
     }
   });
 
@@ -211,8 +215,8 @@ export function createProposalRoutes(pool: pg.Pool): Router {
         message: `Reset ${rejected.length} rejected enrichment proposals. Enricher will retry these entities on next poll cycle.`,
       });
     } catch (err) {
-      console.error('Bulk re-enrich error:', err);
-      res.status(500).json({ error: (err as Error).message });
+      log.error({ err }, 'Bulk re-enrich error');
+      res.status(500).json({ error: sanitizeError(err) });
     }
   });
 
@@ -234,7 +238,7 @@ export function createProposalRoutes(pool: pg.Pool): Router {
 
       res.json(rows[0]);
     } catch (err) {
-      console.error('Get proposal error:', err);
+      log.error({ err }, 'Get proposal error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -292,7 +296,7 @@ export function createProposalRoutes(pool: pg.Pool): Router {
              WHERE id = $1`,
             [proposal.id, `Apply failed: ${(applyErr as Error).message}`]
           );
-          res.status(500).json({ error: `Apply failed: ${(applyErr as Error).message}` });
+          res.status(500).json({ error: sanitizeError(applyErr, 'Apply failed') });
           return;
         }
       }
@@ -306,9 +310,16 @@ export function createProposalRoutes(pool: pg.Pool): Router {
       captureFromApproval(proposal, correctedData, pool).catch(() => {});
 
       res.json({ ok: true, proposal_id: proposal.id, status: 'applied' });
+
+      logAudit(pool, {
+        action: 'proposal_approved',
+        resourceType: 'proposal',
+        resourceId: proposal.id,
+        metadata: { proposalType: proposal.proposal_type, entityId: proposal.entity_id },
+      });
     } catch (err) {
-      console.error('Approve proposal error:', err);
-      res.status(400).json({ error: (err as Error).message });
+      log.error({ err }, 'Approve proposal error');
+      res.status(400).json({ error: sanitizeError(err, 'Invalid request') });
     }
   });
 
@@ -348,7 +359,7 @@ export function createProposalRoutes(pool: pg.Pool): Router {
         try {
           await revertProposal(proposal, pool);
         } catch (revertErr) {
-          console.error('Revert failed:', revertErr);
+          log.error({ err: revertErr }, 'Revert failed');
           // Still mark as rejected, but note the failure
           await pool.query(
             `UPDATE proposals SET reviewer_notes = $2 WHERE id = $1`,
@@ -361,9 +372,16 @@ export function createProposalRoutes(pool: pg.Pool): Router {
       captureFromRejection(proposal, input.reviewer_notes || null, pool).catch(() => {});
 
       res.json({ ok: true, proposal_id: proposal.id, status: 'rejected' });
+
+      logAudit(pool, {
+        action: 'proposal_rejected',
+        resourceType: 'proposal',
+        resourceId: proposal.id,
+        metadata: { proposalType: proposal.proposal_type, entityId: proposal.entity_id },
+      });
     } catch (err) {
-      console.error('Reject proposal error:', err);
-      res.status(400).json({ error: (err as Error).message });
+      log.error({ err }, 'Reject proposal error');
+      res.status(400).json({ error: sanitizeError(err, 'Invalid request') });
     }
   });
 
@@ -397,9 +415,16 @@ export function createProposalRoutes(pool: pg.Pool): Router {
       }
 
       res.json({ ok: true, proposal_id: rows[0].id, status: 'needs_changes' });
+
+      logAudit(pool, {
+        action: 'proposal_needs_changes',
+        resourceType: 'proposal',
+        resourceId: rows[0].id,
+        metadata: { proposalType: rows[0].proposal_type },
+      });
     } catch (err) {
-      console.error('Needs-changes error:', err);
-      res.status(400).json({ error: (err as Error).message });
+      log.error({ err }, 'Needs-changes error');
+      res.status(400).json({ error: sanitizeError(err, 'Invalid request') });
     }
   });
 
@@ -455,8 +480,8 @@ export function createProposalRoutes(pool: pg.Pool): Router {
 
       res.json({ ok: true, message: `Reset enrichment for ${rows[0].entity_name || proposal.entity_id}. Enricher will retry on next poll.` });
     } catch (err) {
-      console.error('Re-enrich error:', err);
-      res.status(500).json({ error: (err as Error).message });
+      log.error({ err }, 'Re-enrich error');
+      res.status(500).json({ error: sanitizeError(err) });
     }
   });
 
@@ -480,8 +505,8 @@ export function createProposalRoutes(pool: pg.Pool): Router {
 
       res.json({ ok: true, proposal_id: rows[0].id, reviewer_notes: rows[0].reviewer_notes });
     } catch (err) {
-      console.error('Update notes error:', err);
-      res.status(500).json({ error: (err as Error).message });
+      log.error({ err }, 'Update notes error');
+      res.status(500).json({ error: sanitizeError(err) });
     }
   });
 
@@ -510,8 +535,8 @@ export function createProposalRoutes(pool: pg.Pool): Router {
 
       res.json({ ok: true, deleted: rows[0].id });
     } catch (err) {
-      console.error('Delete proposal error:', err);
-      res.status(500).json({ error: (err as Error).message });
+      log.error({ err }, 'Delete proposal error');
+      res.status(500).json({ error: sanitizeError(err) });
     }
   });
 

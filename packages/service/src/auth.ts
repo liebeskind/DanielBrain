@@ -4,6 +4,9 @@ import type pg from 'pg';
 import type { UserContext } from '@danielbrain/shared';
 import { resolveUserFromApiKey, resolveUserFromEmail } from './user-context.js';
 import { logAudit } from './audit.js';
+import { createChildLogger } from './logger.js';
+
+const log = createChildLogger('auth');
 
 // Extend Express Request to carry user context
 declare global {
@@ -94,13 +97,17 @@ export function requireAuth(pool: pg.Pool, legacyKey?: string) {
       const user = await authenticateRequest(req, pool, legacyKey);
       if (!user) {
         res.status(401).json({ error: 'Authentication required' });
+        logAudit(pool, {
+          action: 'auth_failed',
+          metadata: { reason: 'no_valid_identity', keyPrefix: (req.headers['x-brain-key'] as string)?.slice(0, 8) },
+        });
         return;
       }
 
       req.userContext = user;
       next();
     } catch (err) {
-      console.error('Auth middleware error:', err);
+      log.error({ err }, 'Auth middleware error');
       res.status(500).json({ error: 'Authentication error' });
     }
   };
@@ -132,7 +139,7 @@ export function optionalAuth(pool: pg.Pool, legacyKey?: string) {
       }
       next();
     } catch (err) {
-      console.error('Optional auth error:', err);
+      log.error({ err }, 'Optional auth error');
       next();
     }
   };

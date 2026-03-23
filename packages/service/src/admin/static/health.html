@@ -6,6 +6,59 @@
   <title>Health - TopiaBrain</title>
   <link rel="stylesheet" href="style.css">
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>
+    .stat-card.clickable { cursor: pointer; transition: transform 0.15s ease, box-shadow 0.15s ease; }
+    .stat-card.clickable:hover { transform: translateY(-2px); box-shadow: var(--shadow-card-hover); }
+    .stat-card.selected { border-color: var(--accent) !important; box-shadow: 0 0 0 1px var(--accent), var(--shadow-card); }
+    .detail-panel {
+      margin-top: 24px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius-lg);
+      padding: 20px;
+      backdrop-filter: blur(var(--blur));
+    }
+    .detail-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .detail-header h2 { font-size: 16px; font-weight: 600; }
+    .detail-close {
+      background: none;
+      border: 1px solid var(--border-glass);
+      color: var(--text-secondary);
+      width: 28px;
+      height: 28px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+    }
+    .detail-close:hover { background: var(--bg-surface-hover); color: var(--text-primary); }
+    .content-preview {
+      font-size: 12px;
+      color: var(--text-secondary);
+      max-width: 400px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .load-more-row { text-align: center; padding: 12px; }
+    .load-more-row button {
+      background: var(--bg-surface-hover);
+      border: 1px solid var(--border-glass);
+      color: var(--text-secondary);
+      padding: 6px 16px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .load-more-row button:hover { background: var(--bg-surface-active); color: var(--text-primary); }
+  </style>
 </head>
 <body>
   <div class="app-layout">
@@ -59,28 +112,42 @@
     <main class="main-content" x-data="healthApp()" x-init="init()">
       <div class="page-header">
         <h1>System Health</h1>
-        <p>Queue status, failed items, and retry management</p>
+        <p>Queue status, failed items, and retry management. Click a card to see details.</p>
       </div>
 
       <!-- Stats grid -->
       <div class="stats-grid" x-show="stats">
-        <div class="stat-card" :style="stats?.queue?.pending > 0 ? 'border-color: var(--accent-amber)' : ''">
+        <div class="stat-card clickable"
+             :class="{ selected: activeCategory === 'pending' }"
+             :style="stats?.queue?.pending > 0 ? 'border-color: var(--accent-amber)' : ''"
+             @click="toggleCategory('pending')">
           <div class="number" x-text="stats?.queue?.pending || 0"></div>
           <div class="label">Pending</div>
         </div>
-        <div class="stat-card" :style="stats?.queue?.processing > 0 ? 'border-color: var(--accent-sky)' : ''">
+        <div class="stat-card clickable"
+             :class="{ selected: activeCategory === 'processing' }"
+             :style="stats?.queue?.processing > 0 ? 'border-color: var(--accent-sky)' : ''"
+             @click="toggleCategory('processing')">
           <div class="number" x-text="stats?.queue?.processing || 0"></div>
           <div class="label">Processing</div>
         </div>
-        <div class="stat-card" :style="stats?.queue?.failed > 0 ? 'border-color: var(--accent-red, #ef4444)' : ''">
+        <div class="stat-card clickable"
+             :class="{ selected: activeCategory === 'failed' }"
+             :style="stats?.queue?.failed > 0 ? 'border-color: var(--accent-red, #ef4444)' : ''"
+             @click="toggleCategory('failed')">
           <div class="number" style="color: var(--accent-red, #ef4444)" x-text="stats?.queue?.failed || 0"></div>
           <div class="label">Failed</div>
         </div>
-        <div class="stat-card" :style="stats?.extraction_gaps > 0 ? 'border-color: var(--accent-amber)' : ''">
+        <div class="stat-card clickable"
+             :class="{ selected: activeCategory === 'extraction_gaps' }"
+             :style="stats?.extraction_gaps > 0 ? 'border-color: var(--accent-amber)' : ''"
+             @click="toggleCategory('extraction_gaps')">
           <div class="number" x-text="stats?.extraction_gaps || 0"></div>
           <div class="label">Extraction Gaps</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card clickable"
+             :class="{ selected: activeCategory === 'completed' }"
+             @click="toggleCategory('completed')">
           <div class="number" x-text="stats?.queue?.completed || 0"></div>
           <div class="label">Completed</div>
         </div>
@@ -91,75 +158,55 @@
         </div>
       </div>
 
-      <!-- Retry All button -->
-      <div style="margin: 24px 0; display: flex; gap: 12px; align-items: center;">
-        <button class="btn btn-primary" @click="retryAll()" :disabled="!stats?.queue?.failed || retrying">
-          <span x-text="retrying ? 'Retrying...' : 'Retry All Failed (' + (stats?.queue?.failed || 0) + ')'"></span>
-        </button>
-        <span x-show="retryMessage" x-text="retryMessage" style="color: var(--accent-green, #22c55e); font-size: 13px;"></span>
-      </div>
-
-      <!-- Pending retries in backoff -->
-      <template x-if="stats?.pending_retries?.length > 0">
-        <div style="margin-bottom: 32px;">
-          <h2 style="font-size: 18px; margin-bottom: 12px;">Pending Retries</h2>
-          <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">Items waiting for retry after transient failure</p>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Source</th>
-                  <th>Source ID</th>
-                  <th>Attempts</th>
-                  <th>Error</th>
-                  <th>Retry At</th>
-                </tr>
-              </thead>
-              <tbody>
-                <template x-for="item in stats.pending_retries" :key="item.id">
-                  <tr>
-                    <td><span :class="'badge badge-source-' + item.source" x-text="item.source"></span></td>
-                    <td style="font-size: 12px; font-family: monospace;" x-text="item.source_id ? item.source_id.slice(0, 20) : '-'"></td>
-                    <td x-text="item.attempts"></td>
-                    <td style="font-size: 12px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" x-text="item.error || '-'"></td>
-                    <td x-text="formatCountdown(item.retry_after)"></td>
-                  </tr>
-                </template>
-              </tbody>
-            </table>
+      <!-- Detail panel (appears when a card is clicked) -->
+      <template x-if="activeCategory && detailItems !== null">
+        <div class="detail-panel">
+          <div class="detail-header">
+            <h2>
+              <span x-text="categoryLabel(activeCategory)"></span>
+              <span style="color: var(--text-muted); font-weight: 400; font-size: 13px; margin-left: 8px;"
+                    x-text="'(' + categoryCount(activeCategory) + ' total)'"></span>
+            </h2>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <span x-show="retryMessage" x-text="retryMessage" style="color: var(--accent-green, #22c55e); font-size: 13px;"></span>
+              <button x-show="activeCategory === 'failed' && detailItems?.length > 0"
+                      class="btn btn-primary" @click="retryAll()" :disabled="retrying">
+                <span x-text="retrying ? 'Retrying...' : 'Retry All (' + categoryCount('failed') + ')'"></span>
+              </button>
+              <button class="detail-close" @click="closeDetail()">&times;</button>
+            </div>
           </div>
-        </div>
-      </template>
 
-      <!-- Failed items table -->
-      <div>
-        <h2 style="font-size: 18px; margin-bottom: 12px;">Failed Items</h2>
-        <template x-if="!stats?.failed_items?.length">
-          <div class="empty-state">No failed items. All clear!</div>
-        </template>
-        <template x-if="stats?.failed_items?.length > 0">
-          <div class="table-wrap">
+          <template x-if="detailItems.length === 0">
+            <div class="empty-state" x-text="'No ' + categoryLabel(activeCategory).toLowerCase() + ' items.'"></div>
+          </template>
+
+          <!-- Queue items table (pending/processing/completed/failed) -->
+          <div class="table-wrap" x-show="activeCategory !== 'extraction_gaps' && detailItems.length > 0">
             <table>
               <thead>
                 <tr>
                   <th>Source</th>
                   <th>Source ID</th>
-                  <th>Attempts</th>
-                  <th>Error</th>
-                  <th>Failed At</th>
-                  <th></th>
+                  <th>Preview</th>
+                  <th x-show="activeCategory === 'failed'">Error</th>
+                  <th x-show="activeCategory === 'failed' || activeCategory === 'pending'">Attempts</th>
+                  <th>Date</th>
+                  <th x-show="activeCategory === 'failed'"></th>
                 </tr>
               </thead>
               <tbody>
-                <template x-for="item in stats.failed_items" :key="item.id">
+                <template x-for="item in detailItems" :key="item.id">
                   <tr>
                     <td><span :class="'badge badge-source-' + item.source" x-text="item.source"></span></td>
-                    <td style="font-size: 12px; font-family: monospace;" x-text="item.source_id ? item.source_id.slice(0, 20) : '-'"></td>
-                    <td x-text="item.attempts"></td>
-                    <td style="font-size: 12px; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                    <td style="font-size: 12px; font-family: monospace;" x-text="item.source_id ? item.source_id.slice(0, 24) : '-'"></td>
+                    <td class="content-preview" :title="item.content_preview" x-text="item.content_preview || '-'"></td>
+                    <td x-show="activeCategory === 'failed'"
+                        style="font-size: 12px; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
                         :title="item.error" x-text="item.error || '-'"></td>
-                    <td x-text="formatDate(item.processed_at || item.created_at)"></td>
-                    <td>
+                    <td x-show="activeCategory === 'failed' || activeCategory === 'pending'" x-text="item.attempts ?? '-'"></td>
+                    <td style="white-space: nowrap;" x-text="formatDate(item.processed_at || item.created_at)"></td>
+                    <td x-show="activeCategory === 'failed'">
                       <button class="btn btn-small" @click="retrySingle(item.id)">Retry</button>
                     </td>
                   </tr>
@@ -167,8 +214,40 @@
               </tbody>
             </table>
           </div>
-        </template>
-      </div>
+
+          <!-- Extraction gaps table -->
+          <div class="table-wrap" x-show="activeCategory === 'extraction_gaps' && detailItems.length > 0">
+            <table>
+              <thead>
+                <tr>
+                  <th>Source</th>
+                  <th>Type</th>
+                  <th>Preview</th>
+                  <th>Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="item in detailItems" :key="item.id">
+                  <tr>
+                    <td><span :class="'badge badge-source-' + item.source" x-text="item.source"></span></td>
+                    <td style="font-size: 12px;" x-text="item.thought_type || '-'"></td>
+                    <td class="content-preview" :title="item.content_preview" x-text="item.content_preview || '-'"></td>
+                    <td style="white-space: nowrap;" x-text="formatDate(item.created_at)"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Load more -->
+          <div class="load-more-row" x-show="detailHasMore">
+            <button @click="loadMoreDetail()" :disabled="detailLoading">
+              <span x-text="detailLoading ? 'Loading...' : 'Load more'"></span>
+            </button>
+          </div>
+        </div>
+      </template>
+
     </main>
   </div>
 
@@ -180,6 +259,11 @@
         retrying: false,
         retryMessage: '',
         refreshTimer: null,
+        activeCategory: null,
+        detailItems: null,
+        detailHasMore: false,
+        detailLoading: false,
+        detailPageSize: 50,
 
         async init() {
           await this.loadStats();
@@ -188,7 +272,7 @@
 
         async loadStats() {
           try {
-            const res = await fetch('/admin/api/health/stats');
+            var res = await fetch('/admin/api/health/stats');
             this.stats = await res.json();
           } catch (e) {
             console.error('Health stats error:', e);
@@ -200,18 +284,88 @@
           this.refreshTimer = setInterval(() => {
             if (this.stats && (this.stats.queue.pending > 0 || this.stats.queue.processing > 0 || this.stats.pending_retries?.length > 0)) {
               this.loadStats();
+              if (this.activeCategory && (this.activeCategory === 'pending' || this.activeCategory === 'processing')) {
+                this.loadDetail(this.activeCategory, false);
+              }
             }
           }, 5000);
+        },
+
+        toggleCategory(category) {
+          if (this.activeCategory === category) {
+            this.closeDetail();
+            return;
+          }
+          if (this.categoryCount(category) === 0) return;
+          this.activeCategory = category;
+          this.detailItems = null;
+          this.detailHasMore = false;
+          this.loadDetail(category, true);
+        },
+
+        async loadDetail(category, reset) {
+          if (reset) {
+            this.detailItems = null;
+          }
+          this.detailLoading = true;
+          try {
+            var offset = reset ? 0 : (this.detailItems ? this.detailItems.length : 0);
+            var res = await fetch('/admin/api/health/detail/' + category + '?limit=' + this.detailPageSize + '&offset=' + offset);
+            var data = await res.json();
+            if (reset) {
+              this.detailItems = data.items;
+            } else {
+              this.detailItems = (this.detailItems || []).concat(data.items);
+            }
+            this.detailHasMore = data.items.length === this.detailPageSize;
+          } catch (e) {
+            console.error('Detail load error:', e);
+            this.detailItems = [];
+          } finally {
+            this.detailLoading = false;
+          }
+        },
+
+        loadMoreDetail() {
+          if (this.activeCategory) {
+            this.loadDetail(this.activeCategory, false);
+          }
+        },
+
+        closeDetail() {
+          this.activeCategory = null;
+          this.detailItems = null;
+          this.detailHasMore = false;
+        },
+
+        categoryLabel(cat) {
+          var labels = {
+            pending: 'Pending',
+            processing: 'Processing',
+            completed: 'Completed',
+            failed: 'Failed',
+            extraction_gaps: 'Extraction Gaps'
+          };
+          return labels[cat] || cat;
+        },
+
+        categoryCount(cat) {
+          if (!this.stats) return 0;
+          if (cat === 'extraction_gaps') return this.stats.extraction_gaps || 0;
+          return this.stats.queue?.[cat] || 0;
         },
 
         async retryAll() {
           this.retrying = true;
           this.retryMessage = '';
           try {
-            const res = await fetch('/admin/api/health/retry-all', { method: 'POST' });
-            const data = await res.json();
+            var res = await fetch('/admin/api/health/retry-all', { method: 'POST' });
+            var data = await res.json();
             this.retryMessage = 'Queued ' + (data.count || 0) + ' items for retry';
             await this.loadStats();
+            if (this.activeCategory === 'failed') {
+              this.loadDetail('failed', true);
+            }
           } catch (e) {
             this.retryMessage = 'Retry failed: ' + e.message;
           } finally {
@@ -223,6 +377,9 @@
           try {
             await fetch('/admin/api/health/retry/' + id, { method: 'POST' });
             await this.loadStats();
+            if (this.activeCategory === 'failed') {
+              this.loadDetail('failed', true);
+            }
           } catch (e) {
             console.error('Retry error:', e);
           }

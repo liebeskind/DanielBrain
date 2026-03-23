@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type pg from 'pg';
+import { createChildLogger } from '../logger.js';
 import {
   semanticSearchInputSchema,
   listRecentInputSchema,
@@ -46,6 +47,8 @@ function getVisibility(extra: any): string[] | null {
   if (!tags || !Array.isArray(tags) || tags.length === 0) return null;
   return tags;
 }
+
+const log = createChildLogger('mcp');
 
 export function createMcpServer(pool: pg.Pool, config: Config): McpServer {
   const server = new McpServer({
@@ -98,7 +101,7 @@ EXAMPLE: deep_research({ question: "What are the key decisions made about the K1
           isError: 'error' in result,
         };
       } catch (err: any) {
-        console.error('[MCP deep_research] Handler error:', err.message);
+        log.error({ err }, 'deep_research handler error');
         return {
           content: [{ type: 'text' as const, text: JSON.stringify({ error: err.message }) }],
           isError: true,

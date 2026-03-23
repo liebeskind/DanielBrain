@@ -1,4 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+vi.mock('../../src/logger.js', () => ({
+  createChildLogger: () => ({ info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }),
+}));
+
 import { formatAsSrt, applySpeakerNames } from '../../src/transcribe/service.js';
 
 describe('formatAsSrt', () => {

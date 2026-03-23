@@ -1,6 +1,9 @@
 import type pg from 'pg';
 import type { ExtractedRelationship } from './relationship-extractor.js';
 import { normalizeName } from './entity-resolver.js';
+import { createChildLogger } from '../logger.js';
+
+const log = createChildLogger('relationship-applier');
 
 /**
  * Apply explicitly extracted relationships to the entity_relationships table.
@@ -56,7 +59,7 @@ export async function applyExtractedRelationships(
         [canonSource, canonTarget, rel.relationship, rel.description, thoughtId],
       );
     } catch (err) {
-      console.error(`Failed to apply relationship ${rel.source} → ${rel.target}:`, err);
+      log.error({ err, source: rel.source, target: rel.target }, 'Failed to apply relationship');
     }
   }
 

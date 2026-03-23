@@ -1,6 +1,9 @@
 import type pg from 'pg';
 import { embed } from './embedder.js';
 import { COMMUNITY_SUMMARY_BATCH_SIZE, OLLAMA_LLM_TIMEOUT_MS } from '@danielbrain/shared';
+import { createChildLogger } from '../logger.js';
+
+const log = createChildLogger('community-summarizer');
 
 interface SummarizerConfig {
   ollamaBaseUrl: string;
@@ -145,7 +148,7 @@ export async function summarizeCommunity(
       throw new Error('Missing required fields');
     }
   } catch (err) {
-    console.error('Failed to parse community summary response:', raw);
+    log.error({ raw }, 'Failed to parse community summary response');
     throw new Error(`Failed to parse community summary: ${(err as Error).message}`);
   }
 
@@ -182,7 +185,7 @@ export async function summarizeUnsummarizedCommunities(
       const result = await summarizeCommunity(community.id, pool, config);
       if (result) summarized++;
     } catch (err) {
-      console.error(`Community summary failed for ${community.id}:`, err);
+      log.error({ err, communityId: community.id }, 'Community summary failed');
     }
   }
 

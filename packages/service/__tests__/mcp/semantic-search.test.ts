@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { handleSemanticSearch } from '../../src/mcp/tools/semantic-search.js';
 import * as embedder from '../../src/processor/embedder.js';
+import * as reranker from '../../src/processor/reranker.js';
 import { RRF_K, HYBRID_VECTOR_WEIGHT, HYBRID_BM25_WEIGHT } from '@danielbrain/shared';
 
 vi.mock('../../src/processor/embedder.js');
+vi.mock('../../src/processor/reranker.js');
 
 const mockPool = {
   query: vi.fn(),
@@ -170,5 +172,47 @@ describe('handleSemanticSearch', () => {
 
     expect(result[0].parent_context).toBeDefined();
     expect(result[0].parent_context!.summary).toBe('Parent summary');
+  });
+
+  it('calls reranker when rerankerModel is configured', async () => {
+    const rows = [
+      { id: '1', content: 'First', summary: 'Sum1', source: 'slack', parent_id: null, similarity: 0.9 },
+      { id: '2', content: 'Second', summary: null, source: 'slack', parent_id: null, similarity: 0.8 },
+    ];
+    mockPool.query.mockResolvedValueOnce({ rows });
+
+    // Mock rerank to reverse order
+    vi.mocked(reranker.rerank).mockImplementation(async (_q, items) => [...items].reverse());
+
+    const configWithReranker = { ...mockConfig, rerankerModel: 'Xenova/ms-marco-MiniLM-L-6-v2' };
+    const result = await handleSemanticSearch(
+      { query: 'test', limit: 10, threshold: 0.5 },
+      mockPool as any,
+      configWithReranker,
+    );
+
+    expect(reranker.rerank).toHaveBeenCalledWith(
+      'test',
+      expect.any(Array),
+      expect.any(Function),
+      'Xenova/ms-marco-MiniLM-L-6-v2',
+    );
+    // Reranker reversed the order
+    expect(result[0].id).toBe('2');
+    expect(result[1].id).toBe('1');
+  });
+
+  it('skips reranking when rerankerModel not configured', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ id: '1', content: 'First', source: 'slack', parent_id: null, similarity: 0.9 }],
+    });
+
+    await handleSemanticSearch(
+      { query: 'test', limit: 10, threshold: 0.5 },
+      mockPool as any,
+      mockConfig, // no rerankerModel
+    );
+
+    expect(reranker.rerank).not.toHaveBeenCalled();
   });
 });

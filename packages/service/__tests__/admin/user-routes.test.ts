@@ -6,6 +6,11 @@ vi.mock('../../src/user-context.js', () => ({
 }));
 vi.mock('../../src/audit.js', () => ({
   logAudit: vi.fn(),
+  getClientIp: vi.fn(() => null),
+}));
+vi.mock('../../src/logger.js', () => ({
+  logger: { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn(), child: vi.fn(() => ({ info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() })) },
+  createChildLogger: vi.fn(() => ({ info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() })),
 }));
 
 const mockPool = { query: vi.fn() };
@@ -15,6 +20,7 @@ function mockReq(overrides: Record<string, any> = {}) {
   return {
     body: {},
     params: {},
+    headers: {},
     userContext: undefined,
     ...overrides,
   };

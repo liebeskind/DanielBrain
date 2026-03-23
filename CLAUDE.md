@@ -1,318 +1,128 @@
 # DanielBrain
 
-A database-backed, AI-accessible personal knowledge system evolving into a company-wide context graph. One brain that every AI tool can plug into via MCP — the shared memory layer for an intelligent operating system.
+A shared memory layer for AI agents — the persistent substrate for stateless workers. Any authorized agent plugs in via MCP to read, query, and write to a unified context graph.
 
-## Vision
-
-DanielBrain is a **shared memory layer for AI agents**. Agents are stateless workers; the brain is the persistent substrate. Any authorized agent (Claude, GPT, custom automation) plugs in via MCP to read, query, and eventually write to a unified context graph.
-
-**Evolution path**: Personal prototype → company-wide context graph → agent automation platform.
-
-**Data model**: Hybrid shared/private. Entities (people, companies, projects) are shared canonical nodes. Thoughts are privately scoped with source-determined default visibility. Selective sharing allows promotion from private to team/company.
-
-See `docs/vision/` for detailed use cases and architecture vision.
+**Evolution**: Personal prototype → company-wide context graph → agent automation platform.
+**Data model**: Hybrid shared/private. Entities are shared canonical nodes. Thoughts are privately scoped with source-determined visibility. See `docs/vision/` for details.
 
 ## Data Sovereignty — MANDATORY
 
-**All inference, storage, and retrieval MUST remain on-prem (DGX Spark).** No company vault data — thoughts, transcripts, entities, embeddings, or any brain contents — may ever be sent to external AI APIs (Claude API, OpenAI, etc.). Claude Code may read source code and assist with development, but must never be given access to production data. Any new feature (chat, search, summarization) must use local Ollama models, not cloud LLMs. This is a hard architectural constraint, not a preference.
+**All inference, storage, and retrieval MUST remain on-prem (DGX Spark).** No brain contents may ever be sent to external AI APIs (Claude API, OpenAI, etc.). Claude Code may read source code but must never access production data. New features must use local Ollama models, not cloud LLMs. This is a hard architectural constraint, not a preference.
 
 ## Architecture
 
-- **PostgreSQL + pgvector** on DGX Spark for storage and vector search
-- **Ollama** on DGX Spark for embeddings (nomic-embed-text) and all LLM tasks (llama3.3:70b — extraction, summarization, profiles, chat, relationship descriptions). 2 models kept resident via `OLLAMA_MAX_LOADED_MODELS=2` + `OLLAMA_KEEP_ALIVE=24h`
-- **MCP server** (HTTP/SSE transport) with 13 tools (4 thought + 4 entity + 3 relationship + 2 community)
-- **Entity knowledge graph**: first-class entities linked to thoughts + entity-to-entity relationship edges with temporal tracking
-- **Profile generation**: LLM-generated entity profiles with vector embeddings for entity-level semantic search
-- **Approvals queue**: confidence-gated proposal system for human-in-the-loop quality control
-- **Admin dashboard**: web UI at `/admin` for reviewing proposals, entity overview, and stats
-- **LinkedIn enricher**: background poller using SerpAPI (optional, 33/day on Starter plan)
-- **Fathom webhook**: meeting transcript ingestion from Fathom (opt-in via config)
-- **HubSpot integration**: CRM entity ingestion (contacts, companies, deals) via polling + webhook, direct field mapping bypasses LLM extraction
-- **Slack webhook** capture through Cloudflare Tunnel
-- **Telegram webhook** as second input channel (opt-in via config)
-- **Community detection**: Louvain algorithm (graphology) clusters related entities; LLM-generated summaries with vector embeddings for global search
-- **Cloudflare Tunnel + Zero Trust** for remote access (no open ports)
+- **PostgreSQL + pgvector** on DGX Spark — storage, vector search, hybrid retrieval (RRF)
+- **Ollama** on DGX Spark — nomic-embed-text (embeddings) + llama3.3:70b (all LLM tasks). 2 models kept resident in VRAM (~55GB). Preloaded at startup. Zero model swapping.
+- **MCP server** (Streamable HTTP) — 18 tools across thoughts, entities, relationships, communities
+- **Express** with pino JSON logging, per-tier rate limiting, Cloudflare Tunnel + Zero Trust
+- **Entity knowledge graph** — entities → thoughts, entity → entity edges (co-occurrence, temporal)
+- **Community detection** — Louvain algorithm (graphology), LLM-generated community summaries
+- **Approvals queue** — confidence-gated proposals for human review at `/admin`
+- **Integrations**: Slack, Telegram (opt-in), Fathom transcripts (opt-in), HubSpot CRM (opt-in), LinkedIn enrichment (opt-in via SerpAPI)
 
 ## Project Structure
 
 ```
 packages/shared/         # Types, Zod schemas, DB client, constants
-packages/service/        # MCP server, processing pipeline, Slack + Telegram integration
-  src/processor/         # chunker, embedder, extractor, summarizer, pipeline,
+packages/service/        # Main service
+  src/processor/         # Pipeline: chunker, embedder, extractor, summarizer,
                          # entity-resolver, profile-generator, queue-poller,
-                         # relationship-builder, relationship-describer,
-                         # community-detector, community-summarizer,
-                         # slack-notifier, telegram-notifier
-  src/mcp/               # MCP server + 8 tool handlers
-    tools/               # semantic-search, list-recent, stats, save-thought,
-                         # get-entity, list-entities, get-context, get-timeline,
-                         # get-communities, global-search
-  src/slack/             # Webhook handler + signature verification
-  src/telegram/          # Webhook handler + secret token verification
-  src/fathom/            # Webhook handler + svix signature verification + transcript fetcher
-  src/hubspot/           # HubSpot CRM integration (client, sync, format, webhook, verify)
-  src/proposals/          # Approvals queue: applier, reverter, helpers, REST routes
-  src/enrichers/          # Background enrichment pollers (LinkedIn via Google CSE)
-  src/chat/               # Chat interface: routes, context builder, ollama streaming, conversation/project CRUD
-  src/admin/              # Admin dashboard routes + static HTML/CSS/JS
-  src/auth.ts            # API key verification (timing-safe)
-  src/config.ts          # Zod-validated config from env vars
-  src/index.ts           # Entry: Express + MCP SSE + webhooks + queue poller + profile refresher + enricher
-migrations/              # 15 SQL migration files
-  001 pgvector           # Enable extensions
-  002 thoughts           # Thoughts table + update_updated_at trigger
-  003 queue              # Async processing queue
-  004 access_keys        # API key management with scopes
-  005 indexes            # HNSW, GIN, B-tree indexes for thoughts
-  006 match_function     # match_thoughts() for semantic search
-  007 entities           # Entity table with entity_type enum
-  008 thought_entities   # Junction table with relationship types
-  009 entity_relationships # Entity-to-entity relationships (schema ready, not populated)
-  010 entity_indexes     # HNSW, GIN, B-tree indexes for entities
-  011 find_entity_function # find_entity_by_name() SQL function
-  012 merge_duplicates   # Junk cleanup + duplicate entity merge
-  013 update_find_entity # Align SQL normalization with app code
-  014 create_proposals   # Proposals table for approvals queue
-  015 add_queue_source_id # Add source_id to queue for dedup (Fathom etc.)
-  ...
-  021 add_tsvector        # tsvector column, trigger, GIN index, backfill
-  022 create_hybrid_search # hybrid_search() RRF function replacing match_thoughts()
-  023 create_conversations  # conversations, chat_messages, projects tables
-  024 add_extraction_columns # New extraction fields on thoughts
-  025 backfill_entity_last_seen # Backfill entity last_seen_at from thoughts
-  026 add_queue_retry_after # retry_after column + partial index for backoff
-  029 create_communities   # communities + entity_communities tables, HNSW index
-  020 add_relationship_columns # weight, description, valid_at/invalid_at, source_thought_ids
-  037 hubspot_sync_state  # HubSpot sync state tracking (singleton row)
-scripts/migrate.ts       # Migration runner
-docker/                  # docker-compose.yml (prod) + docker-compose.test.yml (test)
-docs/
-  reference/             # Original Open Brain video transcript
-  reference/graphiti/    # Graphiti (Zep) — temporal KG for agent memory (9 docs)
-  reference/graphrag/    # Microsoft GraphRAG — community detection + global search (8 docs)
-  reference/khoj/        # Khoj — self-hosted AI brain with agents (9 docs)
-  reference/mem0/        # Mem0 — memory lifecycle management (9 docs)
-  reference/lightrag/    # LightRAG — dual-level retrieval (2 docs)
-  reference/haystack/    # Haystack — pipeline architecture (2 docs)
-  reference/ragflow/     # RAGFlow — document understanding + HITL (8 docs)
-  reference/cognee/      # cognee — KG memory framework (11 docs)
-  reference/synthesis.md # Cross-project comparison + architecture recommendations
-  vision/                # Use cases by department, context graph vision
-  plans/                 # Implementation plans (design docs)
+                         # relationship-builder/describer, community-detector/summarizer
+  src/mcp/tools/         # 18 MCP tool handlers (semantic-search, list-recent, stats,
+                         # save-thought, get-entity, list-entities, get-context,
+                         # get-timeline, get-communities, global-search, ask,
+                         # deep-research, update-entity, propose-merge)
+  src/db/                # Centralized query modules (thought-queries.ts enforces visibility)
+  src/chat/              # Chat: context builder, streaming, conversations, projects
+  src/admin/             # Admin dashboard (HTML/CSS/JS, no framework)
+  src/proposals/         # Approvals queue: applier, reverter, routes
+  src/slack/             # Slack webhook + signature verification
+  src/telegram/          # Telegram webhook (opt-in)
+  src/fathom/            # Fathom transcript ingestion (opt-in)
+  src/hubspot/           # HubSpot CRM sync: client, sync, format, webhook
+  src/enrichers/         # LinkedIn enrichment (SerpAPI, opt-in)
+  src/auth.ts            # API key + multi-user auth (UserContext)
+  src/config.ts          # Zod-validated env config
+  src/index.ts           # Entry: Express + MCP + webhooks + pollers
+migrations/              # SQL migrations (001-038)
+scripts/                 # migrate.ts, backup.sh, cleanup-entities.ts, etc.
+docs/reference/          # Architecture research (synthesis.md = cross-project comparison)
+docs/plans/              # Design docs and implementation plans
 ```
 
 ## Development
 
 ```bash
 npm install                    # Install all workspace dependencies
-npm test                       # Run all unit tests (vitest)
-npm run test:integration       # Run integration tests (requires test DB)
+npm test                       # Run all unit tests (vitest, ~1000 tests, ~2s)
+npm run test:integration       # Integration tests (requires test DB, ~135 tests, ~2s)
 npm run dev                    # Start service (requires .env + Postgres + Ollama)
 npm run migrate                # Run SQL migrations against DATABASE_URL
 ```
 
-## Testing
-
-- Full TDD: every module has tests written before implementation
-- Unit tests mock Ollama calls (fast, no GPU needed)
-- Integration tests use real Postgres via docker-compose.test.yml (port 5433)
-- Run: `npm test` (867 unit tests across 83 files, ~2s)
-- Run: `npm run test:integration` (135 integration tests across 10 files, ~2s)
-- Total: 1002 tests across 93 files
-
 ### Integration test setup
 ```bash
-docker compose -f docker/docker-compose.test.yml up -d   # Start test DB (port 5433)
+docker compose -f docker/docker-compose.test.yml up -d
 DATABASE_URL="postgresql://danielbrain_test:test_password@localhost:5433/danielbrain_test" npm run migrate
 npm run test:integration
 ```
 
-## MCP Tools
-
-### Thought Tools (original 4)
-- **semantic_search**: Search by meaning with optional filters (thought_type, person, topic, days_back)
-- **list_recent**: Browse recent thoughts by date
-- **stats**: Counts, breakdowns by type, top people/topics, action item counts
-- **save_thought**: Write a thought directly via MCP (triggers full pipeline)
-
-### Entity Tools (4 new)
-- **get_entity**: Full profile by ID or name — linked thoughts, connected entities, staleness flag
-- **list_entities**: Browse/search by type, name prefix, sort by mentions/recency/name
-- **get_context**: Briefing from entity intersection — "prep me for meeting with Alice about Project X"
-- **get_timeline**: Chronological view for an entity, grouped by date, filterable by source
-
-### Community Tools (2 new)
-- **get_communities**: List detected communities (clusters of related entities), filter by level, entity membership, or search
-- **global_search**: Semantic search over community-level summaries for broad questions ("What is the team working on?")
-
 ## Entity Graph
 
-### Entity Types
-`person`, `company`, `topic`, `product`, `project`, `place`
+**Entity types**: `person`, `company`, `topic`, `product`, `project`, `place`
+**Thought-entity relationships**: `mentions`, `about`, `from`, `assigned_to`, `created_by`
+**Entity-entity edges**: co-occurrence (auto), temporal tracking (`valid_at`/`invalid_at`), LLM descriptions for weight >= 2
 
-### Relationship Types (thought ↔ entity)
-`mentions`, `about`, `from`, `assigned_to`, `created_by`
+### Entity Resolution (runs after every thought INSERT, non-blocking)
+1. Extract entities from LLM metadata
+2. Normalize: `normalizeName()` strips parentheticals, domains, prefixes, suffixes. `isJunkEntity()` rejects emails, phase names, CLI commands
+3. Find or create: canonical → alias → first-name prefix match → ON CONFLICT create (race-safe)
+4. Infer relationship type from source_meta + content
+5. Link + bump mention_count and last_seen_at
 
-### Entity Resolution Pipeline
-After every thought INSERT, the pipeline runs entity resolution (non-blocking):
-1. Extract people, companies, products, projects from LLM metadata
-2. Normalize name: lowercase, trim, strip prefixes (Mr./Dr.) and suffixes (Inc./LLC)
-3. Find or create: canonical match → alias match → ON CONFLICT create (race-safe)
-4. Infer relationship: author → `from`, action item → `assigned_to`, summary → `about`, default → `mentions`
-5. Link entity to thought, bump mention_count and last_seen_at
+### Profiles
+LLM-generated (3-5 sentences), embedded for entity-level semantic search. Refresh: 10 new mentions OR 7 days stale.
 
-### Entity-to-Entity Relationships
-- Co-occurrence edges created automatically when 2+ entities appear in the same thought
-- Canonical edge direction: smaller UUID = source_id (avoids A→B / B→A duplicates)
-- Weight tracks co-occurrence count; source_thought_ids provides traceability
-- LLM description (70B) generated for edges with weight >= 2 (background poller)
-- Temporal edges: `valid_at`/`invalid_at` track fact evolution (contradictions create new edge)
-- Low-confidence contradictions → proposals queue for human review
+## Key Design Constraints
 
-### Profile Generation
-- LLM generates 3-5 sentence profile from recent linked thoughts
-- Profile embedded via nomic-embed-text for entity-level semantic search
-- Staleness: refresh after 10 new mentions OR 7 days
-- Refreshed on-demand (get_entity) + background poller (every 5 min, batch of 5)
+These are non-obvious rules that apply to new code. Implementation details are visible in the code itself.
 
-## Approvals Queue
+### LLM Prompting Standard
+All prompts to local Ollama models must include: (1) clear role/context, (2) explicit DO/DON'T rules per field, (3) concrete few-shot example, (4) negative examples of common mistakes, (5) exact format constraints.
 
-General-purpose, confidence-gated proposal system. Any operation where confidence is below a threshold creates a proposal for human review via the admin dashboard.
+### Embedding Prefixes
+nomic-embed-text requires `search_document: ` prefix for storage, `search_query: ` for queries.
 
-### Confidence Thresholds
-- `entity_link: 0.8` — prefix matches (confidence 0.7) auto-apply + create reviewable proposal
-- `entity_enrichment: 'always'` — LinkedIn URLs always held for review
-- `entity_merge: 'always'` — destructive, always held for review
+### Visibility Model
+Source-determined: public channels → `['company']`, DMs → `['user:U1', 'user:U2']`, personal → `['owner']`. Filtered via `TEXT[] && GIN` in `hybrid_search()`. Entities globally visible. Team-scoped visibility deferred.
 
-### Apply Strategy
-| Operation | Risk | Behavior |
-|-----------|------|----------|
-| Entity link (prefix match) | Low | Auto-apply + review after. Reject = undo link + alias |
-| LinkedIn URL enrichment | Medium | Hold until approved. Approve = write to entity metadata |
-| Entity merge | High | Hold until approved. Approve = reassign links, merge aliases, delete loser |
+### Hybrid Retrieval
+`hybrid_search()` SQL function: vector cosine + BM25 via Reciprocal Rank Fusion (k=60). 3x oversampling, FULL OUTER JOIN dedup. Stop-words degrade gracefully to vector-only.
 
-### Status Lifecycle
-`pending` → `approved` → `applied` (or `rejected` / `needs_changes` / `failed`)
+### Chunking
+2000 estimated token threshold. Chunks ~1000 tokens with 100-token overlap. Parent thought gets summary embedding; child chunks get individual embeddings.
 
-### Admin Dashboard
-- URL: `http://localhost:3000/admin`
-- Approvals page: card-per-proposal with approve/reject/needs-changes actions
-- Entities page: type counts, top by mentions, recently active, proposal status
-- Plain HTML + CSS + vanilla JS, no framework, no build step
+### HubSpot Direct Metadata Bypass
+Structured CRM records (contacts, companies, deals) skip LLM extraction via `directMetadata` in `source_meta`. Notes use full pipeline. Per-object visibility branches on `source_meta.object_type`.
 
-## Key Design Decisions
+### Queue Processing
+Async via `FOR UPDATE SKIP LOCKED`. Exponential backoff (30s→10min, max 3 retries). `source_id` partial unique index for dedup.
 
-- **Embedding prefixes**: nomic-embed-text requires `search_document: ` for storage, `search_query: ` for search
-- **Chunking threshold**: 2000 estimated tokens. Chunks are ~1000 estimated tokens with 100-token overlap. Lower than nomic-embed-text's 8192 limit because word-based estimation undercounts actual tokens
-- **Long content**: parent thought gets summary embedding; child chunks get individual embeddings
-- **Queue**: Slack/Telegram messages go to queue table, processed async by poller (FOR UPDATE SKIP LOCKED)
-- **Auth**: `x-brain-key` header with 64-char hex key, timing-safe comparison
-- **Slack verification**: HMAC-SHA256 signature + 5-minute timestamp expiry
-- **Telegram verification**: `X-Telegram-Bot-Api-Secret-Token` header, timing-safe string comparison
-- **Telegram is opt-in**: route only registered when `TELEGRAM_BOT_TOKEN` + `TELEGRAM_WEBHOOK_SECRET` are set
-- **Entity resolution non-blocking**: failure never prevents thought storage
-- **Entity dedup**: canonical_name + entity_type unique constraint, ON CONFLICT for race safety
-- **Relationship inference**: deterministic rules based on source_meta, action items, summary
-- **Hybrid data model**: shared entity graph + privately-scoped thoughts + selective sharing
-- **Source-determined visibility**: public channels → company, DMs → participants, personal → owner
-- **LLM Prompting Standard**: All prompts sent to local Ollama models must be explicit, structured prompts with examples. Claude writes these prompts, optimized for the model's capabilities. Every prompt must include: (1) clear role and context about the system, (2) explicit DO/DON'T rules per field, (3) at least one concrete few-shot example, (4) negative examples showing common mistakes, (5) exact format constraints. Applies to extraction, summarization, profile generation, and any future LLM calls.
-- **Entity normalization**: `normalizeName()` strips parentheticals, domain suffixes (.io/.com/.earth), pronouns, name prefixes, and company suffixes. `isJunkEntity()` rejects blocklisted words, non-alphabetic strings, and CLI commands before any DB interaction.
-- **First-name prefix matching**: Single-token person names (e.g., "Chris") match existing entities where `canonical_name LIKE 'chris %'`, auto-adding the first name as an alias
-- **Confidence-gated proposals**: operations below threshold auto-apply + create reviewable proposal; high-risk ops hold until approved
-- **Proposal type is TEXT**: no migration needed for new operation types; status is ENUM (fixed lifecycle)
-- **LinkedIn enricher opt-in**: only starts when `SERPAPI_KEY` is set; in-memory daily counter (33/day) resets at midnight UTC
-- **Admin dashboard no-auth**: protected by network (Cloudflare Zero Trust), no API key required for `/admin` routes
-- **Fathom opt-in**: route only registered when `FATHOM_API_KEY` + `FATHOM_WEBHOOK_SECRET` are set
-- **Fathom signature verification**: svix HMAC-SHA256 with base64-decoded secret, timing-safe comparison
-- **Queue source_id dedup**: partial unique index on `source_id WHERE source_id IS NOT NULL` prevents duplicate processing
-- **Approvals context**: proposals list includes entity profile + recent thought excerpts for informed review
-- **Canonical edge direction**: smaller UUID = source_id to deterministically avoid A→B / B→A duplicates
-- **`co_occurs` as base relationship**: LLM description enriches via `description` field; free-text avoids premature taxonomy
-- **weight >= 2 threshold for LLM description**: avoids wasting 70B time on single-co-occurrence noise
-- **source_thought_ids array**: traceability without a separate junction table
-- **Contradiction detection → proposals queue**: uncertain contradictions get human review (HITL moat)
-- **Entity merge cascading**: `applyEntityMerge` updates both `thought_entities` and `entity_relationships`
-- **2-model architecture**: nomic-embed-text (embeddings) + llama3.3:70b (all LLM tasks: extraction, summarization, profiles, chat, relationship descriptions). Both kept resident in VRAM (~55GB on DGX Spark 128GB). Preloaded at startup via warmup requests. Zero model swapping
-- **Hybrid retrieval (RRF)**: `hybrid_search()` SQL function combines vector cosine similarity + BM25 full-text search via Reciprocal Rank Fusion (k=60). 3x oversampling from each source, FULL OUTER JOIN for dedup. Graceful degradation: empty/stop-word tsquery → vector-only
-- **tsvector trigger**: `search_vector` column auto-computed on INSERT/UPDATE via trigger — no application code changes needed
-- **Chat context sizing**: 15 results (up from 5), summary-first (use thought summary when available, content truncated at 1000 chars as fallback), action items surfaced, people/topics metadata included. llama3.3:70b has 128K context
-- **Chat persistence**: conversations + chat_messages tables. Messages persisted server-side, client loads from API. Auto-title on first exchange (truncation, no LLM call). Soft delete via `is_deleted` flag.
-- **Chat projects**: lightweight folder system — `projects` table with FK from conversations. Filter sidebar by project.
-- **Anti-hallucination system prompt**: explicit grounding rules ("ONLY state facts from context", "do not fabricate", "flag inferences"). Replaced permissive v1 prompt.
-- **streamChat returns fullResponse**: accumulated text returned so caller can persist assistant messages with context_data JSONB
-- **Queue retry with backoff**: Exponential backoff (30s → 2min → 10min with ±20% jitter) on transient failures, max 3 retries. Inspired by Sidekiq/pg-boss patterns. Items in backoff stay `pending` with `retry_after` timestamp; only marked `failed` after max retries exceeded. Pipeline uses ON CONFLICT upsert for idempotent retries.
-- **Community detection (Louvain)**: Pure graph algorithm via graphology, runs hourly, milliseconds on 500 nodes. No Ollama needed. Persists via communities + entity_communities tables
-- **Community summarization**: Background poller (every 5 min, Ollama mutex), batch of 5. LLM generates title/summary/full_report JSON, summary embedded via nomic-embed-text for vector search
-- **Community change detection**: SHA-256 hash of sorted membership sets; skip re-write if unchanged
-- **Global search is vector-only**: No LLM in query path. Agent (Claude/GPT via MCP) synthesizes community context
-- **Model decisions register**: `docs/plans/model-decisions.md` documents current model selection, alternatives, and upgrade triggers
-- **Planning process**: Before building new features, research how comparable platforms handle the same problem. Check `docs/reference/` projects first, then industry-standard tools.
-- **Graph visualization: Cytoscape.js + cose**: Evaluated Cytoscape.js, Sigma.js, vis-network, D3-force, force-graph. Sigma.js ForceAtlas2 requires bundler (no CDN UMD). Cytoscape.js works from CDN but fcose extension fails to auto-register — using built-in `cose` layout with post-layout position scaling for proper spacing. Graph API uses server-side weight filtering (default min_weight=2) and neighbor limits (default 50) for performance on heavily-connected nodes.
-- **Phase 8.5 architecture review**: Full audit of Phases 1-8. Fixed: transaction safety in entity merge + chunk writes, connection pool configuration (max=20), graceful shutdown, SQL injection pattern in stats.ts, XSS in admin markdown, N+1 queries in semantic search + get-context, relationship normalization mismatch, profile refresh boundary loop. See `docs/plans/architecture-review-findings.md`.
-- **Multi-user auth (Phase 9)**: Users table + SHA-256 hashed API keys linked to users. `UserContext` propagated via `req.userContext`. Owner role = no filtering, member/admin = `visibility && visibilityTags` filtering.
-- **Visibility enforcement**: `TEXT[] + GIN` index on `thoughts.visibility`. `hybrid_search()` gains `filter_visibility text[]` parameter (12th arg, DEFAULT NULL). All thought-querying MCP tools pass visibility through. Entities remain globally visible.
-- **MCP OAuth 2.0**: SDK's `mcpAuthRouter()` handles /.well-known, /authorize, /token, /register, /revoke. Custom authorize page (API key login form). JWT access tokens signed with `jose` HS256. Dynamic Client Registration for Claude Desktop. In-memory auth codes + refresh tokens (lost on restart = re-auth). Conditional on `JWT_SECRET` env var.
-- **Source-determined visibility**: `computeSourceVisibility()` computes tags from source + source_meta. Slack public → `['company']`, Slack private → `['channel:C123']`, Slack DM → `['user:U1', 'user:U2']`, everything else → `['owner']` or `['user:<ownerId>']`.
-- **Selective sharing**: `thought_shares` table records visibility promotions. Owner or admin can append tags to `thoughts.visibility`.
-- **Explicit parameter passing for visibility**: Not AsyncLocalStorage. Consistent with existing pool/config pattern, easier to test.
-- **HubSpot opt-in**: poller only starts when `HUBSPOT_ACCESS_TOKEN` is set; webhook requires `HUBSPOT_WEBHOOK_SECRET`
-- **HubSpot direct metadata bypass**: structured CRM records (contacts, companies, deals) skip LLM extraction via `directMetadata` in `source_meta`. Notes still use full pipeline. Saves ~2-5s per record and avoids hallucination on structured data.
-- **HubSpot per-object visibility**: contacts/companies/deals → `['company']`, notes/emails → `['user:{ownerId}']`. Branching on `source_meta.object_type`, not source.
-- **HubSpot SDK**: `@hubspot/api-client` with built-in Bottleneck rate limiting (190 req/10sec). No manual throttling needed.
-- **HubSpot incremental sync**: search API with `lastmodifieddate > lastSyncTimestamp`. Full list on first sync, search on subsequent. `hubspot_sync_state` singleton table tracks cursor + timestamp.
-- **HubSpot webhook v3 verification**: HMAC-SHA256 with app secret, signed content = method + URI + body + timestamp, 5-minute timestamp expiry
-- **Team-scoped visibility deferred to Phase 10**: The TEXT[] model already supports `team:engineering` tags, but needs a teams table + `buildVisibilityTags()` expansion + Slack channel auto-mapping.
+### Confidence-Gated Proposals
+Low confidence → auto-apply + reviewable proposal. High-risk ops (merge, enrichment) → hold until approved. Admin dashboard at `/admin` for review.
+
+### Cross-Encoder Re-Ranking
+Optional post-retrieval reranking via `RERANKER_MODEL` env var (e.g. `Xenova/ms-marco-MiniLM-L-6-v2`). Uses `@huggingface/transformers` ONNX runtime (CPU, on-prem). Applied after `hybrid_search()` in `handleSemanticSearch`, benefiting all search paths (MCP tools, chat, deep research). Model lazy-loaded on first query, cached thereafter. Graceful degradation if unavailable.
+
+### Fathom Cross-Reference
+HubSpot sync cross-references Fathom-link notes with existing Fathom thoughts. When a HubSpot note contains a `fathom.video/calls/{id}` URL, the sync resolves HubSpot associations (contacts, companies) and merges them into the Fathom thought's `source_meta.hubspot_crm`.
+
+### Planning Process
+Before building new features, research how comparable platforms handle the problem. Check `docs/reference/` first, then industry-standard tools.
 
 ## Environment Variables
 
-See `.env.example` for all required/optional vars. Key ones:
-- `DATABASE_URL` — PostgreSQL connection string
-- `BRAIN_ACCESS_KEY` — 64-char hex API key
-- `SLACK_BOT_TOKEN` / `SLACK_SIGNING_SECRET` — Slack app credentials
-- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_WEBHOOK_SECRET` — Telegram bot credentials (optional)
-- `OLLAMA_BASE_URL` — defaults to http://localhost:11434
-- `SERPAPI_KEY` — SerpAPI key for LinkedIn enrichment (optional)
-- `FATHOM_API_KEY` / `FATHOM_WEBHOOK_SECRET` — Fathom meeting transcript integration (optional)
-- `HUBSPOT_ACCESS_TOKEN` — HubSpot private app access token (optional, enables CRM sync)
-- `HUBSPOT_WEBHOOK_SECRET` — HubSpot app secret for webhook signature verification (optional)
-- `HUBSPOT_POLL_INTERVAL_MS` — Polling interval in ms (default: 300000 / 5 min)
-- `HUBSPOT_OBJECT_TYPES` — Comma-separated object types to sync (default: `contacts,companies,deals`)
-- `EXTRACTION_MODEL` — Ollama model for extraction/summarization/profiles (default: `llama3.3:70b`)
-- `CHAT_MODEL` — Ollama model for chat (default: `llama3.3:70b`)
-- `RELATIONSHIP_MODEL` — Ollama model for relationship description/contradiction (optional, e.g. `llama3.3:70b`)
-- `JWT_SECRET` — 32+ char secret for OAuth JWT signing (optional, enables MCP OAuth)
-
-## Build Phases
-
-- [x] Phase 1: Foundation (git, workspaces, TypeScript, Vitest, Docker, shared package, migrations)
-- [x] Phase 2: Processing Pipeline (chunker, embedder, extractor, summarizer, pipeline, config)
-- [x] Phase 3: MCP Server (4 tools, auth, HTTP/SSE transport)
-- [x] Phase 4: Queue Processor + Slack Webhook
-- [x] Phase 4b: Telegram Webhook Integration
-- [x] Phase 4c: Entity Knowledge Graph (entities, resolver, profiles, 4 MCP tools)
-- [x] Phase 4d: Approvals Queue + Admin Dashboard + LinkedIn Enrichment
-- [x] Phase 4e: Fathom Meeting Transcript Integration
-- [x] Phase 4f: Chat v1 + Correction Examples
-- [x] Phase 5: Entity Relationships + Temporal Edges (co-occurrence edges, 70B descriptions, contradiction detection, proposals)
-- [x] Phase 6: Hybrid Retrieval (BM25 + tsvector + RRF, upgraded chat context)
-- [x] Phase 6b: Chat v2 — conversation persistence, projects, anti-hallucination
-- [x] Phase 7: Community Detection + Global Search (Louvain via graphology, community summaries, simplified global search)
-- [x] Phase 7b: Relationship Explorer (Cytoscape.js graph visualization, community clusters, entity/edge filtering, detail panels, graph API endpoint)
-- [ ] Phase 8: Agent Interface Enhancement (new MCP tools, agent personas, research mode, dual-level keywords)
-- [x] Phase 8.5: Architecture Review (full audit, 40 findings, critical+major fixes)
-- [x] Phase 9: Permissions + Multi-User (users, API key auth, visibility enforcement, MCP OAuth, source-determined visibility, selective sharing)
-- [ ] Phase 10: Infrastructure + Polish (Cloudflare Tunnel, cross-encoder reranking, source-specific chunking, logging, backup)
-- [ ] Phase 11: Advanced Knowledge Quality (fact-level dedup, atomic fact extraction, recursive splitting)
-- [ ] Phase 12: Automation + Calendar (scheduled monitoring, meeting prep autopilot, action item lifecycle)
-
-## Git History
-
-```
-1f95187 Initial implementation of DanielBrain (Phases 1-4)
-f9836e9 Add Telegram as second input channel
-91e9ba2 Update CLAUDE.md with Telegram integration details
-f977c8b Wire Slack and Telegram notifiers into queue poller
-2ae680f Make Slack config optional like Telegram
-304b9b0 Add Telegram env vars to .env.example and Slack app manifest
-------- Phase 4c: Entity Knowledge Graph (uncommitted)
-```
+See `.env.example` for full list. Critical: `DATABASE_URL`, `BRAIN_ACCESS_KEY`, `OLLAMA_BASE_URL`.
+Optional integrations enabled by their tokens: `SLACK_BOT_TOKEN`/`SLACK_SIGNING_SECRET`, `TELEGRAM_BOT_TOKEN`/`TELEGRAM_WEBHOOK_SECRET`, `FATHOM_API_KEY`/`FATHOM_WEBHOOK_SECRET`, `HUBSPOT_ACCESS_TOKEN`/`HUBSPOT_WEBHOOK_SECRET`, `SERPAPI_KEY`, `JWT_SECRET`.
+Models: `EXTRACTION_MODEL`, `CHAT_MODEL`, `RELATIONSHIP_MODEL` (all default `llama3.3:70b`).
+Config: `LOG_LEVEL` (default: `info`), `HUBSPOT_POLL_INTERVAL_MS` (default: 300000), `RERANKER_MODEL` (optional, e.g. `Xenova/ms-marco-MiniLM-L-6-v2`).

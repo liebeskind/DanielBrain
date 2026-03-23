@@ -2,6 +2,9 @@ import type pg from 'pg';
 import { LINKEDIN_ENRICHMENT_BATCH_SIZE, SERPAPI_DAILY_LIMIT } from '@danielbrain/shared';
 import { createEnrichmentProposal } from '../proposals/helpers.js';
 import { getExamplesByCategory } from '../corrections/store.js';
+import { createChildLogger } from '../logger.js';
+
+const log = createChildLogger('linkedin-enricher');
 
 export interface LinkedInEnricherConfig {
   serpApiKey: string;
@@ -130,7 +133,7 @@ export async function loadLinkedInCorrections(
       }
     }
   } catch (err) {
-    console.error('Failed to load LinkedIn corrections:', err);
+    log.error({ err }, 'Failed to load LinkedIn corrections');
   }
 
   return corrections;
@@ -208,13 +211,13 @@ async function searchLinkedIn(
 
   const response = await fetch(url.toString());
   if (!response.ok) {
-    console.error(`SerpAPI error: ${response.status} ${response.statusText}`);
+    log.error({ status: response.status, statusText: response.statusText }, 'SerpAPI error');
     return null;
   }
 
   const data = (await response.json()) as SerpApiResult;
   if (data.error) {
-    console.error(`SerpAPI error: ${data.error}`);
+    log.error({ error: data.error }, 'SerpAPI error');
     return null;
   }
 
@@ -271,7 +274,7 @@ export async function enrichLinkedInBatch(
         created++;
       }
     } catch (err) {
-      console.error(`LinkedIn enrichment error for ${candidate.name}:`, err);
+      log.error({ err, entity: candidate.name }, 'LinkedIn enrichment error');
     }
   }
 

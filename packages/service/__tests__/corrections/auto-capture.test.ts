@@ -5,6 +5,10 @@ vi.mock('../../src/corrections/store.js', () => ({
   createCorrectionExample: vi.fn().mockResolvedValue('ce-1'),
 }));
 
+vi.mock('../../src/logger.js', () => ({
+  createChildLogger: () => ({ info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }),
+}));
+
 import { createCorrectionExample } from '../../src/corrections/store.js';
 
 const mockPool = { query: vi.fn() };

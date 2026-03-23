@@ -11,8 +11,12 @@ import { syncFathomMeetings } from '../fathom/sync.js';
 import { parseFile } from '../parsers/index.js';
 import { createJob, getJob, updateJob, listJobs } from '../transcribe/job-tracker.js';
 import { runTranscription, formatAsSrt, generateSummary, applySpeakerNames } from '../transcribe/service.js';
+import { createChildLogger } from '../logger.js';
+import { sanitizeError } from '../errors.js';
+import { logAudit } from '../audit.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const log = createChildLogger('admin');
 
 interface IntegrationDef {
   id: string;
@@ -139,7 +143,7 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
 
       res.json(results);
     } catch (err) {
-      console.error('Integration stats error:', err);
+      log.error({ err }, 'Integration stats error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -158,7 +162,7 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
         const result = await syncFathomMeetings(pool, { fathomApiKey: config.fathomApiKey });
         res.json({ ok: true, ...result });
       } catch (err) {
-        console.error('Fathom pull error:', err);
+        log.error({ err }, 'Fathom pull error');
         res.status(500).json({ error: 'Pull failed' });
       }
       return;
@@ -255,7 +259,7 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
         proposal_counts: proposalCounts,
       });
     } catch (err) {
-      console.error('Entity stats error:', err);
+      log.error({ err }, 'Entity stats error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -289,7 +293,7 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
         pending: parseInt(totals.pending, 10),
       });
     } catch (err) {
-      console.error('Proposal stats error:', err);
+      log.error({ err }, 'Proposal stats error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -313,7 +317,7 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
         total: parseInt(totals.total, 10),
       });
     } catch (err) {
-      console.error('Correction stats error:', err);
+      log.error({ err }, 'Correction stats error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -338,7 +342,7 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
         by_source: bySource.map((r: { source: string; count: string }) => ({ source: r.source, count: parseInt(r.count, 10) })),
       });
     } catch (err) {
-      console.error('Browse stats error:', err);
+      log.error({ err }, 'Browse stats error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -413,7 +417,7 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
         offset,
       });
     } catch (err) {
-      console.error('Browse thoughts error:', err);
+      log.error({ err }, 'Browse thoughts error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -480,7 +484,7 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
         ollama_available: ollamaAvailable,
       });
     } catch (err) {
-      console.error('Health stats error:', err);
+      log.error({ err }, 'Health stats error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -494,7 +498,7 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
       );
       res.json({ ok: true, count: rowCount });
     } catch (err) {
-      console.error('Retry all error:', err);
+      log.error({ err }, 'Retry all error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -513,7 +517,49 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
       }
       res.json({ ok: true });
     } catch (err) {
-      console.error('Retry error:', err);
+      log.error({ err }, 'Retry error');
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  // ---- Health detail: items for a specific queue status ----
+  router.get('/api/health/detail/:category', async (req, res) => {
+    try {
+      const { category } = req.params;
+      const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+      const offset = parseInt(req.query.offset as string) || 0;
+
+      if (category === 'extraction_gaps') {
+        const { rows } = await pool.query(
+          `SELECT id, source, thought_type, LEFT(content, 200) as content_preview, created_at
+           FROM thoughts
+           WHERE parent_id IS NULL AND embedding IS NULL AND source != 'manual'
+           ORDER BY created_at DESC
+           LIMIT $1 OFFSET $2`,
+          [limit, offset]
+        );
+        res.json({ items: rows, category });
+        return;
+      }
+
+      const validStatuses = ['pending', 'processing', 'completed', 'failed'];
+      if (!validStatuses.includes(category)) {
+        res.status(400).json({ error: 'Invalid category. Use: pending, processing, completed, failed, extraction_gaps' });
+        return;
+      }
+
+      const { rows } = await pool.query(
+        `SELECT id, source, source_id, LEFT(content, 200) as content_preview,
+                error, attempts, created_at, processed_at, retry_after
+         FROM queue
+         WHERE status = $1
+         ORDER BY COALESCE(processed_at, created_at) DESC
+         LIMIT $2 OFFSET $3`,
+        [category, limit, offset]
+      );
+      res.json({ items: rows, category });
+    } catch (err) {
+      log.error({ err }, 'Health detail error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -541,9 +587,16 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
         [content.trim(), JSON.stringify(meta)]
       );
 
+      logAudit(pool, {
+        action: 'content_ingested',
+        resourceType: 'queue',
+        resourceId: row.id,
+        metadata: { source: 'manual', contentLength: content.length },
+      });
+
       res.json({ id: row.id, status: 'queued' });
     } catch (err) {
-      console.error('Ingest error:', err);
+      log.error({ err }, 'Ingest error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -582,7 +635,7 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
       try {
         await fs.promises.writeFile(rawFilePath, req.file.buffer);
       } catch (err) {
-        console.warn('Failed to save raw file:', (err as Error).message);
+        log.error({ err }, 'Failed to save raw file');
       }
 
       const meta: Record<string, unknown> = {
@@ -614,6 +667,13 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
         [text, JSON.stringify(meta)]
       );
 
+      logAudit(pool, {
+        action: 'file_uploaded',
+        resourceType: 'queue',
+        resourceId: row.id,
+        metadata: { title: meta.title, pageCount: parsed.pageCount, textLength: text.length },
+      });
+
       res.json({
         id: row.id,
         status: 'queued',
@@ -627,8 +687,8 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
       if (message.includes('scanned') || message.includes('magic byte') || message.includes('Unsupported')) {
         res.status(400).json({ error: message });
       } else {
-        console.error('File ingest error:', err);
-        res.status(500).json({ error: message });
+        log.error({ err }, 'File ingest error');
+        res.status(500).json({ error: sanitizeError(err) });
       }
     }
   });
@@ -677,15 +737,22 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
         req.file.size,
       );
 
+      logAudit(pool, {
+        action: 'transcription_started',
+        resourceType: 'transcription',
+        resourceId: job.id,
+        metadata: { filename: req.file!.originalname, size: req.file!.size },
+      });
+
       // Start transcription in background (don't await)
       runTranscription(job.id, config).catch(err => {
-        console.error('Transcription background error:', err);
+        log.error({ err }, 'Transcription background error');
       });
 
       res.json({ id: job.id, status: job.status });
     } catch (err) {
-      console.error('Transcribe upload error:', err);
-      res.status(500).json({ error: (err as Error).message });
+      log.error({ err }, 'Transcribe upload error');
+      res.status(500).json({ error: sanitizeError(err) });
     }
   });
 
@@ -760,9 +827,16 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
 
       updateJob(job.id, { savedToQueue: true, queueId: row.id });
 
+      logAudit(pool, {
+        action: 'transcription_saved',
+        resourceType: 'queue',
+        resourceId: row.id,
+        metadata: { jobId: job.id, title: meta.title },
+      });
+
       res.json({ id: row.id, status: 'queued' });
     } catch (err) {
-      console.error('Transcribe save error:', err);
+      log.error({ err }, 'Transcribe save error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -803,7 +877,7 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
 
       res.json({ ok: true, speakerMap: speakers });
     } catch (err) {
-      console.error('Speaker mapping error:', err);
+      log.error({ err }, 'Speaker mapping error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -827,7 +901,7 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
 
       res.json({ ok: true, summary });
     } catch (err) {
-      console.error('Resummarize error:', err);
+      log.error({ err }, 'Resummarize error');
       res.status(500).json({ error: 'Summary generation failed' });
     }
   });
@@ -903,7 +977,7 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
         total: parseInt(totalRow.total, 10),
       });
     } catch (err) {
-      console.error('Communities list error:', err);
+      log.error({ err }, 'Communities list error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -946,7 +1020,7 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
 
       res.json({ ...community, members, relationships });
     } catch (err) {
-      console.error('Community detail error:', err);
+      log.error({ err }, 'Community detail error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -957,7 +1031,7 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
       const result = await detectCommunities(pool);
       res.json({ ok: true, ...result });
     } catch (err) {
-      console.error('Community refresh error:', err);
+      log.error({ err }, 'Community refresh error');
       res.status(500).json({ error: 'Refresh failed' });
     }
   });
@@ -1061,7 +1135,7 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
         })),
       });
     } catch (err) {
-      console.error('Graph neighborhood error:', err);
+      log.error({ err }, 'Graph neighborhood error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -1109,7 +1183,7 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
         })),
       });
     } catch (err) {
-      console.error('Full graph error:', err);
+      log.error({ err }, 'Full graph error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -1185,7 +1259,7 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
         communities,
       });
     } catch (err) {
-      console.error('Entity detail error:', err);
+      log.error({ err }, 'Entity detail error');
       res.status(500).json({ error: 'Internal error' });
     }
   });
@@ -1206,7 +1280,7 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
       );
       res.json(rows);
     } catch (err) {
-      console.error('Entity search error:', err);
+      log.error({ err }, 'Entity search error');
       res.status(500).json({ error: 'Internal error' });
     }
   });

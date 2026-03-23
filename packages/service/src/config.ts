@@ -27,7 +27,9 @@ const configSchema = z.object({
   hubspotAccessToken: z.string().min(1).optional(),
   hubspotWebhookSecret: z.string().min(1).optional(),
   hubspotPollIntervalMs: z.number().int().default(300_000),
-  hubspotObjectTypes: z.string().default('contacts,companies,deals'),
+  hubspotObjectTypes: z.string().default('contacts,companies,deals,notes'),
+  hubspotRequireContactActivity: z.boolean().default(true),
+  rerankerModel: z.string().min(1).optional(),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -61,5 +63,7 @@ export function loadConfig(): Config {
     hubspotWebhookSecret: process.env.HUBSPOT_WEBHOOK_SECRET || undefined,
     hubspotPollIntervalMs: process.env.HUBSPOT_POLL_INTERVAL_MS ? parseInt(process.env.HUBSPOT_POLL_INTERVAL_MS, 10) : undefined,
     hubspotObjectTypes: process.env.HUBSPOT_OBJECT_TYPES || undefined,
+    hubspotRequireContactActivity: process.env.HUBSPOT_REQUIRE_CONTACT_ACTIVITY === 'false' ? false : undefined,
+    rerankerModel: process.env.RERANKER_MODEL || undefined,
   });
 }

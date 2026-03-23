@@ -3,6 +3,9 @@ import { createContentHash } from '@danielbrain/shared';
 import { listMeetings, formatMeeting } from './transcript.js';
 import { buildStructuredData } from './webhook.js';
 import type { FathomMeeting } from './transcript.js';
+import { createChildLogger } from '../logger.js';
+
+const log = createChildLogger('fathom-sync');
 
 function buildSourceMeta(meeting: FathomMeeting) {
   const inviteeNames = meeting.calendar_invitees
@@ -41,7 +44,7 @@ export async function syncFathomMeetings(
     try {
       page = await listMeetings(config, cursor);
     } catch (err) {
-      console.error('Fathom API error during sync:', err);
+      log.error({ err }, 'Fathom API error during sync');
       errors++;
       break;
     }
@@ -79,7 +82,7 @@ export async function syncFathomMeetings(
 
         queued++;
       } catch (err) {
-        console.error(`Fathom sync error for meeting ${meeting.recording_id}:`, err);
+        log.error({ err, recordingId: meeting.recording_id }, 'Fathom sync error for meeting');
         errors++;
       }
     }

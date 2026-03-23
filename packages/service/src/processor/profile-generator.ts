@@ -6,6 +6,9 @@ import {
   PROFILE_REFRESH_BATCH_SIZE,
   OLLAMA_LLM_TIMEOUT_MS,
 } from '@danielbrain/shared';
+import { createChildLogger } from '../logger.js';
+
+const log = createChildLogger('profile-generator');
 
 interface ProfileConfig {
   ollamaBaseUrl: string;
@@ -151,7 +154,7 @@ export async function refreshStaleProfiles(
       await generateProfile(entity.id, pool, config);
       refreshed++;
     } catch (err) {
-      console.error(`Profile refresh failed for entity ${entity.id}:`, err);
+      log.error({ err, entityId: entity.id }, 'Profile refresh failed');
     }
   }
 

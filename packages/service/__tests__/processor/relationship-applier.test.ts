@@ -1,4 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const mockLog = vi.hoisted(() => ({ info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }));
+vi.mock('../../src/logger.js', () => ({
+  createChildLogger: () => mockLog,
+}));
+
 import { applyExtractedRelationships } from '../../src/processor/relationship-applier.js';
 
 vi.mock('../../src/processor/entity-resolver.js', () => ({
@@ -115,8 +121,6 @@ describe('applyExtractedRelationships', () => {
   });
 
   it('continues processing after one relationship fails', async () => {
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
     // First relationship: source lookup throws
     mockPool.query.mockRejectedValueOnce(new Error('DB error'));
     // Second relationship: succeeds
@@ -133,8 +137,7 @@ describe('applyExtractedRelationships', () => {
 
     // First failed, second succeeded
     expect(result.size).toBe(1);
-    expect(consoleSpy).toHaveBeenCalledTimes(1);
-    consoleSpy.mockRestore();
+    expect(mockLog.error).toHaveBeenCalledTimes(1);
   });
 
   it('returns correct set of applied canonical pairs', async () => {

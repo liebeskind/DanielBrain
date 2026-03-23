@@ -7,6 +7,9 @@ import {
   DEEP_RESEARCH_SIMILARITY_THRESHOLD,
   OLLAMA_LLM_TIMEOUT_MS,
 } from '@danielbrain/shared';
+import { createChildLogger } from '../../logger.js';
+
+const log = createChildLogger('deep-research');
 
 interface DeepResearchInput {
   question: string;
@@ -19,6 +22,7 @@ interface DeepResearchConfig {
   ollamaBaseUrl: string;
   embeddingModel: string;
   extractionModel: string;
+  rerankerModel?: string;
 }
 
 interface SubQuestionResult {
@@ -45,19 +49,19 @@ export async function handleDeepResearch(
   visibilityTags?: string[] | null,
 ) {
   const startTime = Date.now();
-  console.log(`[deep_research] Starting: "${input.question}" (synthesize=${input.synthesize})`);
+  log.info({ question: input.question, synthesize: input.synthesize }, 'Starting deep research');
 
   // Acquire Ollama mutex at chat priority (user-initiated)
   if (!acquireOllama('chat')) {
-    console.log('[deep_research] Blocked by Ollama mutex');
+    log.info('Blocked by Ollama mutex');
     return { error: 'LLM is busy processing another request. Please try again shortly.' };
   }
 
   try {
     // Step 1: Planning — decompose question into sub-questions
-    console.log('[deep_research] Planning sub-questions...');
+    log.info('Planning sub-questions');
     const subQuestions = await planSubQuestions(input.question, input.max_iterations, config);
-    console.log(`[deep_research] Planned ${subQuestions.length} sub-questions:`, subQuestions);
+    log.info({ count: subQuestions.length, subQuestions }, 'Planned sub-questions');
 
     // Release mutex between planning and synthesis (searches don't need LLM)
     releaseOllama('chat');
@@ -98,14 +102,14 @@ export async function handleDeepResearch(
     }
 
     // Return raw findings for smart clients
-    console.log(`[deep_research] Returning raw findings (${Date.now() - startTime}ms)`);
+    log.info({ executionTimeMs: Date.now() - startTime }, 'Returning raw findings');
     return {
       question: input.question,
       sub_questions: subResults,
       execution_time_ms: Date.now() - startTime,
     };
   } catch (err: any) {
-    console.error(`[deep_research] Error: ${err.message}`, err.stack);
+    log.error({ err }, 'Deep research error');
     releaseOllama('chat');
     throw err;
   }
