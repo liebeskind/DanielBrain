@@ -27,7 +27,7 @@ const configSchema = z.object({
   hubspotAccessToken: z.string().min(1).optional(),
   hubspotWebhookSecret: z.string().min(1).optional(),
   hubspotPollIntervalMs: z.number().int().default(300_000),
-  hubspotObjectTypes: z.string().default('contacts,companies,deals,notes'),
+  hubspotObjectTypes: z.string().default('contacts,companies,deals,notes,calls,emails,meetings,tasks'),
   hubspotRequireContactActivity: z.boolean().default(true),
   rerankerModel: z.string().min(1).optional(),
 });

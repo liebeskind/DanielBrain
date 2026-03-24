@@ -351,3 +351,154 @@ export function formatNote(
     originatedAt: p.hs_timestamp ? new Date(p.hs_timestamp) : new Date(record.updatedAt),
   };
 }
+
+// --- Engagement type formatters ---
+
+/** Format a HubSpot call into a thought */
+export function formatCall(
+  record: HubSpotRecord,
+  associatedContactNames: string[] = [],
+  associatedCompanyNames: string[] = [],
+  ownerName?: string,
+): FormattedRecord {
+  const p = record.properties;
+  const title = p.hs_call_title?.trim() || `Call ${record.id}`;
+  const durationMs = p.hs_call_duration_milliseconds ? Number(p.hs_call_duration_milliseconds) : 0;
+  const duration = durationMs > 0 ? `${Math.round(durationMs / 60000)} min` : '';
+
+  const lines: string[] = [`HubSpot Call: ${title}`];
+  if (p.hs_call_status) lines.push(`Status: ${p.hs_call_status}`);
+  if (duration) lines.push(`Duration: ${duration}`);
+  if (p.hs_call_source) lines.push(`Source: ${p.hs_call_source}`);
+  if (ownerName) lines.push(`Owner: ${ownerName}`);
+  if (associatedContactNames.length > 0) lines.push(`Contacts: ${associatedContactNames.join(', ')}`);
+  if (associatedCompanyNames.length > 0) lines.push(`Company: ${associatedCompanyNames.join(', ')}`);
+  if (p.hs_call_body) lines.push(p.hs_call_body.slice(0, 1000));
+
+  const content = lines.join('\n');
+
+  return {
+    content,
+    sourceId: `hubspot-call-${record.id}`,
+    sourceMeta: {
+      hubspot_id: record.id,
+      object_type: 'call',
+      channel_type: 'crm' as const,
+      owner_id: p.hubspot_owner_id ?? null,
+      hubspotAssociations: { people: associatedContactNames, companies: associatedCompanyNames },
+    },
+    directMetadata: {},
+    originatedAt: p.hs_timestamp ? new Date(p.hs_timestamp) : new Date(record.updatedAt),
+  };
+}
+
+/** Format a HubSpot email into a thought */
+export function formatEmail(
+  record: HubSpotRecord,
+  associatedContactNames: string[] = [],
+  associatedCompanyNames: string[] = [],
+  ownerName?: string,
+): FormattedRecord {
+  const p = record.properties;
+  const subject = p.hs_email_subject?.trim() || `Email ${record.id}`;
+
+  const lines: string[] = [`HubSpot Email: ${subject}`];
+  if (p.hs_email_from) lines.push(`From: ${p.hs_email_from}`);
+  if (p.hs_email_to) lines.push(`To: ${p.hs_email_to}`);
+  if (p.hs_email_cc) lines.push(`CC: ${p.hs_email_cc}`);
+  if (ownerName) lines.push(`Owner: ${ownerName}`);
+  if (associatedContactNames.length > 0) lines.push(`Contacts: ${associatedContactNames.join(', ')}`);
+  if (associatedCompanyNames.length > 0) lines.push(`Company: ${associatedCompanyNames.join(', ')}`);
+  if (p.hs_email_text) lines.push(p.hs_email_text.slice(0, 1000));
+  else if (p.hs_email_html) lines.push(stripHtml(p.hs_email_html).slice(0, 1000));
+
+  const content = lines.join('\n');
+
+  return {
+    content,
+    sourceId: `hubspot-email-${record.id}`,
+    sourceMeta: {
+      hubspot_id: record.id,
+      object_type: 'email',
+      channel_type: 'crm' as const,
+      owner_id: p.hubspot_owner_id ?? null,
+      hubspotAssociations: { people: associatedContactNames, companies: associatedCompanyNames },
+    },
+    directMetadata: {},
+    originatedAt: p.hs_timestamp ? new Date(p.hs_timestamp) : new Date(record.updatedAt),
+  };
+}
+
+/** Format a HubSpot meeting into a thought */
+export function formatMeeting(
+  record: HubSpotRecord,
+  associatedContactNames: string[] = [],
+  associatedCompanyNames: string[] = [],
+  ownerName?: string,
+): FormattedRecord {
+  const p = record.properties;
+  const title = p.hs_meeting_title?.trim() || `Meeting ${record.id}`;
+
+  const lines: string[] = [`HubSpot Meeting: ${title}`];
+  if (p.hs_meeting_start_time) lines.push(`Start: ${new Date(p.hs_meeting_start_time).toISOString().slice(0, 16)}`);
+  if (p.hs_meeting_end_time) lines.push(`End: ${new Date(p.hs_meeting_end_time).toISOString().slice(0, 16)}`);
+  if (p.hs_meeting_location) lines.push(`Location: ${p.hs_meeting_location}`);
+  if (p.hs_meeting_outcome) lines.push(`Outcome: ${p.hs_meeting_outcome}`);
+  if (ownerName) lines.push(`Owner: ${ownerName}`);
+  if (associatedContactNames.length > 0) lines.push(`Attendees: ${associatedContactNames.join(', ')}`);
+  if (associatedCompanyNames.length > 0) lines.push(`Company: ${associatedCompanyNames.join(', ')}`);
+  if (p.hs_meeting_body) lines.push(stripHtml(p.hs_meeting_body).slice(0, 1000));
+
+  const content = lines.join('\n');
+
+  return {
+    content,
+    sourceId: `hubspot-meeting-${record.id}`,
+    sourceMeta: {
+      hubspot_id: record.id,
+      object_type: 'meeting',
+      channel_type: 'crm' as const,
+      owner_id: p.hubspot_owner_id ?? null,
+      hubspotAssociations: { people: associatedContactNames, companies: associatedCompanyNames },
+    },
+    directMetadata: {},
+    originatedAt: p.hs_meeting_start_time ? new Date(p.hs_meeting_start_time) : (p.hs_timestamp ? new Date(p.hs_timestamp) : new Date(record.updatedAt)),
+  };
+}
+
+/** Format a HubSpot task into a thought */
+export function formatTask(
+  record: HubSpotRecord,
+  associatedContactNames: string[] = [],
+  associatedCompanyNames: string[] = [],
+  ownerName?: string,
+): FormattedRecord {
+  const p = record.properties;
+  const title = p.hs_task_title?.trim() || `Task ${record.id}`;
+
+  const lines: string[] = [`HubSpot Task: ${title}`];
+  if (p.hs_task_status) lines.push(`Status: ${p.hs_task_status}`);
+  if (p.hs_task_type) lines.push(`Type: ${p.hs_task_type}`);
+  if (p.hs_task_priority) lines.push(`Priority: ${p.hs_task_priority}`);
+  if (p.hs_task_due_date) lines.push(`Due: ${new Date(p.hs_task_due_date).toISOString().slice(0, 10)}`);
+  if (ownerName) lines.push(`Owner: ${ownerName}`);
+  if (associatedContactNames.length > 0) lines.push(`Contacts: ${associatedContactNames.join(', ')}`);
+  if (associatedCompanyNames.length > 0) lines.push(`Company: ${associatedCompanyNames.join(', ')}`);
+  if (p.hs_task_body) lines.push(stripHtml(p.hs_task_body).slice(0, 1000));
+
+  const content = lines.join('\n');
+
+  return {
+    content,
+    sourceId: `hubspot-task-${record.id}`,
+    sourceMeta: {
+      hubspot_id: record.id,
+      object_type: 'task',
+      channel_type: 'crm' as const,
+      owner_id: p.hubspot_owner_id ?? null,
+      hubspotAssociations: { people: associatedContactNames, companies: associatedCompanyNames },
+    },
+    directMetadata: {},
+    originatedAt: p.hs_task_due_date ? new Date(p.hs_task_due_date) : (p.hs_timestamp ? new Date(p.hs_timestamp) : new Date(record.updatedAt)),
+  };
+}

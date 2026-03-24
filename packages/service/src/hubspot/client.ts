@@ -10,6 +10,10 @@ import {
   COMPANY_PROPERTIES,
   DEAL_PROPERTIES,
   NOTE_PROPERTIES,
+  CALL_PROPERTIES,
+  EMAIL_PROPERTIES,
+  MEETING_PROPERTIES,
+  TASK_PROPERTIES,
 } from './types.js';
 import { createChildLogger } from '../logger.js';
 
@@ -63,6 +67,10 @@ export function getPropertiesForType(objectType: HubSpotObjectType): readonly st
     case 'companies': return COMPANY_PROPERTIES;
     case 'deals': return DEAL_PROPERTIES;
     case 'notes': return NOTE_PROPERTIES;
+    case 'calls': return CALL_PROPERTIES;
+    case 'emails': return EMAIL_PROPERTIES;
+    case 'meetings': return MEETING_PROPERTIES;
+    case 'tasks': return TASK_PROPERTIES;
   }
 }
 

@@ -2,7 +2,7 @@ import type pg from 'pg';
 import type { Client } from '@hubspot/api-client';
 import { createContentHash } from '@danielbrain/shared';
 import { listObjects, searchModifiedSince, getAssociations, getObject, getOwnerName, preloadOwners } from './client.js';
-import { formatContact, formatCompany, formatDeal, formatNote, stripHtml, classifyNote, extractFathomCallId, extractOtterUrl, extractUrls, MIN_NOTE_LENGTH } from './format.js';
+import { formatContact, formatCompany, formatDeal, formatNote, formatCall, formatEmail, formatMeeting, formatTask, stripHtml, classifyNote, extractFathomCallId, extractOtterUrl, extractUrls, MIN_NOTE_LENGTH } from './format.js';
 import type { HubSpotObjectType, HubSpotRecord, HubSpotSyncState, SyncResult, FormattedRecord } from './types.js';
 import { createChildLogger } from '../logger.js';
 
@@ -325,6 +325,34 @@ async function syncObjectTypeFull(
             }
             break;
           }
+          case 'calls': {
+            const callContacts = await getContactNames(client, 'calls', record.id);
+            const callCompanies = await getCompanyNames(client, 'calls', record.id, companyCache);
+            const callOwner = await resolveOwnerName(client, record, ownerCache);
+            formatted = formatCall(record, callContacts, callCompanies, callOwner);
+            break;
+          }
+          case 'emails': {
+            const emailContacts = await getContactNames(client, 'emails', record.id);
+            const emailCompanies = await getCompanyNames(client, 'emails', record.id, companyCache);
+            const emailOwner = await resolveOwnerName(client, record, ownerCache);
+            formatted = formatEmail(record, emailContacts, emailCompanies, emailOwner);
+            break;
+          }
+          case 'meetings': {
+            const meetingContacts = await getContactNames(client, 'meetings', record.id);
+            const meetingCompanies = await getCompanyNames(client, 'meetings', record.id, companyCache);
+            const meetingOwner = await resolveOwnerName(client, record, ownerCache);
+            formatted = formatMeeting(record, meetingContacts, meetingCompanies, meetingOwner);
+            break;
+          }
+          case 'tasks': {
+            const taskContacts = await getContactNames(client, 'tasks', record.id);
+            const taskCompanies = await getCompanyNames(client, 'tasks', record.id, companyCache);
+            const taskOwner = await resolveOwnerName(client, record, ownerCache);
+            formatted = formatTask(record, taskContacts, taskCompanies, taskOwner);
+            break;
+          }
           default:
             skipped++;
             continue;
@@ -441,6 +469,34 @@ async function syncObjectTypeIncremental(
             }
             break;
           }
+          case 'calls': {
+            const callContacts = await getContactNames(client, 'calls', record.id);
+            const callCompanies = await getCompanyNames(client, 'calls', record.id, companyCache);
+            const callOwner = await resolveOwnerName(client, record, ownerCache);
+            formatted = formatCall(record, callContacts, callCompanies, callOwner);
+            break;
+          }
+          case 'emails': {
+            const emailContacts = await getContactNames(client, 'emails', record.id);
+            const emailCompanies = await getCompanyNames(client, 'emails', record.id, companyCache);
+            const emailOwner = await resolveOwnerName(client, record, ownerCache);
+            formatted = formatEmail(record, emailContacts, emailCompanies, emailOwner);
+            break;
+          }
+          case 'meetings': {
+            const meetingContacts = await getContactNames(client, 'meetings', record.id);
+            const meetingCompanies = await getCompanyNames(client, 'meetings', record.id, companyCache);
+            const meetingOwner = await resolveOwnerName(client, record, ownerCache);
+            formatted = formatMeeting(record, meetingContacts, meetingCompanies, meetingOwner);
+            break;
+          }
+          case 'tasks': {
+            const taskContacts = await getContactNames(client, 'tasks', record.id);
+            const taskCompanies = await getCompanyNames(client, 'tasks', record.id, companyCache);
+            const taskOwner = await resolveOwnerName(client, record, ownerCache);
+            formatted = formatTask(record, taskContacts, taskCompanies, taskOwner);
+            break;
+          }
           default:
             skipped++;
             continue;
@@ -476,7 +532,7 @@ export async function syncHubSpot(
 ): Promise<SyncResult> {
   const requireContactActivity = options?.requireContactActivity ?? true;
   const state = await loadSyncState(pool);
-  const result: SyncResult = { contacts: 0, companies: 0, deals: 0, notes: 0, fathomLinked: 0, skipped: 0, errors: 0 };
+  const result: SyncResult = { contacts: 0, companies: 0, deals: 0, notes: 0, calls: 0, emails: 0, meetings: 0, tasks: 0, fathomLinked: 0, skipped: 0, errors: 0 };
   const companyCache = new Map<string, string>();
   const ownerCache = new Map<string, string>();
 
@@ -506,6 +562,10 @@ export async function syncHubSpot(
       case 'companies': result.companies = stats.queued; break;
       case 'deals': result.deals = stats.queued; break;
       case 'notes': result.notes = stats.queued; break;
+      case 'calls': result.calls = stats.queued; break;
+      case 'emails': result.emails = stats.queued; break;
+      case 'meetings': result.meetings = stats.queued; break;
+      case 'tasks': result.tasks = stats.queued; break;
     }
     result.fathomLinked += stats.fathomLinked;
     result.skipped += stats.skipped;

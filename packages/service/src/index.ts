@@ -580,9 +580,9 @@ function startHubSpotSync() {
     hubspotSyncing = true;
     try {
       const result = await syncHubSpot(hsClient, pool, objectTypes, hubspotSyncOptions);
-      const total = result.contacts + result.companies + result.deals + result.notes;
+      const total = result.contacts + result.companies + result.deals + result.notes + result.calls + result.emails + result.meetings + result.tasks;
       if (total > 0 || result.fathomLinked > 0) {
-        hubspotLog.info({ contacts: result.contacts, companies: result.companies, deals: result.deals, notes: result.notes, fathomLinked: result.fathomLinked, skipped: result.skipped }, `HubSpot ${label}`);
+        hubspotLog.info({ ...result }, `HubSpot ${label}`);
       }
       recordPollerSuccess('hubspot-sync');
     } catch (err) {
