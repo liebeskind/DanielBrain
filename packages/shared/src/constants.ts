@@ -72,3 +72,9 @@ export const OLLAMA_LLM_TIMEOUT_MS = 600_000;
 export const DEEP_RESEARCH_MAX_ITERATIONS = 5;
 export const DEEP_RESEARCH_RESULTS_PER_QUERY = 10;
 export const DEEP_RESEARCH_SIMILARITY_THRESHOLD = 0.2;
+
+// URL enrichment (HubSpot note link extraction)
+export const URL_ENRICHMENT_INTERVAL_MS = 60_000;
+export const URL_ENRICHMENT_BATCH_SIZE = 3;
+export const URL_FETCH_TIMEOUT_MS = 15_000;
+export const MAX_FETCHED_CONTENT_LENGTH = 100_000;

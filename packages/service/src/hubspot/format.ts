@@ -20,6 +20,73 @@ export function extractOtterUrl(body: string): string | null {
   return match ? match[1] : null;
 }
 
+// --- URL extraction and classification ---
+
+export type UrlType = 'google_doc' | 'notion' | 'otter' | 'fathom' | 'loom' | 'video' | 'calendar' | 'pdf' | 'web_page';
+
+export interface UrlInventoryItem {
+  url: string;
+  type: UrlType;
+  fetchable: boolean;
+  anchor_text?: string;
+  processed?: string; // 'success' | 'auth_required' | 'error' | 'too_large' | 'unsupported_type'
+  details?: string;
+}
+
+const URL_TYPE_RULES: Array<{ pattern: RegExp; type: UrlType; fetchable: boolean }> = [
+  { pattern: /docs\.google\.com\/document/, type: 'google_doc', fetchable: true },
+  { pattern: /drive\.google\.com/, type: 'google_doc', fetchable: false },
+  { pattern: /notion\.so|notion\.site/, type: 'notion', fetchable: false },
+  { pattern: /otter\.ai\/note\//, type: 'otter', fetchable: true },
+  { pattern: /fathom\.video/, type: 'fathom', fetchable: false },
+  { pattern: /loom\.com\/share\//, type: 'loom', fetchable: false },
+  { pattern: /youtube\.com|youtu\.be|vimeo\.com/, type: 'video', fetchable: false },
+  { pattern: /meet\.google\.com|zoom\.us|calendly\.com/, type: 'calendar', fetchable: false },
+  { pattern: /\.pdf(\?|$|#)/, type: 'pdf', fetchable: true },
+];
+
+const IGNORED_DOMAINS = /app\.hubspot\.com|api\.hubspot\.com|track\.hubspot\.com|email\.hubspot\.com|unsubscribe|list-manage\.com|mailchimp\.com/i;
+
+function classifyUrl(url: string): { type: UrlType; fetchable: boolean } {
+  for (const rule of URL_TYPE_RULES) {
+    if (rule.pattern.test(url)) return { type: rule.type, fetchable: rule.fetchable };
+  }
+  return { type: 'web_page', fetchable: true };
+}
+
+/** Extract and classify all URLs from raw HTML note body */
+export function extractUrls(rawHtml: string): UrlInventoryItem[] {
+  const seen = new Set<string>();
+  const items: UrlInventoryItem[] = [];
+
+  // Extract from <a href="...">anchor text</a> tags
+  const hrefPattern = /<a[^>]+href=["']([^"']+)["'][^>]*>([^<]*)<\/a>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = hrefPattern.exec(rawHtml)) !== null) {
+    const url = match[1].trim();
+    const anchor = match[2].trim() || undefined;
+    if (url && !seen.has(url) && /^https?:\/\//.test(url) && !IGNORED_DOMAINS.test(url)) {
+      seen.add(url);
+      const { type, fetchable } = classifyUrl(url);
+      items.push({ url, type, fetchable, anchor_text: anchor });
+    }
+  }
+
+  // Extract bare URLs from text (after stripping tags)
+  const stripped = rawHtml.replace(/<[^>]*>/g, ' ');
+  const barePattern = /https?:\/\/[^\s<>"')\]]+/gi;
+  while ((match = barePattern.exec(stripped)) !== null) {
+    const url = match[0].replace(/[.,;:!?)]+$/, ''); // strip trailing punctuation
+    if (url && !seen.has(url) && !IGNORED_DOMAINS.test(url)) {
+      seen.add(url);
+      const { type, fetchable } = classifyUrl(url);
+      items.push({ url, type, fetchable });
+    }
+  }
+
+  return items;
+}
+
 /** Classify a note body to determine processing strategy */
 export function classifyNote(strippedBody: string): NoteClassification {
   const lower = strippedBody.toLowerCase();

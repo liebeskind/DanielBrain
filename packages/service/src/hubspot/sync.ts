@@ -2,7 +2,7 @@ import type pg from 'pg';
 import type { Client } from '@hubspot/api-client';
 import { createContentHash } from '@danielbrain/shared';
 import { listObjects, searchModifiedSince, getAssociations, getObject, getOwnerName, preloadOwners } from './client.js';
-import { formatContact, formatCompany, formatDeal, formatNote, stripHtml, classifyNote, extractFathomCallId, extractOtterUrl, MIN_NOTE_LENGTH } from './format.js';
+import { formatContact, formatCompany, formatDeal, formatNote, stripHtml, classifyNote, extractFathomCallId, extractOtterUrl, extractUrls, MIN_NOTE_LENGTH } from './format.js';
 import type { HubSpotObjectType, HubSpotRecord, HubSpotSyncState, SyncResult, FormattedRecord } from './types.js';
 import { createChildLogger } from '../logger.js';
 
@@ -310,6 +310,8 @@ async function syncObjectTypeFull(
             // Store classification + enrichment URLs for future processing
             const meta = formatted.sourceMeta as Record<string, unknown>;
             meta.note_type = noteType;
+            const urls = extractUrls(rawBody);
+            if (urls.length > 0) meta.extracted_urls = urls;
             if (noteType === 'otter_stub') {
               const otterUrl = extractOtterUrl(stripped);
               if (otterUrl) meta.otter_url = otterUrl;
@@ -424,6 +426,8 @@ async function syncObjectTypeIncremental(
             // Store classification + enrichment URLs for future processing
             const meta = formatted.sourceMeta as Record<string, unknown>;
             meta.note_type = noteType;
+            const urls = extractUrls(rawBody);
+            if (urls.length > 0) meta.extracted_urls = urls;
             if (noteType === 'otter_stub') {
               const otterUrl = extractOtterUrl(stripped);
               if (otterUrl) meta.otter_url = otterUrl;

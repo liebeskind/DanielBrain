@@ -298,6 +298,47 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
     }
   });
 
+  // ---- URL inventory API ----
+  router.get('/api/url-inventory', async (_req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT t.source_meta->'extracted_urls' as urls
+         FROM thoughts t
+         WHERE t.source = 'hubspot'
+           AND t.source_meta->>'object_type' = 'note'
+           AND t.source_meta->'extracted_urls' IS NOT NULL
+           AND jsonb_array_length(t.source_meta->'extracted_urls') > 0
+           AND t.parent_id IS NULL`
+      );
+
+      const byType: Record<string, number> = {};
+      const byStatus: Record<string, number> = {};
+      const authRequired: Array<{ url: string; type: string; details?: string }> = [];
+
+      for (const row of rows) {
+        const urls = (row.urls || []) as Array<{ url: string; type: string; fetchable: boolean; processed?: string; details?: string }>;
+        for (const u of urls) {
+          byType[u.type] = (byType[u.type] || 0) + 1;
+          const status = u.processed || 'unprocessed';
+          byStatus[status] = (byStatus[status] || 0) + 1;
+          if (u.processed === 'auth_required') {
+            authRequired.push({ url: u.url, type: u.type, details: u.details });
+          }
+        }
+      }
+
+      res.json({
+        total_notes_with_urls: rows.length,
+        by_type: byType,
+        by_status: byStatus,
+        auth_required: authRequired,
+      });
+    } catch (err) {
+      log.error({ err }, 'URL inventory error');
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
   // ---- Correction examples stats API ----
   router.get('/api/corrections/stats', async (_req, res) => {
     try {

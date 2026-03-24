@@ -29,6 +29,7 @@ import { createProposalRoutes } from './proposals/routes.js';
 import { createAdminRoutes } from './admin/routes.js';
 import { createChatRoutes } from './chat/routes.js';
 import { enrichLinkedInBatch } from './enrichers/linkedin.js';
+import { enrichUrlBatch } from './enrichers/url-enricher.js';
 import { verifyFathomSignature } from './fathom/verify.js';
 import { handleFathomEvent } from './fathom/webhook.js';
 import { createCorrectionRoutes } from './corrections/routes.js';
@@ -467,6 +468,28 @@ function startLinkedInEnricher() {
   }, LINKEDIN_ENRICHMENT_INTERVAL_MS);
 }
 
+// --- URL enrichment poller (optional — only when HubSpot is configured) ---
+import { URL_ENRICHMENT_INTERVAL_MS } from '@danielbrain/shared';
+const urlEnrichLog = createChildLogger('url-enricher');
+let urlEnrichInterval: ReturnType<typeof setInterval> | undefined;
+
+function startUrlEnricher() {
+  if (!config.hubspotAccessToken) return;
+
+  urlEnrichInterval = setInterval(async () => {
+    try {
+      const count = await enrichUrlBatch(pool);
+      if (count > 0) {
+        urlEnrichLog.info({ count }, 'Processed URLs from HubSpot notes');
+      }
+      recordPollerSuccess('url-enricher');
+    } catch (err) {
+      urlEnrichLog.error({ err }, 'URL enrichment error');
+      recordPollerError('url-enricher', (err as Error).message);
+    }
+  }, URL_ENRICHMENT_INTERVAL_MS);
+}
+
 // --- Relationship description poller (optional — only if configured) ---
 const relationshipLog = createChildLogger('relationship-describer');
 let relationshipInterval: ReturnType<typeof setInterval> | undefined;
@@ -629,6 +652,7 @@ function shutdown() {
   clearInterval(pollInterval);
   clearInterval(profileInterval);
   if (linkedinInterval) clearInterval(linkedinInterval);
+  if (urlEnrichInterval) clearInterval(urlEnrichInterval);
   if (relationshipInterval) clearInterval(relationshipInterval);
   if (communityDetectionInterval) clearInterval(communityDetectionInterval);
   if (communitySummaryInterval) clearInterval(communitySummaryInterval);
@@ -664,6 +688,10 @@ function startPollers() {
   startLinkedInEnricher();
   if (config.serpApiKey) {
     logger.info({ intervalMs: LINKEDIN_ENRICHMENT_INTERVAL_MS }, 'LinkedIn enricher started');
+  }
+  startUrlEnricher();
+  if (config.hubspotAccessToken) {
+    logger.info({ intervalMs: URL_ENRICHMENT_INTERVAL_MS }, 'URL enricher started');
   }
   startRelationshipDescriber();
   if (config.relationshipModel) {
