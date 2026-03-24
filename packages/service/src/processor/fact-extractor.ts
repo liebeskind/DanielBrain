@@ -67,9 +67,10 @@ export async function extractFactsFromContent(
     body: JSON.stringify({
       model: config.extractionModel,
       stream: false,
+      format: 'json',
       messages: [
         { role: 'system', content: FACT_EXTRACTION_PROMPT },
-        { role: 'user', content: `Text: "${truncated}"\nEntities: ${entityList}` },
+        { role: 'user', content: `Text: "${truncated}"\nEntities: ${entityList}\n\nReturn a JSON array of facts:` },
       ],
     }),
     signal: AbortSignal.timeout(OLLAMA_LLM_TIMEOUT_MS),
@@ -80,9 +81,31 @@ export async function extractFactsFromContent(
   }
 
   const data = (await response.json()) as { message: { content: string } };
-  const parsed = JSON.parse(data.message.content);
+  const raw = data.message.content.trim();
 
-  if (!Array.isArray(parsed)) return [];
+  // Resilient JSON parsing: try direct parse, then extract JSON array from wrapped text
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // LLM sometimes wraps JSON in markdown or prose — extract the array
+    const arrayMatch = raw.match(/\[[\s\S]*\]/);
+    if (!arrayMatch) return [];
+    try {
+      parsed = JSON.parse(arrayMatch[0]);
+    } catch {
+      return [];
+    }
+  }
+
+  if (!Array.isArray(parsed)) {
+    // Handle {"facts": [...]} wrapper
+    if (parsed && typeof parsed === 'object' && Array.isArray((parsed as any).facts)) {
+      parsed = (parsed as any).facts;
+    } else {
+      return [];
+    }
+  }
 
   const validTypes = new Set(['claim', 'decision', 'constraint', 'event', 'capability', 'preference']);
 
