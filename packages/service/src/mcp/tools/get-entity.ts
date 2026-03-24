@@ -1,6 +1,7 @@
 import type pg from 'pg';
 import type { Entity } from '@danielbrain/shared';
 import { ENTITY_STALE_MENTIONS, ENTITY_STALE_DAYS } from '@danielbrain/shared';
+import { getFactsForEntity } from '../../db/fact-queries.js';
 
 interface GetEntityInput {
   entity_id?: string;
@@ -137,6 +138,9 @@ export async function handleGetEntity(
     || mentionsSinceRefresh >= ENTITY_STALE_MENTIONS
     || daysSinceUpdate >= ENTITY_STALE_DAYS;
 
+  // Fetch known facts about this entity
+  const facts = await getFactsForEntity(pool, entity.id, { limit: 10 });
+
   return {
     entity,
     recent_thoughts: thoughts,
@@ -148,6 +152,11 @@ export async function handleGetEntity(
       relationship_description: r.relationship_description || null,
       relationship_weight: r.relationship_weight ? parseInt(r.relationship_weight, 10) : undefined,
       relationship_type: r.relationship_type || undefined,
+    })),
+    known_facts: facts.map(f => ({
+      statement: f.statement,
+      fact_type: f.fact_type,
+      confidence: f.confidence,
     })),
     needs_profile_refresh: needsRefresh,
   };

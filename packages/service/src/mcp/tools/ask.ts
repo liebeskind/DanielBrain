@@ -2,6 +2,7 @@ import type pg from 'pg';
 import { handleSemanticSearch } from './semantic-search.js';
 import { extractKeywords } from '../../processor/keyword-extractor.js';
 import { detectIntent } from '../../processor/intent-detector.js';
+import { searchFacts } from '../../db/fact-queries.js';
 import { CHAT_CONTEXT_ENTITY_RELATIONSHIP_LIMIT } from '@danielbrain/shared';
 
 interface AskInput {
@@ -39,7 +40,7 @@ export async function handleAsk(
   // Reuse the query embedding from keyword extraction to avoid duplicate Ollama call
   const vectorStr = `[${keywords.queryEmbedding.join(',')}]`;
 
-  const [thoughts, communityResults, entityDetails] = await Promise.all([
+  const [thoughts, communityResults, entityDetails, factResults] = await Promise.all([
     handleSemanticSearch(
       { query: searchQuery, limit: searchLimit, threshold: searchThreshold, days_back: searchDaysBack },
       pool,
@@ -48,6 +49,7 @@ export async function handleAsk(
     ),
     searchCommunitiesWithEmbedding(vectorStr, pool),
     fetchEntityDetails(keywords.entities, pool),
+    searchFacts(pool, keywords.queryEmbedding, { limit: 10, threshold: 0.3 }, visibilityTags ?? null),
   ]);
 
   return {
@@ -63,6 +65,14 @@ export async function handleAsk(
       source: t.source,
       similarity: t.similarity,
       created_at: t.created_at,
+    })),
+    facts: factResults.map((f) => ({
+      statement: f.statement,
+      fact_type: f.fact_type,
+      confidence: f.confidence,
+      similarity: f.similarity,
+      subject: f.subject_name,
+      object: f.object_name,
     })),
     communities: communityResults,
     themes: keywords.themes,

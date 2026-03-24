@@ -1,6 +1,8 @@
 import type pg from 'pg';
 import { handleSemanticSearch } from '../mcp/tools/semantic-search.js';
 import { detectIntent } from '../processor/intent-detector.js';
+import { searchFacts } from '../db/fact-queries.js';
+import { embedQuery } from '../processor/embedder.js';
 import {
   CHAT_CONTEXT_SEARCH_LIMIT,
   CHAT_CONTEXT_SEARCH_THRESHOLD,
@@ -81,12 +83,17 @@ export async function buildContext(
   const searchThreshold = intent.adjustments.threshold ?? CHAT_CONTEXT_SEARCH_THRESHOLD;
   const searchLimit = intent.adjustments.limit ?? CHAT_CONTEXT_SEARCH_LIMIT;
 
-  const searchResults = await handleSemanticSearch(
-    { query: searchQuery, limit: searchLimit, threshold: searchThreshold, days_back: intent.adjustments.days_back },
-    pool,
-    config,
-    visibilityTags,
-  );
+  // Run thought search + fact search in parallel (reuse embedding for facts)
+  const queryEmbedding = await embedQuery(searchQuery, config);
+  const [searchResults, factResults] = await Promise.all([
+    handleSemanticSearch(
+      { query: searchQuery, limit: searchLimit, threshold: searchThreshold, days_back: intent.adjustments.days_back },
+      pool,
+      config,
+      visibilityTags,
+    ),
+    searchFacts(pool, queryEmbedding, { limit: 5, threshold: 0.3 }, visibilityTags ?? null),
+  ]);
 
   // Deduplicate chunks from the same parent thought
   const dedupedResults = deduplicateResults(searchResults as SearchResult[]);
@@ -182,6 +189,15 @@ export async function buildContext(
       }
 
       parts.push(line);
+    }
+  }
+
+  if (factResults.length > 0) {
+    parts.push('');
+    parts.push('KNOWN FACTS:');
+    for (const f of factResults) {
+      const subject = f.subject_name ? `[${f.subject_name}]` : '';
+      parts.push(`- ${subject} ${f.statement} (${f.fact_type}, confidence: ${f.confidence})`);
     }
   }
 

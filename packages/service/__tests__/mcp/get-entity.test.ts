@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { handleGetEntity } from '../../src/mcp/tools/get-entity.js';
 
+vi.mock('../../src/db/fact-queries.js', () => ({
+  getFactsForEntity: vi.fn().mockResolvedValue([]),
+}));
+
 const mockPool = {
   query: vi.fn(),
 };
