@@ -105,6 +105,9 @@ Structural hierarchy (LangChain RecursiveCharacterTextSplitter pattern): code bl
 ### Intent-Aware Retrieval
 Khoj-inspired two-layer hybrid: Layer 1 (heuristic fast-path) detects temporal keywords ("last week" → days_back=7) and action keywords ("action items" → thought_type filter). Layer 2 (LLM via llama3.3:70b) classifies ambiguous queries with structured JSON output + optional query reformulation. Wired into `handleAsk` (MCP) and `buildContext` (chat). User-provided params always override intent adjustments.
 
+### Atomic Fact Extraction
+Graphiti-inspired: each thought produces atomic facts via dedicated LLM extraction. Facts stored in `facts` table with own embeddings (HNSW), entity links (subject/object), temporal validity (`valid_at`/`invalid_at`), and confidence scores. Contradiction detection via embedding similarity: >0.95 = duplicate (skip), 0.85-0.95 = superseded (temporal invalidation, never delete). Fire-and-forget in pipeline (non-blocking). Migration 039.
+
 ### HubSpot Direct Metadata Bypass
 Structured CRM records (contacts, companies, deals) skip LLM extraction via `directMetadata` in `source_meta`. Notes use full pipeline. Per-object visibility branches on `source_meta.object_type`.
 

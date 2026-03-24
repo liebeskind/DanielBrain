@@ -6,6 +6,7 @@ import { chunkText, needsChunking } from './chunker.js';
 import type { SourceHint } from './chunker.js';
 import { summarize } from './summarizer.js';
 import { resolveEntities } from './entity-resolver.js';
+import { extractAndStoreFacts } from './fact-extractor.js';
 import { computeSourceVisibility } from '../visibility.js';
 import { createChildLogger } from '../logger.js';
 
@@ -206,6 +207,10 @@ async function processShort(
     log.error({ err }, 'Entity resolution failed (non-fatal)');
   }
 
+  // Fire-and-forget fact extraction (non-blocking — runs after entity resolution)
+  extractAndStoreFacts(rows[0].id, content, metadata, visibility, pool, config)
+    .catch((err) => log.error({ err }, 'Fact extraction failed (non-fatal)'));
+
   return { id: rows[0].id, metadata };
 }
 
@@ -314,6 +319,10 @@ async function processLong(
   } catch (err) {
     log.error({ err }, 'Entity resolution failed (non-fatal)');
   }
+
+  // Fire-and-forget fact extraction (non-blocking)
+  extractAndStoreFacts(parentId, content, metadata, visibility, pool, config)
+    .catch((err) => log.error({ err }, 'Fact extraction failed (non-fatal)'));
 
   return { id: parentId, metadata, chunks: chunks.length };
 }
