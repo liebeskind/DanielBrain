@@ -208,7 +208,7 @@ async function processShort(
   }
 
   // Fire-and-forget fact extraction (non-blocking — runs after entity resolution)
-  extractAndStoreFacts(rows[0].id, content, metadata, visibility, pool, config)
+  extractAndStoreFacts(rows[0].id, content, metadata, visibility, pool, config, metadata.summary)
     .catch((err) => log.error({ err }, 'Fact extraction failed (non-fatal)'));
 
   return { id: rows[0].id, metadata };
@@ -321,7 +321,7 @@ async function processLong(
   }
 
   // Fire-and-forget fact extraction (non-blocking)
-  extractAndStoreFacts(parentId, content, metadata, visibility, pool, config)
+  extractAndStoreFacts(parentId, content, metadata, visibility, pool, config, summaryText)
     .catch((err) => log.error({ err }, 'Fact extraction failed (non-fatal)'));
 
   return { id: parentId, metadata, chunks: chunks.length };
