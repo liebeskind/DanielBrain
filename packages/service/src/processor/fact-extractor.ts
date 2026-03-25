@@ -152,8 +152,8 @@ async function resolveEntityId(
   return rows.length > 0 ? rows[0].id : null;
 }
 
-/** Check for contradictions with existing facts about the same entities */
-async function findContradictions(
+/** Check for near-duplicate facts about the same entity pair */
+async function findNearDuplicates(
   fact: ExtractedFact,
   subjectId: string | null,
   objectId: string | null,
@@ -164,20 +164,34 @@ async function findContradictions(
 
   const vectorStr = `[${factEmbedding.join(',')}]`;
 
-  // Find existing active facts about the same subject entity with high embedding similarity
+  // Require BOTH subject AND object to match (or both null) to avoid
+  // flagging "Daniel talked to X about AWS" vs "Daniel talked to Y about Google"
+  // as duplicates just because they share the same subject entity.
+  const conditions = [
+    'f.subject_entity_id = $2',
+    'f.invalid_at IS NULL',
+    'f.embedding IS NOT NULL',
+  ];
+  const params: unknown[] = [vectorStr, subjectId];
+
+  if (objectId) {
+    conditions.push(`f.object_entity_id = $${params.length + 1}`);
+    params.push(objectId);
+  } else {
+    conditions.push('f.object_entity_id IS NULL');
+  }
+
   const { rows } = await pool.query(
     `SELECT f.id, f.statement,
             1 - ((f.embedding::halfvec(768)) <=> ($1::vector::halfvec(768))) as similarity
      FROM facts f
-     WHERE f.subject_entity_id = $2
-       AND f.invalid_at IS NULL
-       AND f.embedding IS NOT NULL
+     WHERE ${conditions.join(' AND ')}
      ORDER BY f.embedding::halfvec(768) <=> $1::vector::halfvec(768)
-     LIMIT 5`,
-    [vectorStr, subjectId],
+     LIMIT 3`,
+    params,
   );
 
-  // High similarity (> 0.90) suggests duplicate or near-duplicate
+  // > 0.90 similarity with same entity pair = near-duplicate
   return rows
     .filter((r: any) => parseFloat(r.similarity) > 0.90)
     .map((r: any) => ({
@@ -208,7 +222,7 @@ export async function storeFacts(
       ]);
 
       // Check for contradictions
-      const similar = await findContradictions(fact, subjectId, objectId, factEmbedding, pool);
+      const similar = await findNearDuplicates(fact, subjectId, objectId, factEmbedding, pool);
 
       if (similar.length > 0) {
         // > 0.90 similarity = near-duplicate (same fact restated across sources), skip
