@@ -32,6 +32,7 @@ import { enrichLinkedInBatch } from './enrichers/linkedin.js';
 import { enrichUrlBatch } from './enrichers/url-enricher.js';
 import { verifyFathomSignature } from './fathom/verify.js';
 import { handleFathomEvent } from './fathom/webhook.js';
+import { syncFathomMeetings } from './fathom/sync.js';
 import { createCorrectionRoutes } from './corrections/routes.js';
 import { describeUndescribedRelationships } from './processor/relationship-describer.js';
 import { acquireOllama, releaseOllama } from './ollama-mutex.js';
@@ -490,6 +491,28 @@ function startUrlEnricher() {
   }, URL_ENRICHMENT_INTERVAL_MS);
 }
 
+// --- Fathom polling sync (optional — supplements webhook, catches missed meetings) ---
+const fathomSyncLog = createChildLogger('fathom-sync');
+const FATHOM_POLL_INTERVAL_MS = 300_000; // 5 minutes, same as HubSpot
+let fathomSyncInterval: ReturnType<typeof setInterval> | undefined;
+
+function startFathomSync() {
+  if (!config.fathomApiKey) return;
+
+  fathomSyncInterval = setInterval(async () => {
+    try {
+      const result = await syncFathomMeetings(pool, { fathomApiKey: config.fathomApiKey! });
+      if (result.queued > 0) {
+        fathomSyncLog.info({ queued: result.queued, skipped: result.skipped }, 'Fathom sync: new meetings found');
+      }
+      recordPollerSuccess('fathom-sync');
+    } catch (err) {
+      fathomSyncLog.error({ err }, 'Fathom sync error');
+      recordPollerError('fathom-sync', (err as Error).message);
+    }
+  }, FATHOM_POLL_INTERVAL_MS);
+}
+
 // --- Relationship description poller (optional — only if configured) ---
 const relationshipLog = createChildLogger('relationship-describer');
 let relationshipInterval: ReturnType<typeof setInterval> | undefined;
@@ -653,6 +676,7 @@ function shutdown() {
   clearInterval(profileInterval);
   if (linkedinInterval) clearInterval(linkedinInterval);
   if (urlEnrichInterval) clearInterval(urlEnrichInterval);
+  if (fathomSyncInterval) clearInterval(fathomSyncInterval);
   if (relationshipInterval) clearInterval(relationshipInterval);
   if (communityDetectionInterval) clearInterval(communityDetectionInterval);
   if (communitySummaryInterval) clearInterval(communitySummaryInterval);
@@ -692,6 +716,10 @@ function startPollers() {
   startUrlEnricher();
   if (config.hubspotAccessToken) {
     logger.info({ intervalMs: URL_ENRICHMENT_INTERVAL_MS }, 'URL enricher started');
+  }
+  startFathomSync();
+  if (config.fathomApiKey) {
+    logger.info({ intervalMs: FATHOM_POLL_INTERVAL_MS }, 'Fathom sync poller started');
   }
   startRelationshipDescriber();
   if (config.relationshipModel) {
