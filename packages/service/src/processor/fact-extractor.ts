@@ -27,39 +27,46 @@ RULES:
 - Each fact must be a complete sentence with resolved pronouns (use full names, not "he/she/they")
 - Facts must be directly supported by the text — do NOT infer or speculate
 - Extract 3-10 facts. Prioritize: decisions, role/relationship claims, capabilities, constraints, events
-- Skip generic/obvious facts ("The meeting happened")
+- Skip generic/obvious facts ("The meeting happened", "They discussed topics")
 - Subject/object should be entity names (people, companies, products, projects) when applicable
 - fact_type: "claim" (general statement), "decision" (agreed action), "constraint" (limitation), "event" (happened), "capability" (can/supports), "preference" (wants/prefers)
 - confidence: 0.5-1.0 based on how explicitly stated (direct quote = 1.0, implied = 0.6)
 - valid_at: ISO date if the fact has a specific time reference, null otherwise
+- ALWAYS return at least 1 fact if the text contains any substantive information
 
-Return JSON array:
-[
-  {"statement": "...", "fact_type": "claim", "confidence": 0.9, "subject": "Entity A", "object": "Entity B", "valid_at": null}
-]
+Return a JSON object with a "facts" array:
+{"facts": [{"statement": "...", "fact_type": "claim", "confidence": 0.9, "subject": "Entity A", "object": "Entity B", "valid_at": null}]}
 
 EXAMPLE:
 Text: "Meeting with Chris Psiaki about K12 Zone. Chris confirmed Stride wants to add 3 more schools by Q2. Decision: launch beta March 15. Canvas LTI 1.3 does not support SSO passthrough."
 Entities: Chris Psiaki (person), Stride (company), K12 Zone (product), Canvas (product)
 
-[
+{"facts": [
   {"statement": "Stride wants to add 3 more schools to K12 Zone by Q2.", "fact_type": "event", "confidence": 0.9, "subject": "Stride", "object": "K12 Zone", "valid_at": null},
   {"statement": "K12 Zone beta will launch on March 15.", "fact_type": "decision", "confidence": 1.0, "subject": "K12 Zone", "object": null, "valid_at": null},
   {"statement": "Canvas LTI 1.3 does not support SSO passthrough.", "fact_type": "constraint", "confidence": 1.0, "subject": "Canvas", "object": null, "valid_at": null},
   {"statement": "Chris Psiaki confirmed the Stride expansion plans.", "fact_type": "claim", "confidence": 0.85, "subject": "Chris Psiaki", "object": "Stride", "valid_at": null}
-]`;
+]}`;
 
 /** Extract atomic facts from thought content via LLM */
 export async function extractFactsFromContent(
   content: string,
   entities: Array<{ name: string; entity_type: string }>,
   config: FactExtractionConfig,
+  summary?: string | null,
 ): Promise<ExtractedFact[]> {
   const entityList = entities.length > 0
     ? entities.map((e) => `${e.name} (${e.entity_type})`).join(', ')
     : 'none identified';
 
-  const truncated = content.length > 3000 ? content.slice(0, 3000) + '...' : content;
+  // Use summary + content excerpt for better fact extraction on long content
+  let textForExtraction: string;
+  if (summary && content.length > 3000) {
+    // For long content: summary captures key points, plus first 1500 chars of content for detail
+    textForExtraction = `Summary: ${summary}\n\nContent excerpt:\n${content.slice(0, 1500)}`;
+  } else {
+    textForExtraction = content.length > 4000 ? content.slice(0, 4000) + '...' : content;
+  }
 
   const response = await fetch(`${config.ollamaBaseUrl}/api/chat`, {
     method: 'POST',
@@ -70,7 +77,7 @@ export async function extractFactsFromContent(
       format: 'json',
       messages: [
         { role: 'system', content: FACT_EXTRACTION_PROMPT },
-        { role: 'user', content: `Text: "${truncated}"\nEntities: ${entityList}\n\nReturn a JSON array of facts:` },
+        { role: 'user', content: `Text: "${textForExtraction}"\nEntities: ${entityList}\n\nReturn a JSON object with a "facts" array:` },
       ],
     }),
     signal: AbortSignal.timeout(OLLAMA_LLM_TIMEOUT_MS),
@@ -270,6 +277,7 @@ export async function extractAndStoreFacts(
   visibility: string[],
   pool: pg.Pool,
   config: FactExtractionConfig,
+  summary?: string | null,
 ): Promise<void> {
   // Build entity list from already-extracted metadata
   const entities: Array<{ name: string; entity_type: string }> = [
@@ -279,7 +287,7 @@ export async function extractAndStoreFacts(
     ...metadata.projects.map((n) => ({ name: n, entity_type: 'project' })),
   ];
 
-  const facts = await extractFactsFromContent(content, entities, config);
+  const facts = await extractFactsFromContent(content, entities, config, summary);
 
   if (facts.length === 0) {
     log.debug({ thoughtId }, 'No facts extracted');
