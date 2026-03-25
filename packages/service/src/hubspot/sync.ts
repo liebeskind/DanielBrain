@@ -347,6 +347,11 @@ async function syncObjectTypeFull(
             break;
           }
           case 'tasks': {
+            // Skip auto-generated tasks that were never acted on
+            if (record.properties.hs_task_status === 'NOT_STARTED') {
+              skipped++;
+              continue;
+            }
             const taskContacts = await getContactNames(client, 'tasks', record.id);
             const taskCompanies = await getCompanyNames(client, 'tasks', record.id, companyCache);
             const taskOwner = await resolveOwnerName(client, record, ownerCache);
@@ -491,6 +496,11 @@ async function syncObjectTypeIncremental(
             break;
           }
           case 'tasks': {
+            // Skip auto-generated tasks that were never acted on
+            if (record.properties.hs_task_status === 'NOT_STARTED') {
+              skipped++;
+              continue;
+            }
             const taskContacts = await getContactNames(client, 'tasks', record.id);
             const taskCompanies = await getCompanyNames(client, 'tasks', record.id, companyCache);
             const taskOwner = await resolveOwnerName(client, record, ownerCache);
