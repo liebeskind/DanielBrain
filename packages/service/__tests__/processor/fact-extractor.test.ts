@@ -160,45 +160,31 @@ describe('storeFacts', () => {
     expect(insertCall![1][6]).toBe('entity-2'); // object
   });
 
-  it('detects and handles contradictions (temporal invalidation)', async () => {
+  it('skips near-duplicate facts (similarity > 0.90)', async () => {
     // resolveEntityId for subject
     mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'entity-1' }] });
     // object is null → resolveEntityId returns null without querying
-    // findContradictions - returns high similarity fact
+    // findContradictions - returns high similarity fact (near-duplicate)
     mockPool.query.mockResolvedValueOnce({
-      rows: [{ id: 'old-fact', statement: 'Old claim about A.', similarity: '0.90' }],
+      rows: [{ id: 'existing-fact', statement: 'Similar claim about A.', similarity: '0.92' }],
     });
-    // UPDATE old fact (invalidate)
-    mockPool.query.mockResolvedValueOnce({});
-    // INSERT new fact
-    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'new-fact' }] });
-    // UPDATE old fact with invalidated_by
-    mockPool.query.mockResolvedValueOnce({});
 
     const result = await storeFacts(
       'thought-1',
-      [{ statement: 'New claim about A.', fact_type: 'claim', confidence: 0.9, subject: 'A', object: null, valid_at: null }],
+      [{ statement: 'Nearly identical claim about A.', fact_type: 'claim', confidence: 0.9, subject: 'A', object: null, valid_at: null }],
       ['company'],
       mockPool as any,
       mockConfig,
     );
 
-    expect(result.stored).toBe(1);
-    expect(result.contradictions).toBe(1);
-
-    // Verify old fact was invalidated
-    const invalidateCall = mockPool.query.mock.calls.find(
-      (c: any) => typeof c[0] === 'string' && c[0].includes('UPDATE facts SET invalid_at'),
-    );
-    expect(invalidateCall).toBeDefined();
-    expect(invalidateCall![1][0]).toBe('old-fact');
+    expect(result.stored).toBe(0); // skipped as near-duplicate
   });
 
-  it('skips duplicates (similarity > 0.95)', async () => {
+  it('skips exact duplicates (similarity > 0.95)', async () => {
     // resolveEntityId for subject
     mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'entity-1' }] });
     // object is null → resolveEntityId returns null without querying
-    // findContradictions - returns very high similarity (duplicate)
+    // findContradictions - returns very high similarity (exact duplicate)
     mockPool.query.mockResolvedValueOnce({
       rows: [{ id: 'existing-fact', statement: 'Same fact.', similarity: '0.97' }],
     });
@@ -211,8 +197,7 @@ describe('storeFacts', () => {
       mockConfig,
     );
 
-    expect(result.stored).toBe(0); // skipped as duplicate
-    expect(result.contradictions).toBe(0);
+    expect(result.stored).toBe(0); // skipped as near-duplicate
   });
 
   it('handles entity resolution failure gracefully', async () => {

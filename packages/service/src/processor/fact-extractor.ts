@@ -177,9 +177,9 @@ async function findContradictions(
     [vectorStr, subjectId],
   );
 
-  // High similarity (> 0.85) suggests potential contradiction or duplicate
+  // High similarity (> 0.90) suggests duplicate or near-duplicate
   return rows
-    .filter((r: any) => parseFloat(r.similarity) > 0.85)
+    .filter((r: any) => parseFloat(r.similarity) > 0.90)
     .map((r: any) => ({
       id: r.id,
       statement: r.statement,
@@ -211,25 +211,11 @@ export async function storeFacts(
       const similar = await findContradictions(fact, subjectId, objectId, factEmbedding, pool);
 
       if (similar.length > 0) {
-        // Very high similarity (> 0.95) = likely duplicate, skip
-        const isDuplicate = similar.some((s) => s.similarity > 0.95);
-        if (isDuplicate) {
-          log.debug({ statement: fact.statement.slice(0, 80) }, 'Fact skipped (duplicate)');
-          continue;
-        }
-
-        // High similarity (0.85-0.95) = potential contradiction, invalidate old
-        for (const old of similar) {
-          await pool.query(
-            `UPDATE facts SET invalid_at = NOW(), invalidated_by = NULL WHERE id = $1 AND invalid_at IS NULL`,
-            [old.id],
-          );
-          contradictions++;
-          log.info(
-            { oldFact: old.statement.slice(0, 60), newFact: fact.statement.slice(0, 60), similarity: old.similarity },
-            'Fact superseded (temporal invalidation)',
-          );
-        }
+        // > 0.90 similarity = near-duplicate (same fact restated across sources), skip
+        // True contradictions have LOWER similarity (opposite claims about same entity)
+        // and should be detected via LLM classification (future enhancement)
+        log.debug({ statement: fact.statement.slice(0, 80), topSimilarity: similar[0].similarity }, 'Fact skipped (near-duplicate)');
+        continue;
       }
 
       const vectorStr = `[${factEmbedding.join(',')}]`;
