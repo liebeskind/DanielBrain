@@ -339,6 +339,102 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
     }
   });
 
+  // ---- Facts API ----
+  router.get('/api/facts/stats', async (_req, res) => {
+    try {
+      const { rows: [counts] } = await pool.query(
+        `SELECT count(*) as total,
+                count(*) FILTER (WHERE invalid_at IS NULL) as active,
+                count(*) FILTER (WHERE invalid_at IS NOT NULL) as invalidated
+         FROM facts`
+      );
+      const { rows: typeCounts } = await pool.query(
+        `SELECT fact_type, count(*) as count FROM facts WHERE invalid_at IS NULL GROUP BY 1 ORDER BY 2 DESC`
+      );
+      res.json({
+        total: parseInt(counts.total, 10),
+        active: parseInt(counts.active, 10),
+        invalidated: parseInt(counts.invalidated, 10),
+        by_type: typeCounts,
+      });
+    } catch (err) {
+      log.error({ err }, 'Facts stats error');
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  router.get('/api/facts/contradictions', async (_req, res) => {
+    try {
+      // For each invalidated fact, find the closest active fact about the same subject
+      const { rows } = await pool.query(
+        `SELECT
+           f.id,
+           f.statement as original_statement,
+           f.fact_type,
+           f.confidence,
+           s.name as subject_name,
+           s.entity_type as subject_type,
+           closest.statement as closest_active_statement,
+           closest.similarity
+         FROM facts f
+         LEFT JOIN entities s ON s.id = f.subject_entity_id
+         LEFT JOIN LATERAL (
+           SELECT f2.statement,
+                  round((1 - ((f.embedding::halfvec(768)) <=> (f2.embedding::halfvec(768))))::numeric, 4) as similarity
+           FROM facts f2
+           WHERE f2.invalid_at IS NULL
+             AND f2.embedding IS NOT NULL
+             AND f2.id != f.id
+             AND (f2.subject_entity_id = f.subject_entity_id OR f.subject_entity_id IS NULL)
+           ORDER BY f2.embedding::halfvec(768) <=> f.embedding::halfvec(768)
+           LIMIT 1
+         ) closest ON true
+         WHERE f.invalid_at IS NOT NULL
+         ORDER BY closest.similarity ASC NULLS LAST`
+      );
+
+      res.json({ contradictions: rows });
+    } catch (err) {
+      log.error({ err }, 'Facts contradictions error');
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  router.post('/api/facts/:id/restore', async (req, res) => {
+    try {
+      await pool.query(
+        `UPDATE facts SET invalid_at = NULL, invalidated_by = NULL WHERE id = $1`,
+        [req.params.id],
+      );
+      res.json({ ok: true });
+    } catch (err) {
+      log.error({ err }, 'Fact restore error');
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  router.post('/api/facts/:id/delete', async (req, res) => {
+    try {
+      await pool.query(`DELETE FROM facts WHERE id = $1`, [req.params.id]);
+      res.json({ ok: true });
+    } catch (err) {
+      log.error({ err }, 'Fact delete error');
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  router.post('/api/facts/restore-all', async (_req, res) => {
+    try {
+      const { rowCount } = await pool.query(
+        `UPDATE facts SET invalid_at = NULL, invalidated_by = NULL WHERE invalid_at IS NOT NULL`
+      );
+      res.json({ restored: rowCount });
+    } catch (err) {
+      log.error({ err }, 'Fact restore-all error');
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
   // ---- Correction examples stats API ----
   router.get('/api/corrections/stats', async (_req, res) => {
     try {
