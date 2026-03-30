@@ -204,7 +204,7 @@ export function createConversationRoutes(pool: pg.Pool, config: Config): Router 
         const visTags = req.userContext?.visibilityTags?.length ? req.userContext.visibilityTags : null;
         const contextPromise = buildContext(message, pool, config, visTags);
         const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Context retrieval timed out — Ollama may be busy')), 90_000),
+          setTimeout(() => reject(new Error('Context retrieval timed out — Ollama may be busy')), 30_000),
         );
         context = await Promise.race([contextPromise, timeoutPromise]);
       } catch (ctxErr) {

@@ -3,6 +3,9 @@ import { handleSemanticSearch } from '../mcp/tools/semantic-search.js';
 import { detectIntent } from '../processor/intent-detector.js';
 import { searchFacts } from '../db/fact-queries.js';
 import { embedQuery } from '../processor/embedder.js';
+import { createChildLogger } from '../logger.js';
+
+const log = createChildLogger('context-builder');
 import {
   CHAT_CONTEXT_SEARCH_LIMIT,
   CHAT_CONTEXT_SEARCH_THRESHOLD,
@@ -125,20 +128,46 @@ export async function buildContext(
   const searchThreshold = intent.adjustments.threshold ?? CHAT_CONTEXT_SEARCH_THRESHOLD;
   const searchLimit = intent.adjustments.limit ?? CHAT_CONTEXT_SEARCH_LIMIT;
 
-  // Run thought search + fact search in parallel (reuse embedding for facts)
+  // Search phase: semantic search depends on Ollama (embedding), CRM is pure SQL.
+  // If Ollama is unavailable, degrade to CRM + entity-only context instead of failing entirely.
   const searchStart = Date.now();
-  const queryEmbedding = await embedQuery(searchQuery, config);
   const crmRelated = CRM_QUERY_PATTERN.test(userMessage);
-  const [searchResults, factResults, crmResults] = await Promise.all([
-    handleSemanticSearch(
-      { query: searchQuery, limit: searchLimit, threshold: searchThreshold, days_back: intent.adjustments.days_back },
-      pool,
-      config,
-      visibilityTags,
-    ),
-    searchFacts(pool, queryEmbedding, { limit: 5, threshold: 0.3 }, visibilityTags ?? null),
-    crmRelated ? fetchRecentCrmContext(pool, visibilityTags ?? null) : Promise.resolve([]),
-  ]);
+  let searchResults: any[] = [];
+  let factResults: any[] = [];
+  let crmResults: any[] = [];
+
+  const crmPromise = crmRelated ? fetchRecentCrmContext(pool, visibilityTags ?? null) : Promise.resolve([]);
+
+  try {
+    // Semantic search + facts need Ollama for embedding — wrap with 15s timeout
+    const semanticPromise = Promise.race([
+      (async () => {
+        const [search, facts] = await Promise.all([
+          handleSemanticSearch(
+            { query: searchQuery, limit: searchLimit, threshold: searchThreshold, days_back: intent.adjustments.days_back },
+            pool,
+            config,
+            visibilityTags,
+          ),
+          embedQuery(searchQuery, config).then((emb) =>
+            searchFacts(pool, emb, { limit: 5, threshold: 0.3 }, visibilityTags ?? null),
+          ),
+        ]);
+        return { search, facts };
+      })(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Semantic search timeout')), 15_000)),
+    ]);
+
+    // Run semantic search and CRM in parallel — CRM always succeeds independently
+    const [semanticResult, crm] = await Promise.all([semanticPromise, crmPromise]);
+    searchResults = semanticResult.search;
+    factResults = semanticResult.facts;
+    crmResults = crm;
+  } catch (err) {
+    // Ollama unavailable or slow — still get CRM data
+    log.warn({ err }, 'Semantic search failed, falling back to CRM + entities only');
+    try { crmResults = await crmPromise; } catch { /* CRM already resolved or failed */ }
+  }
 
   const searchMs = Date.now() - searchStart;
 
