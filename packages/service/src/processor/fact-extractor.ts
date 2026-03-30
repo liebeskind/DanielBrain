@@ -34,6 +34,12 @@ RULES:
 - valid_at: ISO date if the fact has a specific time reference, null otherwise
 - ALWAYS return at least 1 fact if the text contains any substantive information
 
+DO NOT extract these types of facts:
+- CRM meta-facts: "X authored a note", "X created a record", "X is the author of the HubSpot note"
+- Campaign log entries: "lead paused from campaign", "lead deleted from campaign", "made a call as part of campaign"
+- Email delivery status: "email bounced", "unable to receive mail", "email opened by"
+- These are CRM system events, not business knowledge. Focus on what people SAID, DECIDED, or LEARNED.
+
 Return a JSON object with a "facts" array:
 {"facts": [{"statement": "...", "fact_type": "claim", "confidence": 0.9, "subject": "Entity A", "object": "Entity B", "valid_at": null}]}
 
