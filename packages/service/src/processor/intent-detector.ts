@@ -232,9 +232,12 @@ export async function detectIntent(
     return fast;
   }
 
-  // Layer 2: LLM classification
+  // Layer 2: LLM classification (short timeout — better to fall back than block context build)
   try {
-    const llmResult = await detectIntentLLM(query, entities, config);
+    const llmResult = await Promise.race([
+      detectIntentLLM(query, entities, config),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Intent LLM timeout')), 15_000)),
+    ]);
     log.debug({ intent: llmResult.intent, confidence: llmResult.confidence }, 'Intent detected (LLM)');
     return llmResult;
   } catch (err) {
