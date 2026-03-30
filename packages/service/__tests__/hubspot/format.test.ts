@@ -145,6 +145,7 @@ describe('formatDeal', () => {
         dealstage: 'Contract Sent',
         amount: '50000',
         closedate: '2026-04-15T00:00:00Z',
+        createdate: '2026-01-15T10:00:00Z',
       },
     };
 
@@ -163,6 +164,21 @@ describe('formatDeal', () => {
     expect(result.directMetadata.companies).toEqual(['Acme Corp']);
     expect(result.directMetadata.topics).toEqual(['Sales', 'Contract Sent']);
     expect(result.directMetadata.thought_type).toBe('deal');
+  });
+
+  it('uses createdate for originatedAt, not closedate', () => {
+    const record: HubSpotRecord = {
+      ...baseRecord,
+      id: '303',
+      properties: {
+        dealname: 'Date Test Deal',
+        closedate: '2026-09-15T00:00:00Z',
+        createdate: '2026-03-05T10:00:00Z',
+      },
+    };
+
+    const result = formatDeal(record);
+    expect(result.originatedAt).toEqual(new Date('2026-03-05T10:00:00Z'));
   });
 
   it('handles deal without associations', () => {

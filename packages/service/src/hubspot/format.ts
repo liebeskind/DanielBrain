@@ -298,8 +298,8 @@ export function formatDeal(
       thought_type: 'deal',
       summary: content,
     },
-    // Use close date when available — more meaningful for temporal context
-    originatedAt: p.closedate ? new Date(p.closedate) : new Date(record.updatedAt),
+    // Use deal creation date — close date is a future projection, not when engagement happened
+    originatedAt: p.createdate ? new Date(p.createdate) : new Date(record.updatedAt),
   };
 }
 
