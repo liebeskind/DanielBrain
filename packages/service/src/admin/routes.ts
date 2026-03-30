@@ -1529,10 +1529,7 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
       );
 
       const { rows } = await pool.query(
-        `SELECT t.id, t.content, t.source_meta, t.created_at, t.updated_at,
-                t.source_meta->'directMetadata'->'companies'->>0 as company_name,
-                t.source_meta->'directMetadata'->'people' as contacts_json,
-                t.source_meta->'deal_synthesis' as synthesis
+        `SELECT t.id, t.content, t.source_meta, t.created_at, t.updated_at
          FROM thoughts t
          WHERE t.thought_type = 'deal' AND t.source = 'hubspot' AND t.parent_id IS NULL
          ORDER BY t.created_at DESC
@@ -1541,6 +1538,7 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
       );
 
       const deals = rows.map((r: any) => {
+        const meta = r.source_meta ?? {};
         // Extract deal name from content (first line: "HubSpot Deal: <name>")
         const nameMatch = r.content?.match(/^HubSpot Deal:\s*(.+)/m);
         const dealName = nameMatch?.[1]?.trim() || 'Unnamed Deal';
@@ -1554,11 +1552,12 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
         return {
           id: r.id,
           deal_name: dealName,
-          company_name: r.company_name,
+          company_name: meta.directMetadata?.companies?.[0] ?? null,
           stage,
           owner,
-          contacts: r.contacts_json ?? [],
-          synthesis: r.synthesis,
+          contacts: meta.directMetadata?.people ?? [],
+          synthesis: meta.deal_synthesis ?? null,
+          source_meta: meta,
           created_at: r.created_at,
           updated_at: r.updated_at,
         };
