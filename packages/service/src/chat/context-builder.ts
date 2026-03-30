@@ -411,7 +411,8 @@ async function fetchRecentCrmContext(
   visibilityTags: string[] | null,
 ): Promise<CrmRow[]> {
   const { rows } = await pool.query(
-    `SELECT id, content, summary, source, created_at, thought_type, people, topics, action_items, sentiment, parent_id
+    `SELECT id, content, summary, source, created_at, thought_type, people, topics, action_items, sentiment, parent_id,
+            source_meta->'deal_synthesis'->>'summary' as deal_synthesis_summary
      FROM thoughts
      WHERE (
        (thought_type IN ('deal', 'contact', 'company_profile') AND source = 'hubspot')
@@ -426,6 +427,8 @@ async function fetchRecentCrmContext(
 
   return rows.map((r: any) => ({
     ...r,
+    // Use pre-computed deal synthesis as summary when available
+    summary: r.deal_synthesis_summary || r.summary,
     similarity: 0.5,
   }));
 }

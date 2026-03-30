@@ -24,6 +24,7 @@ import {
   RELATIONSHIP_DESCRIPTION_INTERVAL_MS,
   COMMUNITY_DETECTION_INTERVAL_MS,
   COMMUNITY_SUMMARY_INTERVAL_MS,
+  DEAL_SYNTHESIS_INTERVAL_MS,
 } from '@danielbrain/shared';
 import { createProposalRoutes } from './proposals/routes.js';
 import { createAdminRoutes } from './admin/routes.js';
@@ -43,6 +44,7 @@ import { handleHubSpotEvents } from './hubspot/webhook.js';
 import type { HubSpotObjectType } from './hubspot/types.js';
 import { detectCommunities } from './processor/community-detector.js';
 import { summarizeUnsummarizedCommunities } from './processor/community-summarizer.js';
+import { synthesizeStaleDeals } from './processor/deal-synthesizer.js';
 import { logger, createChildLogger } from './logger.js';
 import { sanitizeError } from './errors.js';
 import { recordPollerSuccess, recordPollerError, getPollerStatuses } from './poller-status.js';
@@ -581,6 +583,28 @@ function startCommunitySummarizer() {
   }, COMMUNITY_SUMMARY_INTERVAL_MS);
 }
 
+// --- Deal synthesis poller (needs Ollama) ---
+const dealSynthLog = createChildLogger('deal-synthesizer');
+let dealSynthesisInterval: ReturnType<typeof setInterval> | undefined;
+
+function startDealSynthesizer() {
+  dealSynthesisInterval = setInterval(async () => {
+    if (!acquireOllama('background')) return;
+    try {
+      const count = await synthesizeStaleDeals(pool, config);
+      if (count > 0) {
+        dealSynthLog.info({ count }, 'Synthesized deal summaries');
+      }
+      recordPollerSuccess('deal-synthesizer');
+    } catch (err) {
+      dealSynthLog.error({ err }, 'Deal synthesis error');
+      recordPollerError('deal-synthesizer', (err as Error).message);
+    } finally {
+      releaseOllama('background');
+    }
+  }, DEAL_SYNTHESIS_INTERVAL_MS);
+}
+
 // --- HubSpot sync poller (optional — only if configured) ---
 const hubspotLog = createChildLogger('hubspot-sync');
 let hubspotInterval: ReturnType<typeof setInterval> | undefined;
@@ -680,6 +704,7 @@ function shutdown() {
   if (relationshipInterval) clearInterval(relationshipInterval);
   if (communityDetectionInterval) clearInterval(communityDetectionInterval);
   if (communitySummaryInterval) clearInterval(communitySummaryInterval);
+  if (dealSynthesisInterval) clearInterval(dealSynthesisInterval);
   if (hubspotInterval) clearInterval(hubspotInterval);
 
   // Close all MCP sessions
@@ -729,6 +754,8 @@ function startPollers() {
   logger.info({ intervalMs: COMMUNITY_DETECTION_INTERVAL_MS }, 'Community detection started');
   startCommunitySummarizer();
   logger.info({ intervalMs: COMMUNITY_SUMMARY_INTERVAL_MS }, 'Community summarizer started');
+  startDealSynthesizer();
+  logger.info({ intervalMs: DEAL_SYNTHESIS_INTERVAL_MS }, 'Deal synthesizer started');
   startHubSpotSync();
   if (config.hubspotAccessToken) {
     logger.info({ intervalMs: config.hubspotPollIntervalMs, objectTypes: config.hubspotObjectTypes }, 'HubSpot sync started');

@@ -65,6 +65,11 @@ export const COMMUNITY_SUMMARY_INTERVAL_MS = 300_000; // 5 min
 export const COMMUNITY_MIN_EDGE_WEIGHT = 2;
 export const GLOBAL_SEARCH_COMMUNITY_LIMIT = 10;
 
+// Deal synthesis
+export const DEAL_SYNTHESIS_INTERVAL_MS = 300_000; // 5 min
+export const DEAL_SYNTHESIS_BATCH_SIZE = 5;
+export const DEAL_SYNTHESIS_STALE_DAYS = 7;
+
 // Ollama LLM request timeout
 export const OLLAMA_LLM_TIMEOUT_MS = 600_000;
 
