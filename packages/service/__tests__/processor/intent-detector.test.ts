@@ -86,6 +86,13 @@ describe('detectIntentFast', () => {
     expect(result!.adjustments.days_back).toBe(30);
   });
 
+  // --- CRM/Sales queries fall through to LLM (not fast-path) ---
+  it('delegates CRM queries to LLM', () => {
+    expect(detectIntentFast('who are the top prospects right now')).toBeNull();
+    expect(detectIntentFast('what deals are in the pipeline')).toBeNull();
+    expect(detectIntentFast('show me the current pipeline')).toBeNull();
+  });
+
   // --- No match → null ---
   it('returns null for ambiguous queries', () => {
     expect(detectIntentFast('tell me about Chris Psiaki')).toBeNull();
@@ -108,6 +115,12 @@ describe('detectIntentFast', () => {
     const result = detectIntentFast('action items from last week');
     expect(result!.intent).toBe('temporal');
     expect(result!.adjustments.days_back).toBe(7);
+  });
+
+  // --- was_fast_path ---
+  it('sets was_fast_path true on fast-path results', () => {
+    expect(detectIntentFast('what happened last week')?.was_fast_path).toBe(true);
+    expect(detectIntentFast('show me action items')?.was_fast_path).toBe(true);
   });
 
   // --- Case insensitivity ---
@@ -208,6 +221,12 @@ describe('detectIntentLLM', () => {
     const body = JSON.parse(fetchCall[1].body);
     const userMessage = body.messages[1].content;
     expect(userMessage).toContain('Stride (company)');
+  });
+
+  it('sets was_fast_path false on LLM results', async () => {
+    mockFetch({ intent: 'exploratory', days_back: null, reasoning: 'Test', reformulated_query: null });
+    const result = await detectIntentLLM('some query', [], mockConfig);
+    expect(result.was_fast_path).toBe(false);
   });
 
   it('throws on non-OK response', async () => {

@@ -18,6 +18,7 @@ export interface IntentResult {
   adjustments: SearchAdjustments;
   reasoning: string;
   reformulated_query?: string;
+  was_fast_path?: boolean;
 }
 
 interface IntentConfig {
@@ -58,6 +59,7 @@ const ACTION_PATTERNS: PatternRule[] = [
   { regex: /\b(?:overdue|pending|assigned to)\b/i, confidence: 0.85 },
 ];
 
+
 /** Try heuristic classification. Returns null if no high-confidence match. */
 export function detectIntentFast(query: string): IntentResult | null {
   const lower = query.toLowerCase();
@@ -75,6 +77,7 @@ export function detectIntentFast(query: string): IntentResult | null {
           threshold: 0.15,
         },
         reasoning: `Temporal keyword: "${match[0]}"`,
+        was_fast_path: true,
       };
     }
   }
@@ -88,6 +91,7 @@ export function detectIntentFast(query: string): IntentResult | null {
         confidence: p.confidence,
         adjustments: { days_back: 30, threshold: 0.15 },
         reasoning: `Action keyword: "${match[0]}"`,
+        was_fast_path: true,
       };
     }
   }
@@ -138,7 +142,15 @@ Entities: []
 
 Query: "Prep me for my meeting with Alice about the K12 deal"
 Entities: ["Alice (person)", "K12 Zone (product)"]
-{"intent":"entity_profile","days_back":30,"reasoning":"Meeting prep combining entity context and recent activity","reformulated_query":"Alice K12 Zone deal recent interactions action items context"}`;
+{"intent":"entity_profile","days_back":30,"reasoning":"Meeting prep combining entity context and recent activity","reformulated_query":"Alice K12 Zone deal recent interactions action items context"}
+
+Query: "Who are the top prospects right now?"
+Entities: []
+{"intent":"exploratory","days_back":90,"reasoning":"Sales query — needs recent meetings, deal discussions, and CRM contacts","reformulated_query":"prospect deal opportunity pipeline meeting call demo interested potential customer sales conversation"}
+
+Query: "What deals are in the pipeline?"
+Entities: []
+{"intent":"exploratory","days_back":null,"reasoning":"Pipeline overview — needs deal records and recent sales discussions","reformulated_query":"deal pipeline stage opportunity close amount contract proposal negotiation"}`;
 
 export async function detectIntentLLM(
   query: string,
@@ -195,6 +207,7 @@ export async function detectIntentLLM(
     adjustments,
     reasoning: parsed.reasoning || `LLM classified as ${intent}`,
     reformulated_query: parsed.reformulated_query || undefined,
+    was_fast_path: false,
   };
 }
 
@@ -229,8 +242,9 @@ export async function detectIntent(
     return {
       intent: 'general',
       confidence: 0.0,
-      adjustments: {},
+      adjustments: { threshold: 0.15, limit: 20 },
       reasoning: 'LLM classification unavailable',
+      was_fast_path: false,
     };
   }
 }

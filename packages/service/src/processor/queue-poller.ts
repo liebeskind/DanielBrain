@@ -2,6 +2,7 @@ import type pg from 'pg';
 import { processThought } from './pipeline.js';
 import { notifySlack } from './slack-notifier.js';
 import { notifyTelegram } from './telegram-notifier.js';
+import { isChatActive } from '../ollama-mutex.js';
 
 interface QueueConfig {
   ollamaBaseUrl: string;
@@ -39,6 +40,9 @@ export async function pollQueue(pool: pg.Pool, config: QueueConfig): Promise<voi
   if (items.length === 0) return;
 
   for (const item of items) {
+    // Yield to chat — stop processing so Ollama can serve the chat request
+    if (isChatActive()) break;
+
     // Skip items that have exceeded max retries
     if (item.attempts >= config.maxRetries) {
       await pool.query(

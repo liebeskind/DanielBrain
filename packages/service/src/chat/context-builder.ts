@@ -19,6 +19,45 @@ interface ContextConfig {
   rerankerModel?: string;
 }
 
+export interface ContextTrace {
+  intent: {
+    type: string;
+    confidence: number;
+    reasoning: string;
+    reformulated_query: string | null;
+    was_fast_path: boolean;
+  };
+  search_params: {
+    query: string;
+    threshold: number;
+    limit: number;
+    days_back: number | null;
+  };
+  thoughts: Array<{
+    id: string;
+    summary: string | null;
+    source: string;
+    similarity: number;
+    thought_type: string | null;
+    created_at: string;
+  }>;
+  facts: Array<{
+    statement: string;
+    fact_type: string;
+    confidence: number;
+    similarity: number;
+    subject_name: string | null;
+  }>;
+  crm: {
+    triggered: boolean;
+    record_count: number;
+  };
+  timing: {
+    intent_ms: number;
+    search_ms: number;
+  };
+}
+
 export interface ContextResult {
   contextText: string;
   sources: Array<{
@@ -33,6 +72,7 @@ export interface ContextResult {
     entity_type: string;
     profile_summary: string | null;
   }>;
+  trace: ContextTrace;
 }
 
 interface SearchResult {
@@ -74,18 +114,22 @@ export async function buildContext(
   visibilityTags?: string[] | null,
 ): Promise<ContextResult> {
   // Detect intent to adjust search params, run search + entity lookup in parallel
+  const intentStart = Date.now();
   const [intent, entityResults] = await Promise.all([
     detectIntent(userMessage, [], config),
     findMatchingEntities(userMessage, pool),
   ]);
+  const intentMs = Date.now() - intentStart;
 
   const searchQuery = intent.reformulated_query || userMessage;
   const searchThreshold = intent.adjustments.threshold ?? CHAT_CONTEXT_SEARCH_THRESHOLD;
   const searchLimit = intent.adjustments.limit ?? CHAT_CONTEXT_SEARCH_LIMIT;
 
   // Run thought search + fact search in parallel (reuse embedding for facts)
+  const searchStart = Date.now();
   const queryEmbedding = await embedQuery(searchQuery, config);
-  const [searchResults, factResults] = await Promise.all([
+  const crmRelated = CRM_QUERY_PATTERN.test(userMessage);
+  const [searchResults, factResults, crmResults] = await Promise.all([
     handleSemanticSearch(
       { query: searchQuery, limit: searchLimit, threshold: searchThreshold, days_back: intent.adjustments.days_back },
       pool,
@@ -93,10 +137,22 @@ export async function buildContext(
       visibilityTags,
     ),
     searchFacts(pool, queryEmbedding, { limit: 5, threshold: 0.3 }, visibilityTags ?? null),
+    crmRelated ? fetchRecentCrmContext(pool, visibilityTags ?? null) : Promise.resolve([]),
   ]);
 
+  const searchMs = Date.now() - searchStart;
+
+  // Merge CRM results with search results (dedup by ID)
+  const mergedResults = [...searchResults];
+  if (crmResults.length > 0) {
+    const existingIds = new Set(searchResults.map((r: any) => r.id));
+    for (const r of crmResults) {
+      if (!existingIds.has(r.id)) mergedResults.push(r as any);
+    }
+  }
+
   // Deduplicate chunks from the same parent thought
-  const dedupedResults = deduplicateResults(searchResults as SearchResult[]);
+  const dedupedResults = deduplicateResults(mergedResults as SearchResult[]);
 
   const sources = dedupedResults.map((r) => ({
     id: r.id,
@@ -205,6 +261,44 @@ export async function buildContext(
     contextText: parts.join('\n'),
     sources,
     entities: entityResults,
+    trace: {
+      intent: {
+        type: intent.intent,
+        confidence: intent.confidence,
+        reasoning: intent.reasoning,
+        reformulated_query: intent.reformulated_query ?? null,
+        was_fast_path: intent.was_fast_path ?? false,
+      },
+      search_params: {
+        query: searchQuery,
+        threshold: searchThreshold,
+        limit: searchLimit,
+        days_back: intent.adjustments.days_back ?? null,
+      },
+      thoughts: dedupedResults.map((r) => ({
+        id: r.id,
+        summary: r.summary,
+        source: r.source,
+        similarity: r.similarity,
+        thought_type: r.thought_type,
+        created_at: r.created_at,
+      })),
+      facts: factResults.map((f: any) => ({
+        statement: f.statement,
+        fact_type: f.fact_type,
+        confidence: f.confidence,
+        similarity: f.similarity,
+        subject_name: f.subject_name ?? null,
+      })),
+      crm: {
+        triggered: crmRelated,
+        record_count: crmResults.length,
+      },
+      timing: {
+        intent_ms: intentMs,
+        search_ms: searchMs,
+      },
+    },
   };
 }
 
@@ -275,6 +369,31 @@ async function fetchEntityRelationships(
     }
   }
   return result;
+}
+
+/** Detect CRM/sales-oriented queries that need direct DB lookups (semantic search often misses structured CRM data) */
+const CRM_QUERY_PATTERN = /\b(?:prospects?|leads?|pipeline|deals?|opportunities|sales|crm|hubspot|customers?|accounts?|contacts?)\b/i;
+
+/** Fetch recent deal and contact records directly — bypasses embedding similarity for structured CRM data */
+async function fetchRecentCrmContext(
+  pool: pg.Pool,
+  visibilityTags: string[] | null,
+): Promise<Array<{ id: string; content: string; summary: string | null; source: string; similarity: number; created_at: string; thought_type: string | null; people: string[]; topics: string[]; action_items: string[]; sentiment: string; parent_id: string | null }>> {
+  const { rows } = await pool.query(
+    `SELECT id, content, summary, source, created_at, thought_type, people, topics, action_items, sentiment, parent_id
+     FROM thoughts
+     WHERE thought_type IN ('deal', 'contact', 'company_profile')
+       AND source = 'hubspot'
+       AND ($1::text[] IS NULL OR visibility && $1)
+     ORDER BY created_at DESC
+     LIMIT 15`,
+    [visibilityTags],
+  );
+
+  return rows.map((r: any) => ({
+    ...r,
+    similarity: 0.5, // Synthetic score — these are directly relevant, not semantically matched
+  }));
 }
 
 export { findMatchingEntities, fetchEntityRelationships };

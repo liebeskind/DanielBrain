@@ -1,9 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { pollQueue, calculateRetryAfter } from '../../src/processor/queue-poller.js';
 import * as pipeline from '../../src/processor/pipeline.js';
+import * as ollamaMutex from '../../src/ollama-mutex.js';
 import type { ThoughtMetadata } from '@danielbrain/shared';
 
 vi.mock('../../src/processor/pipeline.js');
+vi.mock('../../src/ollama-mutex.js', () => ({
+  isChatActive: vi.fn().mockReturnValue(false),
+}));
 
 const mockPool = {
   query: vi.fn(),
@@ -291,6 +295,31 @@ describe('pollQueue', () => {
       'Telegram msg', 'telegram', mockPool, mockConfig,
       sourceMeta,
       null, null,
+    );
+  });
+
+  it('yields remaining items when chat becomes active', async () => {
+    // Chat becomes active after first item
+    vi.mocked(ollamaMutex.isChatActive)
+      .mockReturnValueOnce(false)  // first item: proceed
+      .mockReturnValueOnce(true);  // before second item: yield
+
+    mockPool.query
+      .mockResolvedValueOnce({
+        rows: [
+          { id: 'q1', content: 'Thought A', source: 'slack', source_id: null, source_meta: null, originated_at: null, attempts: 0 },
+          { id: 'q2', content: 'Thought B', source: 'slack', source_id: null, source_meta: null, originated_at: null, attempts: 0 },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] })  // q1: mark processing
+      .mockResolvedValueOnce({ rows: [] }); // q1: mark completed
+
+    await pollQueue(mockPool as any, mockConfig);
+
+    // Only first item processed — second yielded to chat
+    expect(pipeline.processThought).toHaveBeenCalledTimes(1);
+    expect(pipeline.processThought).toHaveBeenCalledWith(
+      'Thought A', 'slack', mockPool, mockConfig, null, null, null,
     );
   });
 

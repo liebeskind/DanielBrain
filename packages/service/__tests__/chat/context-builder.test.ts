@@ -9,10 +9,13 @@ vi.mock('../../src/mcp/tools/semantic-search.js', () => ({
 import { handleSemanticSearch } from '../../src/mcp/tools/semantic-search.js';
 const mockSearch = vi.mocked(handleSemanticSearch);
 
-function mockPool(entityRows: Array<Record<string, unknown>> = [], relationshipRows: Array<Record<string, unknown>> = []) {
+function mockPool(entityRows: Array<Record<string, unknown>> = [], relationshipRows: Array<Record<string, unknown>> = [], crmRows: Array<Record<string, unknown>> = []) {
   const queryFn = vi.fn().mockImplementation((sql: string) => {
     if (sql.includes('entity_relationships')) {
       return { rows: relationshipRows };
+    }
+    if (sql.includes("thought_type IN ('deal'")) {
+      return { rows: crmRows };
     }
     return { rows: entityRows };
   });
@@ -156,12 +159,11 @@ describe('buildContext', () => {
 
     await buildContext('test query', pool, config);
 
-    expect(mockSearch).toHaveBeenCalledWith(
-      { query: 'test query', limit: 15, threshold: 0.2 },
-      pool,
-      config,
-      undefined,
-    );
+    // LLM intent detection unavailable in test → falls back to general with relaxed params
+    const searchCall = mockSearch.mock.calls[0];
+    expect(searchCall[0].query).toBe('test query');
+    expect(searchCall[0].threshold).toBeLessThanOrEqual(0.2);
+    expect(searchCall[0].limit).toBeGreaterThanOrEqual(15);
   });
 
   it('includes thought_type in bracket format', async () => {
@@ -270,6 +272,77 @@ describe('buildContext', () => {
     expect(result.contextText).toContain('DECISION: Launch beta by March 15');
     expect(result.contextText).toContain('DECISION: Hire two engineers');
     expect(result.contextText).toContain('INSIGHT: Canvas LTI 1.3 requires SSO passthrough');
+  });
+
+  it('supplements CRM data for sales queries when semantic search misses deals', async () => {
+    mockSearch.mockResolvedValue([]); // semantic search returns nothing
+    const pool = mockPool([], [], [
+      {
+        id: 'd1',
+        content: 'HubSpot Deal: Enterprise K12\nStage: Qualification\nAmount: $50,000',
+        summary: 'Enterprise K12 deal in qualification',
+        source: 'hubspot',
+        created_at: '2026-03-20T00:00:00Z',
+        thought_type: 'deal',
+        people: ['John Doe'],
+        topics: ['qualification'],
+        action_items: [],
+        sentiment: 'neutral',
+        parent_id: null,
+      },
+    ]);
+
+    const result = await buildContext('who are the top prospects', pool, config);
+
+    expect(result.contextText).toContain('RELEVANT THOUGHTS:');
+    expect(result.contextText).toContain('Enterprise K12');
+    expect(result.contextText).toContain('deal');
+    expect(result.sources).toHaveLength(1);
+  });
+
+  it('includes trace with intent, search_params, thoughts, facts, crm, and timing', async () => {
+    mockSearch.mockResolvedValue([
+      makeResult({ id: 't1', summary: 'Sales meeting', source: 'fathom', similarity: 0.75, thought_type: 'meeting', created_at: '2026-03-20T00:00:00Z' }),
+    ]);
+    const pool = mockPool([]);
+
+    const result = await buildContext('test query', pool, config);
+
+    expect(result.trace).toBeDefined();
+    // Intent
+    expect(result.trace.intent.type).toBeDefined();
+    expect(typeof result.trace.intent.confidence).toBe('number');
+    expect(typeof result.trace.intent.reasoning).toBe('string');
+    expect(typeof result.trace.intent.was_fast_path).toBe('boolean');
+    // Search params
+    expect(result.trace.search_params.query).toBe('test query'); // no reformulation for general
+    expect(result.trace.search_params.threshold).toBeDefined();
+    expect(result.trace.search_params.limit).toBeDefined();
+    // Thoughts
+    expect(result.trace.thoughts).toHaveLength(1);
+    expect(result.trace.thoughts[0].id).toBe('t1');
+    expect(result.trace.thoughts[0].similarity).toBe(0.75);
+    expect(result.trace.thoughts[0].source).toBe('fathom');
+    // Facts
+    expect(result.trace.facts).toBeDefined();
+    // CRM
+    expect(result.trace.crm.triggered).toBe(false);
+    expect(result.trace.crm.record_count).toBe(0);
+    // Timing
+    expect(result.trace.timing.intent_ms).toBeGreaterThanOrEqual(0);
+    expect(result.trace.timing.search_ms).toBeGreaterThanOrEqual(0);
+  });
+
+  it('does not fetch CRM data for non-sales queries', async () => {
+    mockSearch.mockResolvedValue([]);
+    const pool = mockPool([]);
+
+    await buildContext('what is the team working on', pool, config);
+
+    // Should NOT query for thought_type IN ('deal', ...)
+    const calls = (pool.query as ReturnType<typeof vi.fn>).mock.calls;
+    const crmCall = calls.find((c: any[]) => c[0].includes?.("thought_type IN ('deal'"));
+    expect(crmCall).toBeUndefined();
   });
 
   it('handles entities with no relationships', async () => {

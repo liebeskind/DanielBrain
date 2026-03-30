@@ -182,6 +182,7 @@ export function createConversationRoutes(pool: pg.Pool, config: Config): Router 
       res.end();
       return;
     }
+    const totalStart = Date.now();
     try {
       // Load recent history for context (user message not yet persisted)
       const { rows: historyRows } = await pool.query(
@@ -209,7 +210,16 @@ export function createConversationRoutes(pool: pg.Pool, config: Config): Router 
       } catch (ctxErr) {
         log.error({ err: ctxErr }, 'Context build failed');
         // Fall back to no-context chat
-        context = { contextText: '', sources: [], entities: [] };
+        context = {
+          contextText: '', sources: [], entities: [],
+          trace: {
+            intent: { type: 'general', confidence: 0, reasoning: 'Context build failed', reformulated_query: null, was_fast_path: false },
+            search_params: { query: message, threshold: 0, limit: 0, days_back: null },
+            thoughts: [], facts: [],
+            crm: { triggered: false, record_count: 0 },
+            timing: { intent_ms: 0, search_ms: 0 },
+          },
+        };
       }
 
       // Log retrieval results for debugging
@@ -232,7 +242,10 @@ export function createConversationRoutes(pool: pg.Pool, config: Config): Router 
       ];
 
       // Stream response
+      const llmStart = Date.now();
       const { fullResponse } = await streamChat(messages, config.chatModel, config.ollamaBaseUrl, res);
+      const llmMs = Date.now() - llmStart;
+      const totalMs = Date.now() - totalStart;
 
       // On success: persist both user and assistant messages (idempotent — safe to retry on failure)
       await pool.query(
@@ -242,10 +255,30 @@ export function createConversationRoutes(pool: pg.Pool, config: Config): Router 
       );
 
       if (fullResponse) {
+        // Build full trace for audit — context_data carries both UI fields (sources/entities)
+        // and the complete reasoning trace for the admin chat-traces page
+        const contextData = {
+          sources: context.sources,
+          entities: context.entities,
+          intent: context.trace.intent,
+          search_params: context.trace.search_params,
+          thoughts: context.trace.thoughts,
+          facts: context.trace.facts,
+          crm: context.trace.crm,
+          context_text: context.contextText,
+          system_prompt: systemContent,
+          messages,
+          timing: {
+            ...context.trace.timing,
+            llm_ms: llmMs,
+            total_ms: totalMs,
+          },
+        };
+
         await pool.query(
           `INSERT INTO chat_messages (conversation_id, role, content, context_data)
            VALUES ($1, 'assistant', $2, $3)`,
-          [conversationId, fullResponse, JSON.stringify({ sources: context.sources, entities: context.entities })],
+          [conversationId, fullResponse, JSON.stringify(contextData)],
         );
       }
 

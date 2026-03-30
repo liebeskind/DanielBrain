@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chat Traces - TopiaBrain</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>
+    .trace-detail { background: #1a1a2e; border-radius: 8px; padding: 16px; margin: 8px 0 16px; }
+    .trace-section { margin-bottom: 16px; }
+    .trace-section-title { font-weight: 600; font-size: 13px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; cursor: pointer; user-select: none; }
+    .trace-section-title:hover { color: #e2e8f0; }
+    .trace-section-title::before { content: '\25B6'; margin-right: 6px; font-size: 10px; display: inline-block; transition: transform 0.15s; }
+    .trace-section-title.open::before { transform: rotate(90deg); }
+    .badge-intent { padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
+    .badge-temporal { background: #1e3a5f; color: #60a5fa; }
+    .badge-entity_profile { background: #1e3a2e; color: #4ade80; }
+    .badge-action_task { background: #3f1e1e; color: #f87171; }
+    .badge-relational { background: #3f2e1e; color: #fbbf24; }
+    .badge-exploratory { background: #2e1e3f; color: #c084fc; }
+    .badge-general { background: #2a2a3a; color: #94a3b8; }
+    .badge-fast { background: #1e3a2e; color: #4ade80; font-size: 11px; padding: 1px 6px; border-radius: 3px; }
+    .badge-llm { background: #2e1e3f; color: #c084fc; font-size: 11px; padding: 1px 6px; border-radius: 3px; }
+    .context-pre { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px; font-size: 12px; line-height: 1.5; max-height: 400px; overflow: auto; white-space: pre-wrap; word-wrap: break-word; color: #c9d1d9; }
+    .timing-bar { display: flex; height: 24px; border-radius: 4px; overflow: hidden; margin-top: 4px; }
+    .timing-segment { display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; color: white; min-width: 40px; }
+    .timing-intent { background: #3b82f6; }
+    .timing-search { background: #8b5cf6; }
+    .timing-llm { background: #f59e0b; }
+    .sim-high { color: #4ade80; font-weight: 700; }
+    .sim-mid { color: #fbbf24; font-weight: 700; }
+    .sim-low { color: #f87171; font-weight: 700; }
+    .mono { font-family: 'SF Mono', SFMono-Regular, Consolas, monospace; font-size: 13px; }
+    .thought-table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+    .thought-table th { text-align: left; font-size: 11px; color: #64748b; padding: 4px 8px; border-bottom: 1px solid #2a2a3a; }
+    .thought-table td { font-size: 13px; padding: 4px 8px; border-bottom: 1px solid #1a1a2e; }
+    .reformulated { background: #1e293b; border-left: 3px solid #3b82f6; padding: 8px 12px; border-radius: 0 4px 4px 0; font-size: 13px; margin-top: 4px; }
+    .message-role { font-weight: 600; font-size: 12px; text-transform: uppercase; padding: 2px 6px; border-radius: 3px; }
+    .role-system { background: #1e293b; color: #94a3b8; }
+    .role-user { background: #1e3a2e; color: #4ade80; }
+    .role-assistant { background: #2e1e3f; color: #c084fc; }
+    .no-trace { color: #64748b; font-style: italic; padding: 20px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <a href="index.html" class="sidebar-logo">
+        <span class="logo-icon">T</span>
+        TopiaBrain
+      </a>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Knowledge</div>
+        <a href="browse.html" class="sidebar-link">
+          <span class="link-icon">&#x1F4DA;</span> Browse
+        </a>
+        <a href="ingest.html" class="sidebar-link">
+          <span class="link-icon">&#x2795;</span> Add Content
+        </a>
+        <a href="/chat" class="sidebar-link">
+          <span class="link-icon">&#x1F4AC;</span> Chat
+        </a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Tools</div>
+        <a href="tools.html" class="sidebar-link">
+          <span class="link-icon">&#x1F3A4;</span> Transcribe
+        </a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Manage</div>
+        <a href="integrations.html" class="sidebar-link">
+          <span class="link-icon">&#x1F50C;</span> Integrations
+        </a>
+        <a href="entities.html" class="sidebar-link">
+          <span class="link-icon">&#x1F465;</span> Entities
+        </a>
+        <a href="communities.html" class="sidebar-link">
+          <span class="link-icon">&#x1F310;</span> Communities
+        </a>
+        <a href="approvals.html" class="sidebar-link">
+          <span class="link-icon">&#x2705;</span> Approvals
+        </a>
+        <a href="examples.html" class="sidebar-link">
+          <span class="link-icon">&#x1F4DD;</span> Examples
+        </a>
+        <a href="facts.html" class="sidebar-link">
+          <span class="link-icon">&#x1F9E0;</span> Facts
+        </a>
+        <a href="chat-traces.html" class="sidebar-link active">
+          <span class="link-icon">&#x1F50D;</span> Chat Traces
+        </a>
+        <a href="health.html" class="sidebar-link">
+          <span class="link-icon">&#x1F527;</span> Health
+        </a>
+      </div>
+      <div class="sidebar-spacer"></div>
+    </aside>
+
+    <main class="main-content" x-data="tracesApp()" x-init="loadTraces()">
+      <div class="page-header">
+        <h1>Chat Traces</h1>
+        <p>Audit the full reasoning chain for each chat exchange</p>
+      </div>
+
+      <div class="stats-grid" style="margin-bottom: 24px;">
+        <div class="stat-card">
+          <div class="stat-value" x-text="total"></div>
+          <div class="stat-label">Total Exchanges</div>
+        </div>
+      </div>
+
+      <div style="margin-bottom: 16px;">
+        <button class="btn btn-secondary" @click="loadTraces()" style="font-size:13px;">Refresh</button>
+      </div>
+
+      <template x-if="traces.length === 0 && !loading">
+        <div class="no-trace">No chat traces found. Send a message in the chat to generate traces.</div>
+      </template>
+
+      <template x-for="t in traces" :key="t.id">
+        <div class="card" style="margin-bottom: 12px;">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; cursor:pointer;" @click="toggleTrace(t.id)">
+            <div style="flex:1; min-width:0;">
+              <div style="font-size:12px; color:#64748b;" x-text="new Date(t.created_at).toLocaleString()"></div>
+              <div style="font-weight:600; margin:4px 0;" x-text="t.user_message || '(no user message)'"></div>
+              <div style="font-size:13px; color:#94a3b8;" x-text="t.assistant_excerpt + (t.assistant_excerpt?.length >= 200 ? '...' : '')"></div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center; flex-shrink:0; margin-left:16px;">
+              <span class="badge-intent" :class="'badge-' + (t.intent_type || 'general')" x-text="t.intent_type || 'general'"></span>
+              <span :class="t.intent_fast_path === 'true' ? 'badge-fast' : 'badge-llm'" x-text="t.intent_fast_path === 'true' ? 'fast' : 'llm'"></span>
+              <span class="mono" style="color:#64748b;" x-text="(t.source_count || 0) + ' src'"></span>
+              <span class="mono" style="color:#64748b;" x-text="t.total_ms ? t.total_ms + 'ms' : ''"></span>
+            </div>
+          </div>
+
+          <template x-if="expandedId === t.id && detail">
+            <div class="trace-detail">
+              <!-- Intent Detection -->
+              <div class="trace-section">
+                <div class="trace-section-title open">Intent Detection</div>
+                <div style="display:grid; grid-template-columns:auto 1fr; gap:4px 16px; font-size:13px;">
+                  <span style="color:#64748b;">Type:</span>
+                  <span><span class="badge-intent" :class="'badge-' + detail.context_data?.intent?.type" x-text="detail.context_data?.intent?.type"></span></span>
+                  <span style="color:#64748b;">Confidence:</span>
+                  <span class="mono" x-text="((detail.context_data?.intent?.confidence || 0) * 100).toFixed(0) + '%'"></span>
+                  <span style="color:#64748b;">Method:</span>
+                  <span x-text="detail.context_data?.intent?.was_fast_path ? 'Heuristic (fast-path)' : 'LLM classification'"></span>
+                  <span style="color:#64748b;">Reasoning:</span>
+                  <span x-text="detail.context_data?.intent?.reasoning"></span>
+                </div>
+                <template x-if="detail.context_data?.intent?.reformulated_query">
+                  <div class="reformulated" style="margin-top:8px;">
+                    <span style="color:#64748b; font-size:12px;">Reformulated query:</span><br>
+                    <span x-text="detail.context_data.intent.reformulated_query"></span>
+                  </div>
+                </template>
+              </div>
+
+              <!-- Search Parameters -->
+              <div class="trace-section">
+                <div class="trace-section-title open">Search Parameters</div>
+                <div style="display:grid; grid-template-columns:auto 1fr; gap:4px 16px; font-size:13px;">
+                  <span style="color:#64748b;">Query:</span>
+                  <span class="mono" x-text="detail.context_data?.search_params?.query"></span>
+                  <span style="color:#64748b;">Threshold:</span>
+                  <span class="mono" x-text="detail.context_data?.search_params?.threshold"></span>
+                  <span style="color:#64748b;">Limit:</span>
+                  <span class="mono" x-text="detail.context_data?.search_params?.limit"></span>
+                  <span style="color:#64748b;">Days back:</span>
+                  <span class="mono" x-text="detail.context_data?.search_params?.days_back || 'none'"></span>
+                </div>
+              </div>
+
+              <!-- Timing -->
+              <div class="trace-section">
+                <div class="trace-section-title open">Timing</div>
+                <template x-if="detail.context_data?.timing">
+                  <div>
+                    <div class="timing-bar">
+                      <div class="timing-segment timing-intent" :style="'width:' + timingPct(detail.context_data.timing, 'intent_ms') + '%'" x-text="(detail.context_data.timing.intent_ms || 0) + 'ms'"></div>
+                      <div class="timing-segment timing-search" :style="'width:' + timingPct(detail.context_data.timing, 'search_ms') + '%'" x-text="(detail.context_data.timing.search_ms || 0) + 'ms'"></div>
+                      <div class="timing-segment timing-llm" :style="'width:' + timingPct(detail.context_data.timing, 'llm_ms') + '%'" x-text="(detail.context_data.timing.llm_ms || 0) + 'ms'"></div>
+                    </div>
+                    <div style="display:flex; gap:16px; margin-top:4px; font-size:11px; color:#64748b;">
+                      <span><span style="color:#3b82f6;">&#9632;</span> Intent</span>
+                      <span><span style="color:#8b5cf6;">&#9632;</span> Search</span>
+                      <span><span style="color:#f59e0b;">&#9632;</span> LLM</span>
+                      <span style="margin-left:auto;">Total: <span class="mono" x-text="(detail.context_data.timing.total_ms || 0) + 'ms'"></span></span>
+                    </div>
+                  </div>
+                </template>
+              </div>
+
+              <!-- Retrieved Thoughts -->
+              <div class="trace-section">
+                <div class="trace-section-title" :class="showThoughts && 'open'" @click="showThoughts = !showThoughts">
+                  Retrieved Thoughts (<span x-text="(detail.context_data?.thoughts || []).length"></span>)
+                </div>
+                <template x-if="showThoughts && detail.context_data?.thoughts?.length > 0">
+                  <table class="thought-table">
+                    <thead><tr><th>Source</th><th>Type</th><th>Similarity</th><th>Summary</th><th>Date</th></tr></thead>
+                    <tbody>
+                      <template x-for="th in detail.context_data.thoughts" :key="th.id">
+                        <tr>
+                          <td x-text="th.source"></td>
+                          <td x-text="th.thought_type || '-'"></td>
+                          <td :class="th.similarity >= 0.4 ? 'sim-high' : th.similarity >= 0.2 ? 'sim-mid' : 'sim-low'" x-text="th.similarity?.toFixed(3)"></td>
+                          <td style="max-width:400px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" x-text="th.summary || '(no summary)'"></td>
+                          <td style="white-space:nowrap;" x-text="th.created_at ? new Date(th.created_at).toLocaleDateString() : ''"></td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </template>
+              </div>
+
+              <!-- Retrieved Facts -->
+              <div class="trace-section">
+                <div class="trace-section-title" :class="showFacts && 'open'" @click="showFacts = !showFacts">
+                  Retrieved Facts (<span x-text="(detail.context_data?.facts || []).length"></span>)
+                </div>
+                <template x-if="showFacts && detail.context_data?.facts?.length > 0">
+                  <table class="thought-table">
+                    <thead><tr><th>Subject</th><th>Statement</th><th>Type</th><th>Confidence</th><th>Similarity</th></tr></thead>
+                    <tbody>
+                      <template x-for="(f, i) in detail.context_data.facts" :key="i">
+                        <tr>
+                          <td x-text="f.subject_name || '-'"></td>
+                          <td style="max-width:400px;" x-text="f.statement"></td>
+                          <td x-text="f.fact_type"></td>
+                          <td class="mono" x-text="f.confidence?.toFixed(2)"></td>
+                          <td :class="f.similarity >= 0.4 ? 'sim-high' : f.similarity >= 0.2 ? 'sim-mid' : 'sim-low'" x-text="f.similarity?.toFixed(3)"></td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </template>
+              </div>
+
+              <!-- CRM Supplement -->
+              <template x-if="detail.context_data?.crm">
+                <div class="trace-section">
+                  <div class="trace-section-title open">CRM Supplement</div>
+                  <div style="font-size:13px;">
+                    Triggered: <strong x-text="detail.context_data.crm.triggered ? 'Yes' : 'No'"></strong>
+                    <template x-if="detail.context_data.crm.triggered">
+                      <span> | Records fetched: <strong x-text="detail.context_data.crm.record_count"></strong></span>
+                    </template>
+                  </div>
+                </div>
+              </template>
+
+              <!-- Context Text -->
+              <div class="trace-section">
+                <div class="trace-section-title" :class="showContext && 'open'" @click="showContext = !showContext">Context Text (sent to LLM)</div>
+                <template x-if="showContext">
+                  <pre class="context-pre" x-text="detail.context_data?.context_text || '(empty context)'"></pre>
+                </template>
+              </div>
+
+              <!-- System Prompt -->
+              <div class="trace-section">
+                <div class="trace-section-title" :class="showPrompt && 'open'" @click="showPrompt = !showPrompt">System Prompt</div>
+                <template x-if="showPrompt">
+                  <pre class="context-pre" x-text="detail.context_data?.system_prompt || '(no prompt)'"></pre>
+                </template>
+              </div>
+
+              <!-- Messages Array -->
+              <div class="trace-section">
+                <div class="trace-section-title" :class="showMessages && 'open'" @click="showMessages = !showMessages">
+                  Messages Sent to Ollama (<span x-text="(detail.context_data?.messages || []).length"></span>)
+                </div>
+                <template x-if="showMessages && detail.context_data?.messages">
+                  <div>
+                    <template x-for="(msg, i) in detail.context_data.messages" :key="i">
+                      <div style="margin-bottom:8px;">
+                        <span class="message-role" :class="'role-' + msg.role" x-text="msg.role"></span>
+                        <pre class="context-pre" style="margin-top:4px; max-height:200px;" x-text="msg.content"></pre>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+
+              <!-- Assistant Response -->
+              <div class="trace-section">
+                <div class="trace-section-title" :class="showResponse && 'open'" @click="showResponse = !showResponse">Assistant Response</div>
+                <template x-if="showResponse">
+                  <pre class="context-pre" x-text="detail.assistant_response"></pre>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <div style="margin-top:16px; display:flex; gap:8px;" x-show="total > traces.length">
+        <button class="btn btn-secondary" @click="loadMore()">Load more</button>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    function tracesApp() {
+      return {
+        traces: [],
+        total: 0,
+        loading: false,
+        expandedId: null,
+        detail: null,
+        showThoughts: true,
+        showFacts: false,
+        showContext: false,
+        showPrompt: false,
+        showMessages: false,
+        showResponse: false,
+        offset: 0,
+
+        async loadTraces() {
+          this.loading = true;
+          this.offset = 0;
+          try {
+            const res = await fetch('/admin/api/chat-traces?limit=50&offset=0');
+            const data = await res.json();
+            this.traces = data.traces;
+            this.total = data.total;
+          } catch (e) {
+            console.error('Failed to load traces', e);
+          }
+          this.loading = false;
+        },
+
+        async loadMore() {
+          this.offset += 50;
+          try {
+            const res = await fetch(`/admin/api/chat-traces?limit=50&offset=${this.offset}`);
+            const data = await res.json();
+            this.traces = [...this.traces, ...data.traces];
+          } catch (e) {
+            console.error('Failed to load more', e);
+          }
+        },
+
+        async toggleTrace(id) {
+          if (this.expandedId === id) {
+            this.expandedId = null;
+            this.detail = null;
+            return;
+          }
+          this.expandedId = id;
+          this.detail = null;
+          this.showThoughts = true;
+          this.showFacts = false;
+          this.showContext = false;
+          this.showPrompt = false;
+          this.showMessages = false;
+          this.showResponse = false;
+          try {
+            const res = await fetch(`/admin/api/chat-traces/${id}`);
+            this.detail = await res.json();
+          } catch (e) {
+            console.error('Failed to load trace detail', e);
+          }
+        },
+
+        timingPct(timing, key) {
+          const total = (timing.intent_ms || 0) + (timing.search_ms || 0) + (timing.llm_ms || 0);
+          if (total === 0) return 33;
+          return Math.max(10, Math.round(((timing[key] || 0) / total) * 100));
+        },
+      };
+    }
+  </script>
+</body>
+</html>

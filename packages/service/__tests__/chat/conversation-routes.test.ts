@@ -15,6 +15,14 @@ vi.mock('../../src/chat/context-builder.js', () => ({
     contextText: 'test context',
     sources: [{ id: '1', summary: 'test', source: 'slack', similarity: 0.8 }],
     entities: [],
+    trace: {
+      intent: { type: 'general', confidence: 0.0, reasoning: 'test', reformulated_query: null, was_fast_path: false },
+      search_params: { query: 'test', threshold: 0.2, limit: 15, days_back: null },
+      thoughts: [{ id: '1', summary: 'test', source: 'slack', similarity: 0.8, thought_type: null, created_at: '2026-03-01' }],
+      facts: [],
+      crm: { triggered: false, record_count: 0 },
+      timing: { intent_ms: 10, search_ms: 50 },
+    },
   }),
 }));
 

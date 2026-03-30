@@ -1422,5 +1422,100 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
     }
   });
 
+  // ---- Chat Traces API ----
+
+  router.get('/api/chat-traces', async (req, res) => {
+    try {
+      const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 200);
+      const offset = parseInt(req.query.offset as string, 10) || 0;
+      const conversationId = req.query.conversation_id as string | undefined;
+
+      const conditions = [`m.role = 'assistant'`, `m.context_data IS NOT NULL`];
+      const params: (string | number)[] = [];
+      let paramIdx = 1;
+
+      if (conversationId) {
+        conditions.push(`m.conversation_id = $${paramIdx}`);
+        params.push(conversationId);
+        paramIdx++;
+      }
+
+      const whereClause = 'WHERE ' + conditions.join(' AND ');
+
+      const { rows: [countRow] } = await pool.query(
+        `SELECT COUNT(*) as total FROM chat_messages m ${whereClause}`,
+        params,
+      );
+
+      const { rows } = await pool.query(
+        `SELECT
+           m.id,
+           m.conversation_id,
+           c.title as conversation_title,
+           prev.content as user_message,
+           LEFT(m.content, 200) as assistant_excerpt,
+           m.context_data->'intent'->>'type' as intent_type,
+           (m.context_data->'intent'->>'confidence')::float as intent_confidence,
+           m.context_data->'intent'->>'was_fast_path' as intent_fast_path,
+           m.context_data->'intent'->>'reasoning' as intent_reasoning,
+           jsonb_array_length(COALESCE(m.context_data->'sources', '[]'::jsonb)) as source_count,
+           jsonb_array_length(COALESCE(m.context_data->'facts', '[]'::jsonb)) as fact_count,
+           (m.context_data->'timing'->>'total_ms')::int as total_ms,
+           (m.context_data->'timing'->>'intent_ms')::int as intent_ms,
+           (m.context_data->'timing'->>'search_ms')::int as search_ms,
+           (m.context_data->'timing'->>'llm_ms')::int as llm_ms,
+           m.created_at
+         FROM chat_messages m
+         JOIN conversations c ON c.id = m.conversation_id
+         LEFT JOIN LATERAL (
+           SELECT content FROM chat_messages
+           WHERE conversation_id = m.conversation_id AND role = 'user' AND created_at < m.created_at
+           ORDER BY created_at DESC LIMIT 1
+         ) prev ON true
+         ${whereClause}
+         ORDER BY m.created_at DESC
+         LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
+        [...params, limit, offset],
+      );
+
+      res.json({ traces: rows, total: parseInt(countRow.total, 10), limit, offset });
+    } catch (err) {
+      log.error({ err }, 'Chat traces list error');
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  router.get('/api/chat-traces/:messageId', async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT
+           m.id,
+           m.conversation_id,
+           m.content as assistant_response,
+           m.context_data,
+           m.created_at,
+           prev.content as user_message
+         FROM chat_messages m
+         LEFT JOIN LATERAL (
+           SELECT content FROM chat_messages
+           WHERE conversation_id = m.conversation_id AND role = 'user' AND created_at < m.created_at
+           ORDER BY created_at DESC LIMIT 1
+         ) prev ON true
+         WHERE m.id = $1 AND m.role = 'assistant'`,
+        [req.params.messageId],
+      );
+
+      if (rows.length === 0) {
+        res.status(404).json({ error: 'Trace not found' });
+        return;
+      }
+
+      res.json(rows[0]);
+    } catch (err) {
+      log.error({ err }, 'Chat trace detail error');
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
   return router;
 }

@@ -31,6 +31,11 @@ export function isOllamaBusyFor(priority: OllamaPriority): boolean {
   return false;
 }
 
+/** Returns true if a chat-priority caller currently holds the lock. */
+export function isChatActive(): boolean {
+  return active.chat > 0;
+}
+
 // For tests only
 export function _resetForTest(): void {
   active.background = 0;
