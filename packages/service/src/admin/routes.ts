@@ -1517,5 +1517,103 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
     }
   });
 
+  // ---- Deals API ----
+
+  router.get('/api/deals', async (req, res) => {
+    try {
+      const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 200);
+      const offset = parseInt(req.query.offset as string, 10) || 0;
+
+      const { rows: [countRow] } = await pool.query(
+        `SELECT COUNT(*) as total FROM thoughts WHERE thought_type = 'deal' AND source = 'hubspot' AND parent_id IS NULL`,
+      );
+
+      const { rows } = await pool.query(
+        `SELECT t.id, t.content, t.source_meta, t.created_at, t.updated_at,
+                t.source_meta->'directMetadata'->'companies'->>0 as company_name,
+                t.source_meta->'directMetadata'->'people' as contacts_json,
+                t.source_meta->'deal_synthesis' as synthesis
+         FROM thoughts t
+         WHERE t.thought_type = 'deal' AND t.source = 'hubspot' AND t.parent_id IS NULL
+         ORDER BY t.created_at DESC
+         LIMIT $1 OFFSET $2`,
+        [limit, offset],
+      );
+
+      const deals = rows.map((r: any) => {
+        // Extract deal name from content (first line: "HubSpot Deal: <name>")
+        const nameMatch = r.content?.match(/^HubSpot Deal:\s*(.+)/m);
+        const dealName = nameMatch?.[1]?.trim() || 'Unnamed Deal';
+        // Extract stage
+        const stageMatch = r.content?.match(/^Stage:\s*(.+)/m);
+        const stage = stageMatch?.[1]?.trim() || null;
+        // Extract owner
+        const ownerMatch = r.content?.match(/^Owner:\s*(.+)/m);
+        const owner = ownerMatch?.[1]?.trim() || null;
+
+        return {
+          id: r.id,
+          deal_name: dealName,
+          company_name: r.company_name,
+          stage,
+          owner,
+          contacts: r.contacts_json ?? [],
+          synthesis: r.synthesis,
+          created_at: r.created_at,
+          updated_at: r.updated_at,
+        };
+      });
+
+      res.json({ deals, total: parseInt(countRow.total, 10), limit, offset });
+    } catch (err) {
+      log.error({ err }, 'Deals list error');
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  router.get('/api/deals/:id', async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT t.id, t.content, t.source_meta, t.created_at, t.updated_at
+         FROM thoughts t
+         WHERE t.id = $1 AND t.thought_type = 'deal'`,
+        [req.params.id],
+      );
+
+      if (rows.length === 0) {
+        res.status(404).json({ error: 'Deal not found' });
+        return;
+      }
+
+      const deal = rows[0];
+      const synthesis = deal.source_meta?.deal_synthesis ?? null;
+
+      // Fetch related thoughts if synthesis has source IDs
+      let relatedThoughts: any[] = [];
+      if (synthesis?.sources?.length > 0) {
+        const { rows: related } = await pool.query(
+          `SELECT id, LEFT(content, 300) as excerpt, summary, source, thought_type, created_at
+           FROM thoughts
+           WHERE id = ANY($1)
+           ORDER BY created_at DESC`,
+          [synthesis.sources],
+        );
+        relatedThoughts = related;
+      }
+
+      res.json({
+        id: deal.id,
+        content: deal.content,
+        synthesis,
+        related_thoughts: relatedThoughts,
+        created_at: deal.created_at,
+        updated_at: deal.updated_at,
+      });
+    } catch (err) {
+      log.error({ err }, 'Deal detail error');
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
   return router;
 }

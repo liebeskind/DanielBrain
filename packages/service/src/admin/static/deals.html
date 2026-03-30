@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Deals - TopiaBrain</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .deals-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
+    .deal-card { background: var(--bg-surface); border: 1px solid var(--border-glass); border-radius: var(--radius-lg); padding: 20px; cursor: pointer; transition: var(--transition); }
+    .deal-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+    .deal-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+    .deal-name { font-weight: 700; font-size: 15px; color: var(--text-primary); }
+    .deal-company { font-size: 13px; color: var(--accent); margin-top: 2px; }
+    .deal-owner { font-size: 12px; color: var(--text-muted); }
+    .deal-summary { font-size: 13px; line-height: 1.6; color: var(--text-secondary); margin: 12px 0; }
+    .deal-meta { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--text-muted); }
+    .deal-meta-item { display: flex; align-items: center; gap: 4px; }
+    .deal-meta-label { font-weight: 600; color: var(--text-secondary); }
+    .badge-synth { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .badge-synth-ready { background: #1e3a2e; color: #4ade80; }
+    .badge-synth-pending { background: #2a2a3a; color: #94a3b8; }
+    .badge-synth-stale { background: #3f2e1e; color: #fbbf24; }
+
+    /* Detail modal */
+    .modal { position: fixed; inset: 0; z-index: 100; display: none; }
+    .modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.7); }
+    .modal-content { position: relative; max-width: 800px; margin: 40px auto; background: var(--bg-base); border: 1px solid var(--border-glass); border-radius: var(--radius-lg); max-height: calc(100vh - 80px); overflow-y: auto; z-index: 1; }
+    .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 20px 24px; border-bottom: 1px solid var(--border-glass); position: sticky; top: 0; background: var(--bg-base); z-index: 2; }
+    .modal-header h2 { font-size: 18px; margin: 0; }
+    .modal-close { background: none; border: none; color: var(--text-muted); font-size: 24px; cursor: pointer; padding: 4px 8px; }
+    .modal-close:hover { color: var(--text-primary); }
+    .modal-body { padding: 24px; }
+
+    .detail-section { margin-bottom: 24px; }
+    .detail-section h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 8px; }
+    .detail-section p { font-size: 14px; line-height: 1.7; color: var(--text-secondary); margin: 4px 0; }
+
+    .fact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .fact-item { background: #1a1a2e; border-radius: 8px; padding: 12px; }
+    .fact-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 4px; }
+    .fact-value { font-size: 14px; color: var(--text-primary); }
+
+    .call-item { padding: 12px 0; border-bottom: 1px solid var(--border-glass); }
+    .call-item:last-child { border-bottom: none; }
+    .call-date { font-size: 12px; font-weight: 600; color: var(--accent); }
+    .call-source { font-size: 11px; color: var(--text-muted); margin-left: 8px; }
+    .call-summary { font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
+
+    .related-item { padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 13px; }
+    .related-source { color: var(--accent); font-weight: 600; font-size: 12px; }
+
+    .stats-row { display: flex; gap: 24px; margin-bottom: 24px; }
+    .stat-box { background: var(--bg-surface); border: 1px solid var(--border-glass); border-radius: var(--radius-lg); padding: 16px 24px; text-align: center; flex: 1; }
+    .stat-value { font-size: 28px; font-weight: 700; color: var(--text-primary); }
+    .stat-label { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+    .no-synthesis { color: var(--text-muted); font-style: italic; padding: 16px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <a href="index.html" class="sidebar-logo">
+        <span class="logo-icon">T</span>
+        TopiaBrain
+      </a>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Knowledge</div>
+        <a href="browse.html" class="sidebar-link">
+          <span class="link-icon">&#x1F4DA;</span> Browse
+        </a>
+        <a href="ingest.html" class="sidebar-link">
+          <span class="link-icon">&#x2795;</span> Add Content
+        </a>
+        <a href="/chat" class="sidebar-link">
+          <span class="link-icon">&#x1F4AC;</span> Chat
+        </a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Tools</div>
+        <a href="tools.html" class="sidebar-link">
+          <span class="link-icon">&#x1F3A4;</span> Transcribe
+        </a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Manage</div>
+        <a href="integrations.html" class="sidebar-link">
+          <span class="link-icon">&#x1F50C;</span> Integrations
+        </a>
+        <a href="entities.html" class="sidebar-link">
+          <span class="link-icon">&#x1F465;</span> Entities
+        </a>
+        <a href="communities.html" class="sidebar-link">
+          <span class="link-icon">&#x1F310;</span> Communities
+        </a>
+        <a href="deals.html" class="sidebar-link active">
+          <span class="link-icon">&#x1F91D;</span> Deals
+        </a>
+        <a href="approvals.html" class="sidebar-link">
+          <span class="link-icon">&#x2705;</span> Approvals
+        </a>
+        <a href="examples.html" class="sidebar-link">
+          <span class="link-icon">&#x1F4DD;</span> Examples
+        </a>
+        <a href="chat-traces.html" class="sidebar-link">
+          <span class="link-icon">&#x1F50D;</span> Chat Traces
+        </a>
+        <a href="health.html" class="sidebar-link">
+          <span class="link-icon">&#x1F527;</span> Health
+        </a>
+      </div>
+      <div class="sidebar-spacer"></div>
+    </aside>
+
+    <main class="main-content">
+      <div class="page-header">
+        <h1>Sales Deals</h1>
+        <p>HubSpot deals with pre-computed synthesis from Fathom calls and notes</p>
+      </div>
+
+      <div class="stats-row" id="stats-row">
+        <div class="stat-box"><div class="stat-value" id="stat-total">-</div><div class="stat-label">Total Deals</div></div>
+        <div class="stat-box"><div class="stat-value" id="stat-synthesized">-</div><div class="stat-label">Synthesized</div></div>
+        <div class="stat-box"><div class="stat-value" id="stat-pending">-</div><div class="stat-label">Pending</div></div>
+      </div>
+
+      <div class="deals-grid" id="deals-grid"></div>
+      <div id="scroll-sentinel" style="height: 1px;"></div>
+
+      <!-- Detail modal -->
+      <div id="detailModal" class="modal">
+        <div class="modal-backdrop" onclick="closeModal()"></div>
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2 id="modalTitle">Deal Details</h2>
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+          </div>
+          <div id="modalBody" class="modal-body"></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    var currentOffset = 0;
+    var PAGE_SIZE = 30;
+    var totalDeals = 0;
+    var isLoading = false;
+    var synthCount = 0;
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      var div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    function formatDate(dateStr) {
+      if (!dateStr) return '';
+      return new Date(dateStr).toLocaleDateString();
+    }
+
+    function synthBadge(synthesis) {
+      if (!synthesis) return '<span class="badge-synth badge-synth-pending">pending</span>';
+      var age = Date.now() - new Date(synthesis.synthesized_at).getTime();
+      if (age > 7 * 86400000) return '<span class="badge-synth badge-synth-stale">stale</span>';
+      return '<span class="badge-synth badge-synth-ready">' + (synthesis.source_count || 0) + ' sources</span>';
+    }
+
+    function appendDeals(deals) {
+      var grid = document.getElementById('deals-grid');
+      if (currentOffset === 0) grid.innerHTML = '';
+      if (deals.length === 0 && currentOffset === 0) {
+        grid.innerHTML = '<div class="no-synthesis">No deals found.</div>';
+        return;
+      }
+
+      deals.forEach(function(deal) {
+        var s = deal.synthesis || {};
+        var summary = s.summary ? s.summary : deal.deal_name;
+        if (summary.length > 200) summary = summary.substring(0, 200) + '...';
+        var studentCount = s.key_facts?.student_count;
+        if (s.summary) synthCount++;
+
+        var card = document.createElement('div');
+        card.className = 'deal-card';
+        card.onclick = function() { showDetail(deal.id); };
+        card.innerHTML =
+          '<div class="deal-header">' +
+            '<div>' +
+              '<div class="deal-name">' + escapeHtml(deal.deal_name) + '</div>' +
+              (deal.company_name ? '<div class="deal-company">' + escapeHtml(deal.company_name) + '</div>' : '') +
+            '</div>' +
+            synthBadge(deal.synthesis) +
+          '</div>' +
+          '<div class="deal-summary">' + escapeHtml(summary) + '</div>' +
+          '<div class="deal-meta">' +
+            (deal.owner ? '<div class="deal-meta-item"><span class="deal-meta-label">Owner:</span> ' + escapeHtml(deal.owner) + '</div>' : '') +
+            (studentCount ? '<div class="deal-meta-item"><span class="deal-meta-label">Students:</span> ' + escapeHtml(String(studentCount)) + '</div>' : '') +
+            (s.call_history?.length ? '<div class="deal-meta-item"><span class="deal-meta-label">Calls:</span> ' + s.call_history.length + '</div>' : '') +
+            '<div class="deal-meta-item"><span class="deal-meta-label">Created:</span> ' + formatDate(deal.created_at) + '</div>' +
+          '</div>';
+        grid.appendChild(card);
+      });
+    }
+
+    function updateStats() {
+      document.getElementById('stat-total').textContent = totalDeals;
+      document.getElementById('stat-synthesized').textContent = synthCount;
+      document.getElementById('stat-pending').textContent = totalDeals - synthCount;
+    }
+
+    async function loadDeals(isReset) {
+      if (isLoading) return;
+      isLoading = true;
+      if (isReset) { currentOffset = 0; synthCount = 0; }
+
+      try {
+        var res = await fetch('/admin/api/deals?limit=' + PAGE_SIZE + '&offset=' + currentOffset);
+        var data = await res.json();
+        totalDeals = data.total || 0;
+        appendDeals(data.deals || []);
+        currentOffset += (data.deals || []).length;
+        updateStats();
+      } catch (err) {
+        console.error('Load failed:', err);
+        if (currentOffset === 0) {
+          document.getElementById('deals-grid').innerHTML = '<div class="no-synthesis">Error loading deals</div>';
+        }
+      } finally {
+        isLoading = false;
+      }
+    }
+
+    async function showDetail(id) {
+      var modal = document.getElementById('detailModal');
+      var title = document.getElementById('modalTitle');
+      var body = document.getElementById('modalBody');
+      modal.style.display = 'block';
+      title.textContent = 'Loading...';
+      body.innerHTML = '';
+
+      try {
+        var res = await fetch('/admin/api/deals/' + id);
+        var deal = await res.json();
+        var s = deal.synthesis;
+
+        // Extract deal name from content
+        var nameMatch = deal.content?.match(/^HubSpot Deal:\s*(.+)/m);
+        title.textContent = nameMatch ? nameMatch[1].trim() : 'Deal Details';
+
+        var html = '';
+
+        // Raw deal record
+        html += '<div class="detail-section"><h3>Deal Record</h3>';
+        html += '<pre style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:12px;font-size:12px;color:#c9d1d9;white-space:pre-wrap;overflow:auto;max-height:200px">' + escapeHtml(deal.content) + '</pre></div>';
+
+        if (!s) {
+          html += '<div class="no-synthesis">Synthesis not yet computed. The background poller will process this deal shortly.</div>';
+          body.innerHTML = html;
+          return;
+        }
+
+        // Summary
+        if (s.summary) {
+          html += '<div class="detail-section"><h3>Synthesis Summary</h3>';
+          html += '<p>' + escapeHtml(s.summary) + '</p></div>';
+        }
+
+        // Key facts grid
+        if (s.key_facts) {
+          var facts = s.key_facts;
+          var factItems = '';
+          var factFields = [
+            ['student_count', 'Students'],
+            ['timeline', 'Timeline'],
+            ['interest', 'Interest'],
+            ['requirements', 'Requirements'],
+            ['next_steps', 'Next Steps'],
+            ['risks', 'Risks'],
+          ];
+          factFields.forEach(function(f) {
+            var val = facts[f[0]];
+            if (val) {
+              factItems += '<div class="fact-item"><div class="fact-label">' + f[1] + '</div><div class="fact-value">' + escapeHtml(String(val)) + '</div></div>';
+            }
+          });
+          if (facts.contacts?.length) {
+            factItems += '<div class="fact-item"><div class="fact-label">Contacts</div><div class="fact-value">' + facts.contacts.map(escapeHtml).join(', ') + '</div></div>';
+          }
+          if (factItems) {
+            html += '<div class="detail-section"><h3>Key Facts</h3><div class="fact-grid">' + factItems + '</div></div>';
+          }
+        }
+
+        // Call history
+        if (s.call_history?.length) {
+          html += '<div class="detail-section"><h3>Call History (' + s.call_history.length + ')</h3>';
+          s.call_history.forEach(function(call) {
+            html += '<div class="call-item">';
+            html += '<span class="call-date">' + escapeHtml(call.date) + '</span>';
+            html += '<span class="call-source">' + escapeHtml(call.source) + '</span>';
+            html += '<div class="call-summary">' + escapeHtml(call.summary) + '</div>';
+            html += '</div>';
+          });
+          html += '</div>';
+        }
+
+        // Related source thoughts
+        if (deal.related_thoughts?.length) {
+          html += '<div class="detail-section"><h3>Source Thoughts (' + deal.related_thoughts.length + ')</h3>';
+          deal.related_thoughts.forEach(function(t) {
+            html += '<div class="related-item">';
+            html += '<span class="related-source">' + escapeHtml(t.source) + '</span> ';
+            html += '<span style="color:var(--text-muted);font-size:12px">' + formatDate(t.created_at) + '</span>';
+            if (t.thought_type) html += ' <span style="color:var(--text-muted);font-size:11px">(' + escapeHtml(t.thought_type) + ')</span>';
+            html += '<div style="margin-top:4px;color:var(--text-secondary)">' + escapeHtml(t.summary || t.excerpt || '') + '</div>';
+            html += '</div>';
+          });
+          html += '</div>';
+        }
+
+        // Synthesis metadata
+        html += '<div class="detail-section"><h3>Synthesis Info</h3>';
+        html += '<p style="font-size:12px;color:var(--text-muted)">';
+        html += 'Synthesized: ' + formatDate(s.synthesized_at);
+        html += ' &middot; Sources: ' + (s.source_count || 0);
+        html += '</p></div>';
+
+        body.innerHTML = html;
+      } catch (err) {
+        body.innerHTML = '<div class="no-synthesis">Error loading deal details.</div>';
+      }
+    }
+
+    function closeModal() {
+      document.getElementById('detailModal').style.display = 'none';
+    }
+
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') closeModal();
+    });
+
+    // Infinite scroll
+    var sentinel = document.getElementById('scroll-sentinel');
+    var observer = new IntersectionObserver(function(entries) {
+      if (entries[0].isIntersecting && !isLoading && currentOffset < totalDeals) {
+        loadDeals(false);
+      }
+    }, { rootMargin: '200px' });
+    observer.observe(sentinel);
+
+    loadDeals(true);
+  </script>
+</body>
+</html>
