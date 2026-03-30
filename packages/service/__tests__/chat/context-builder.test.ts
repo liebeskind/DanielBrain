@@ -14,7 +14,7 @@ function mockPool(entityRows: Array<Record<string, unknown>> = [], relationshipR
     if (sql.includes('entity_relationships')) {
       return { rows: relationshipRows };
     }
-    if (sql.includes("thought_type IN ('deal'")) {
+    if (sql.includes("thought_type IN ('deal'") || sql.includes("thought_type IN ('call'")) {
       return { rows: crmRows };
     }
     return { rows: entityRows };

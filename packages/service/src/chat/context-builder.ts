@@ -401,27 +401,32 @@ async function fetchEntityRelationships(
 }
 
 /** Detect CRM/sales-oriented queries that need direct DB lookups (semantic search often misses structured CRM data) */
-const CRM_QUERY_PATTERN = /\b(?:prospects?|leads?|pipeline|deals?|opportunities|sales|crm|hubspot|customers?|accounts?|contacts?)\b/i;
+const CRM_QUERY_PATTERN = /\b(?:prospects?|leads?|pipeline|deals?|opportunities|sales|crm|hubspot|customers?|accounts?|contacts?|calls?|meetings?)\b/i;
 
-/** Fetch recent deal and contact records directly — bypasses embedding similarity for structured CRM data */
+type CrmRow = { id: string; content: string; summary: string | null; source: string; similarity: number; created_at: string; thought_type: string | null; people: string[]; topics: string[]; action_items: string[]; sentiment: string; parent_id: string | null };
+
+/** Fetch recent CRM records — deals, calls, meetings, and contacts that semantic search often misses */
 async function fetchRecentCrmContext(
   pool: pg.Pool,
   visibilityTags: string[] | null,
-): Promise<Array<{ id: string; content: string; summary: string | null; source: string; similarity: number; created_at: string; thought_type: string | null; people: string[]; topics: string[]; action_items: string[]; sentiment: string; parent_id: string | null }>> {
+): Promise<CrmRow[]> {
   const { rows } = await pool.query(
     `SELECT id, content, summary, source, created_at, thought_type, people, topics, action_items, sentiment, parent_id
      FROM thoughts
-     WHERE thought_type IN ('deal', 'contact', 'company_profile')
-       AND source = 'hubspot'
+     WHERE (
+       (thought_type IN ('deal', 'contact', 'company_profile') AND source = 'hubspot')
+       OR (thought_type IN ('call', 'meeting', 'meeting_note') AND source IN ('hubspot', 'fathom'))
+     )
        AND ($1::text[] IS NULL OR visibility && $1)
+       AND parent_id IS NULL
      ORDER BY created_at DESC
-     LIMIT 15`,
+     LIMIT 25`,
     [visibilityTags],
   );
 
   return rows.map((r: any) => ({
     ...r,
-    similarity: 0.5, // Synthetic score — these are directly relevant, not semantically matched
+    similarity: 0.5,
   }));
 }
 

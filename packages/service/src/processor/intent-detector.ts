@@ -35,9 +35,13 @@ interface PatternRule {
 }
 
 const TEMPORAL_PATTERNS: PatternRule[] = [
-  { regex: /\b(?:last|past)\s+(\d+)\s+(day|week|month)s?\b/i, confidence: 0.9, extractDays: (m) => {
+  { regex: /\b(?:last|past)\s+(\d+)\s+(day|week|month|year)s?\b/i, confidence: 0.9, extractDays: (m) => {
     const n = parseInt(m[1]); const u = m[2].toLowerCase();
-    return u === 'day' ? n : u === 'week' ? n * 7 : n * 30;
+    return u === 'day' ? n : u === 'week' ? n * 7 : u === 'month' ? n * 30 : n * 365;
+  }},
+  { regex: /\b(?:last|past)\s+(?:couple(?:\s+of)?|few|several)\s+(day|week|month|year)s?\b/i, confidence: 0.85, extractDays: (m) => {
+    const u = m[1].toLowerCase();
+    return u === 'day' ? 3 : u === 'week' ? 21 : u === 'month' ? 60 : 730;
   }},
   { regex: /\blast\s+week\b/i, confidence: 0.85, extractDays: () => 7 },
   { regex: /\blast\s+month\b/i, confidence: 0.85, extractDays: () => 30 },

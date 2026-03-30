@@ -38,6 +38,24 @@ describe('detectIntentFast', () => {
     expect(result!.adjustments.days_back).toBe(2);
   });
 
+  it('detects "last couple months"', () => {
+    const result = detectIntentFast('calls in the last couple months');
+    expect(result!.intent).toBe('temporal');
+    expect(result!.adjustments.days_back).toBe(60);
+  });
+
+  it('detects "past few weeks"', () => {
+    const result = detectIntentFast('what happened in the past few weeks');
+    expect(result!.intent).toBe('temporal');
+    expect(result!.adjustments.days_back).toBe(21);
+  });
+
+  it('detects "last several days"', () => {
+    const result = detectIntentFast('updates from the last several days');
+    expect(result!.intent).toBe('temporal');
+    expect(result!.adjustments.days_back).toBe(3);
+  });
+
   it('detects "this week"', () => {
     const result = detectIntentFast('meetings this week');
     expect(result!.intent).toBe('temporal');
