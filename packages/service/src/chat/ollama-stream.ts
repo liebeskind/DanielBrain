@@ -25,7 +25,19 @@ export async function streamChat(
   const response = await fetch(`${ollamaBaseUrl}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, messages, stream: true }),
+    body: JSON.stringify({
+      model,
+      messages,
+      stream: true,
+      think: false,
+      options: {
+        num_ctx: 8192,
+        temperature: 0.3,
+        top_p: 0.9,
+        top_k: 20,
+        presence_penalty: 1.5,
+      },
+    }),
     signal: controller.signal,
   });
 
@@ -97,5 +109,9 @@ export async function streamChat(
   }
 
   res.end();
+
+  // Safety net: strip any leaked <think> tags (edge cases despite think: false)
+  fullResponse = fullResponse.replace(/<think>[\s\S]*?<\/think>\s*/g, '');
+
   return { fullResponse };
 }

@@ -108,8 +108,56 @@ describe('streamChat', () => {
     expect(mockFetch).toHaveBeenCalledWith('http://localhost:11434/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'llama3.3:70b', messages, stream: true }),
+      body: JSON.stringify({
+        model: 'llama3.3:70b',
+        messages,
+        stream: true,
+        think: false,
+        options: { num_ctx: 8192, temperature: 0.3, top_p: 0.9, top_k: 20, presence_penalty: 1.5 },
+      }),
       signal: expect.any(AbortSignal),
     });
+  });
+
+  it('strips <think> tags from accumulated response', async () => {
+    const body = makeStream([
+      JSON.stringify({ message: { content: '<think>internal reasoning</think>The answer is 42' }, done: false }),
+      JSON.stringify({ message: { content: '' }, done: true }),
+    ]);
+
+    mockFetch.mockResolvedValue({ ok: true, body });
+    const res = mockRes();
+
+    const result = await streamChat(
+      [{ role: 'user', content: 'question' }],
+      'qwen3:14b',
+      'http://localhost:11434',
+      res,
+    );
+
+    expect(result.fullResponse).toBe('The answer is 42');
+  });
+
+  it('ignores message.thinking field in chunks', async () => {
+    const body = makeStream([
+      JSON.stringify({ message: { thinking: 'internal reasoning', content: '' }, done: false }),
+      JSON.stringify({ message: { content: 'The answer' }, done: false }),
+      JSON.stringify({ message: { content: '' }, done: true }),
+    ]);
+
+    mockFetch.mockResolvedValue({ ok: true, body });
+    const res = mockRes();
+
+    const result = await streamChat(
+      [{ role: 'user', content: 'question' }],
+      'qwen3:14b',
+      'http://localhost:11434',
+      res,
+    );
+
+    expect(result.fullResponse).toBe('The answer');
+    // Should not relay thinking content to client
+    const tokenChunks = res._chunks.filter(c => c.includes('"token"'));
+    expect(tokenChunks.every(c => !c.includes('internal reasoning'))).toBe(true);
   });
 });
