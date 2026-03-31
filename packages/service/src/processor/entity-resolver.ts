@@ -38,6 +38,9 @@ const JUNK_PATTERNS = [
   /^https?:\/\//i,             // URLs
   /\b(integration|planning|experiment|strategy|solution|setup|presentation)\b/i, // activity/task words
   /\b(one-pager|case studies|followups?)\b/i, // deliverables, not project names
+  /\bcampaign\b/i,              // HubSpot campaign names (e.g., "DLAC Call Only Campaign")
+  /\b(list|copy|sequence)\b.*\b(list|copy|sequence)\b/i, // marketing list names (e.g., "Handpicked VS Leader List Copy")
+  /\b(call only|outreach|nurture|drip|blast)\b/i, // marketing automation names
 ];
 
 // Names above this length are almost always descriptions, not proper names
