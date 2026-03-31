@@ -25,6 +25,7 @@ const JUNK_BLOCKLIST = new Set([
   'the speaker', 'not specified', 'unknown', 'n/a', 'none',
   'null', 'undefined', 'your_name', 'the team', 'attendees',
   'the audience', 'participants', 'the user', 'the host',
+  'enrich', 'enrich enrich',     // LinkedIn enricher metadata leak
 ]);
 
 const JUNK_PATTERNS = [
