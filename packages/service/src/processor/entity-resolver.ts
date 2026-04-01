@@ -26,6 +26,8 @@ const JUNK_BLOCKLIST = new Set([
   'null', 'undefined', 'your_name', 'the team', 'attendees',
   'the audience', 'participants', 'the user', 'the host',
   'enrich', 'enrich enrich',     // LinkedIn enricher metadata leak
+  'metaverse',                   // CRM catchall for Topia leads without a real company
+  'liz topia',                   // Fake contact (last name = product name)
 ]);
 
 const JUNK_PATTERNS = [
@@ -41,7 +43,7 @@ const JUNK_PATTERNS = [
   /\b(one-pager|case studies|followups?)\b/i, // deliverables, not project names
   /\bcampaign\b/i,              // HubSpot campaign names (e.g., "DLAC Call Only Campaign")
   /\b(list|copy|sequence)\b.*\b(list|copy|sequence)\b/i, // marketing list names (e.g., "Handpicked VS Leader List Copy")
-  /\b(call only|outreach|nurture|drip|blast)\b/i, // marketing automation names
+  /\b(call only|outreach|nurture|drip|blast|follow-?up email)\b/i, // marketing automation names
 ];
 
 // Names above this length are almost always descriptions, not proper names
