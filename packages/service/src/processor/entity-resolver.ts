@@ -29,6 +29,7 @@ const JUNK_BLOCKLIST = new Set([
   'metaverse',                   // CRM catchall for Topia leads without a real company
   'liz topia',                   // Fake contact (last name = product name)
   'world created',               // HubSpot field label, not a product
+  'test', 'david',               // Too generic / test data
   'gmail', 'gmail.com', 'yahoo', 'yahoo.com', 'hotmail', 'hotmail.com',
   'outlook', 'outlook.com', 'aol', 'aol.com', 'icloud', 'icloud.com',
   'protonmail', 'protonmail.com', 'mail', // email providers as companies
