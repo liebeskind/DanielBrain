@@ -30,6 +30,8 @@ const JUNK_BLOCKLIST = new Set([
   'liz topia',                   // Fake contact (last name = product name)
   'world created',               // HubSpot field label, not a product
   'test', 'david',               // Too generic / test data
+  'topia world', 'free world',   // HubSpot field labels / Topia world types
+  'attribution world',           // CRM tracking concept
   'gmail', 'gmail.com', 'yahoo', 'yahoo.com', 'hotmail', 'hotmail.com',
   'outlook', 'outlook.com', 'aol', 'aol.com', 'icloud', 'icloud.com',
   'protonmail', 'protonmail.com', 'mail', // email providers as companies
@@ -44,6 +46,7 @@ const JUNK_PATTERNS = [
   /^phase\s+\d+/i,            // build phases (e.g., "Phase 4")
   /\b(of|for|between|with)\b/i, // prepositions indicate descriptions, not proper names
   /^https?:\/\//i,             // URLs
+  /^\S+\.\S+\.\S+$/,           // multi-dot domains (moe-dl.edu.my, andrew.cmu.edu)
   /\b(integration|planning|experiment|strategy|solution|setup|presentation)\b/i, // activity/task words
   /\b(one-pager|case studies|followups?)\b/i, // deliverables, not project names
   /\bcampaign\b/i,              // HubSpot campaign names (e.g., "DLAC Call Only Campaign")
