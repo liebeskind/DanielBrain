@@ -2,77 +2,182 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Facts Review — DanielBrain Admin</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; padding: 20px; max-width: 1200px; margin: 0 auto; }
-    h1 { margin-bottom: 8px; }
-    .subtitle { color: #666; margin-bottom: 20px; }
-    .stats { display: flex; gap: 16px; margin-bottom: 24px; }
-    .stat-card { background: white; border-radius: 8px; padding: 16px 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-    .stat-card .value { font-size: 28px; font-weight: 700; }
-    .stat-card .label { color: #666; font-size: 13px; }
-    .actions { margin-bottom: 20px; display: flex; gap: 12px; align-items: center; }
-    .btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; }
-    .btn-primary { background: #2563eb; color: white; }
-    .btn-danger { background: #dc2626; color: white; }
-    .btn-success { background: #16a34a; color: white; }
-    .btn:hover { opacity: 0.9; }
-    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-    th { background: #f8f9fa; text-align: left; padding: 10px 12px; font-size: 13px; color: #666; border-bottom: 2px solid #e5e7eb; }
-    td { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; font-size: 14px; vertical-align: top; }
-    tr:hover { background: #f8f9fb; }
-    .similarity { font-weight: 700; font-family: monospace; }
-    .sim-high { color: #dc2626; }
-    .sim-mid { color: #d97706; }
-    .sim-low { color: #16a34a; }
-    .fact-type { background: #e5e7eb; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
-    .entity { color: #2563eb; font-weight: 600; }
-    .action-btns { display: flex; gap: 4px; }
-    .action-btns .btn { padding: 4px 10px; font-size: 12px; }
-    .empty { text-align: center; padding: 40px; color: #999; }
-    nav { margin-bottom: 20px; }
-    nav a { color: #2563eb; text-decoration: none; margin-right: 16px; }
-    nav a:hover { text-decoration: underline; }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Facts - TopiaMind</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <nav><a href="/admin">← Dashboard</a></nav>
-  <h1>Facts Review</h1>
-  <p class="subtitle">Review invalidated facts and determine the right similarity threshold for deduplication</p>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <a href="index.html" class="sidebar-logo">
+        <span class="logo-icon">T</span>
+        TopiaMind
+      </a>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Knowledge</div>
+        <a href="browse.html" class="sidebar-link">
+          <span class="link-icon">&#x1F4DA;</span> Browse
+        </a>
+        <a href="ingest.html" class="sidebar-link">
+          <span class="link-icon">&#x2795;</span> Add Content
+        </a>
+        <a href="/chat" class="sidebar-link">
+          <span class="link-icon">&#x1F4AC;</span> Chat
+        </a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Tools</div>
+        <a href="tools.html" class="sidebar-link">
+          <span class="link-icon">&#x1F3A4;</span> Transcribe
+        </a>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Manage</div>
+        <a href="integrations.html" class="sidebar-link">
+          <span class="link-icon">&#x1F50C;</span> Integrations
+        </a>
+        <a href="entities.html" class="sidebar-link">
+          <span class="link-icon">&#x1F465;</span> Entities
+        </a>
+        <a href="communities.html" class="sidebar-link">
+          <span class="link-icon">&#x1F310;</span> Communities
+        </a>
+        <a href="deals.html" class="sidebar-link">
+          <span class="link-icon">&#x1F91D;</span> Deals
+        </a>
+        <a href="approvals.html" class="sidebar-link">
+          <span class="link-icon">&#x2705;</span> Approvals
+        </a>
+        <a href="examples.html" class="sidebar-link">
+          <span class="link-icon">&#x1F4DD;</span> Examples
+        </a>
+        <a href="facts.html" class="sidebar-link active">
+          <span class="link-icon">&#x1F9E0;</span> Facts
+        </a>
+        <a href="chat-traces.html" class="sidebar-link">
+          <span class="link-icon">&#x1F50D;</span> Chat Traces
+        </a>
+        <a href="health.html" class="sidebar-link">
+          <span class="link-icon">&#x1F527;</span> Health
+        </a>
+      </div>
+      <div class="sidebar-spacer"></div>
+    </aside>
 
-  <div class="stats" id="stats"></div>
+    <main class="main-content">
+      <div class="page-header">
+        <h1>Facts</h1>
+        <p>Atomic facts extracted from your knowledge graph</p>
+      </div>
 
-  <div class="actions">
-    <button class="btn btn-success" onclick="restoreAll()">Restore All Invalidated</button>
-    <span id="action-status" style="color: #666; font-size: 13px;"></span>
+      <div id="flash-container"></div>
+
+      <div class="stats-grid" id="stats">
+        <div class="loading">Loading</div>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 12px; margin: 20px 0 16px;">
+        <h2 id="view-title">Invalidated Facts</h2>
+        <button class="btn btn-sm" id="back-btn" style="display: none;" onclick="showContradictions()">Show Invalidated</button>
+      </div>
+
+      <div id="actions-row" style="margin-bottom: 16px;">
+        <button class="btn btn-sm btn-primary" onclick="restoreAll()">Restore All Invalidated</button>
+        <span id="action-status" style="color: var(--text-muted); font-size: 13px; margin-left: 12px;"></span>
+      </div>
+
+      <table class="entity-table">
+        <thead id="table-head">
+          <tr>
+            <th>Similarity</th>
+            <th>Subject</th>
+            <th>Original (invalidated)</th>
+            <th>Closest Active Fact</th>
+            <th>Type</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <tr><td colspan="6" class="loading">Loading</td></tr>
+        </tbody>
+      </table>
+
+      <div id="pagination" style="margin-top: 16px; align-items: center; gap: 12px;">
+        <button class="btn btn-sm" id="prev-btn" onclick="prevPage()" disabled>Previous</button>
+        <span id="page-info" style="color: var(--text-secondary); font-size: 13px;"></span>
+        <button class="btn btn-sm" id="next-btn" onclick="nextPage()">Next</button>
+      </div>
+    </main>
   </div>
 
-  <table>
-    <thead>
-      <tr>
-        <th>Similarity</th>
-        <th>Subject</th>
-        <th>Original (invalidated)</th>
-        <th>Closest Active Fact</th>
-        <th>Type</th>
-        <th>Actions</th>
-      </tr>
-    </thead>
-    <tbody id="tbody"></tbody>
-  </table>
+  <style>
+    .similarity { font-weight: 700; font-family: monospace; }
+    .sim-high { color: var(--accent-rose); }
+    .sim-mid { color: var(--accent-amber); }
+    .sim-low { color: var(--accent-emerald); }
+    .fact-type-badge { background: rgba(255, 255, 255, 0.06); padding: 2px 8px; border-radius: 4px; font-size: 12px; color: var(--text-secondary); }
+    .fact-entity { color: #a5b4fc; font-weight: 600; }
+    .fact-status-active { color: var(--accent-emerald); font-size: 12px; }
+    .fact-status-invalidated { color: var(--accent-rose); font-size: 12px; }
+    .stat-card.clickable { cursor: pointer; transition: border-color var(--transition); }
+    .stat-card.clickable:hover { border-color: var(--accent); }
+    .stat-card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+    #pagination { display: none; }
+  </style>
 
   <script>
+    function escapeHtml(str) {
+      if (!str) return '';
+      var d = document.createElement('div');
+      d.textContent = str;
+      return d.innerHTML;
+    }
+
+    function formatDate(dateStr) {
+      if (!dateStr) return '';
+      return new Date(dateStr).toLocaleDateString();
+    }
+
+    // State
+    var currentView = 'contradictions';
+    var currentFactType = '';
+    var currentFactStatus = 'all';
+    var factOffset = 0;
+    var factTotal = 0;
+    var FACT_PAGE_SIZE = 50;
+    var selectedCardId = 'invalidated';
+
+    function showFlash(message, type) {
+      var container = document.getElementById('flash-container');
+      var flash = document.createElement('div');
+      flash.className = 'flash flash-' + type;
+      flash.textContent = message;
+      container.innerHTML = '';
+      container.appendChild(flash);
+      setTimeout(function() { flash.remove(); }, 6000);
+    }
+
+    // --- Stats ---
     async function loadStats() {
-      const res = await fetch('/admin/api/facts/stats');
-      const data = await res.json();
-      document.getElementById('stats').innerHTML = `
-        <div class="stat-card"><div class="value">${data.active}</div><div class="label">Active Facts</div></div>
-        <div class="stat-card"><div class="value">${data.invalidated}</div><div class="label">Invalidated</div></div>
-        <div class="stat-card"><div class="value">${data.total}</div><div class="label">Total</div></div>
-        ${data.by_type.map(t => `<div class="stat-card"><div class="value">${t.count}</div><div class="label">${t.fact_type}</div></div>`).join('')}
-      `;
+      var res = await fetch('/admin/api/facts/stats');
+      var data = await res.json();
+      var html = '';
+
+      html += '<div class="stat-card clickable' + (selectedCardId === 'active' ? ' selected' : '') + '" onclick="filterByStatus(\'active\', \'active\')">';
+      html += '<div class="number">' + data.active + '</div><div class="label">Active</div></div>';
+
+      html += '<div class="stat-card clickable' + (selectedCardId === 'invalidated' ? ' selected' : '') + '" onclick="showContradictions()">';
+      html += '<div class="number">' + data.invalidated + '</div><div class="label">Invalidated</div></div>';
+
+      html += '<div class="stat-card clickable' + (selectedCardId === 'all' ? ' selected' : '') + '" onclick="filterByStatus(\'all\', \'all\')">';
+      html += '<div class="number">' + data.total + '</div><div class="label">Total</div></div>';
+
+      data.by_type.forEach(function(t) {
+        html += '<div class="stat-card clickable' + (selectedCardId === 'type-' + t.fact_type ? ' selected' : '') + '" onclick="filterByType(\'' + escapeHtml(t.fact_type) + '\')">';
+        html += '<div class="number">' + t.count + '</div><div class="label">' + escapeHtml(t.fact_type) + '</div></div>';
+      });
+
+      document.getElementById('stats').innerHTML = html;
     }
 
     function simClass(sim) {
@@ -81,53 +186,155 @@
       return 'sim-low';
     }
 
+    // --- Contradictions view (default) ---
+    function showContradictions() {
+      currentView = 'contradictions';
+      selectedCardId = 'invalidated';
+      document.getElementById('view-title').textContent = 'Invalidated Facts';
+      document.getElementById('back-btn').style.display = 'none';
+      document.getElementById('actions-row').style.display = '';
+      document.getElementById('pagination').style.display = 'none';
+      document.getElementById('table-head').innerHTML = '<tr>' +
+        '<th>Similarity</th><th>Subject</th><th>Original (invalidated)</th>' +
+        '<th>Closest Active Fact</th><th>Type</th><th>Actions</th></tr>';
+      loadContradictions();
+      loadStats();
+    }
+
     async function loadContradictions() {
-      const res = await fetch('/admin/api/facts/contradictions');
-      const data = await res.json();
-      const tbody = document.getElementById('tbody');
+      var res = await fetch('/admin/api/facts/contradictions');
+      var data = await res.json();
+      var tbody = document.getElementById('tbody');
 
       if (data.contradictions.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" class="empty">No invalidated facts</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 40px; color: var(--text-muted);">No invalidated facts</td></tr>';
         return;
       }
 
-      tbody.innerHTML = data.contradictions.map(c => `
-        <tr id="row-${c.id}">
-          <td class="similarity ${simClass(c.similarity)}">${c.similarity != null ? c.similarity : '—'}</td>
-          <td class="entity">${c.subject_name || '—'}<br><small style="color:#999">${c.subject_type || ''}</small></td>
-          <td>${c.original_statement}</td>
-          <td>${c.closest_active_statement || '<em style="color:#999">no match</em>'}</td>
-          <td><span class="fact-type">${c.fact_type}</span></td>
-          <td class="action-btns">
-            <button class="btn btn-success" onclick="restore('${c.id}')">Restore</button>
-            <button class="btn btn-danger" onclick="deleteFact('${c.id}')">Delete</button>
-          </td>
-        </tr>
-      `).join('');
+      tbody.innerHTML = data.contradictions.map(function(c) {
+        return '<tr id="row-' + c.id + '">' +
+          '<td class="similarity ' + simClass(c.similarity) + '">' + (c.similarity != null ? c.similarity : '—') + '</td>' +
+          '<td class="fact-entity">' + escapeHtml(c.subject_name || '—') + '<br><small style="color: var(--text-muted);">' + escapeHtml(c.subject_type || '') + '</small></td>' +
+          '<td>' + escapeHtml(c.original_statement) + '</td>' +
+          '<td>' + (c.closest_active_statement ? escapeHtml(c.closest_active_statement) : '<em style="color: var(--text-muted);">no match</em>') + '</td>' +
+          '<td><span class="fact-type-badge">' + escapeHtml(c.fact_type) + '</span></td>' +
+          '<td style="white-space: nowrap;">' +
+            '<button class="btn btn-sm btn-primary" onclick="restore(\'' + c.id + '\')">Restore</button> ' +
+            '<button class="btn btn-sm" onclick="deleteFact(\'' + c.id + '\')" style="color: var(--accent-rose);">Delete</button>' +
+          '</td></tr>';
+      }).join('');
     }
 
+    // --- List view (filtered by type or status) ---
+    function filterByType(type) {
+      currentView = 'list';
+      currentFactType = type;
+      currentFactStatus = 'active';
+      factOffset = 0;
+      selectedCardId = 'type-' + type;
+      showListView('Active ' + type + ' facts');
+    }
+
+    function filterByStatus(status, cardId) {
+      currentView = 'list';
+      currentFactType = '';
+      currentFactStatus = status;
+      factOffset = 0;
+      selectedCardId = cardId;
+      var title = status === 'active' ? 'Active Facts' : status === 'invalidated' ? 'Invalidated Facts' : 'All Facts';
+      showListView(title);
+    }
+
+    function showListView(title) {
+      document.getElementById('view-title').textContent = title;
+      document.getElementById('back-btn').style.display = '';
+      document.getElementById('actions-row').style.display = 'none';
+      document.getElementById('pagination').style.display = 'flex';
+      document.getElementById('table-head').innerHTML = '<tr>' +
+        '<th>Statement</th><th>Subject</th><th>Type</th>' +
+        '<th>Confidence</th><th>Status</th><th>Date</th><th>Actions</th></tr>';
+      loadFactsList();
+      loadStats();
+    }
+
+    async function loadFactsList() {
+      var url = '/admin/api/facts/list?limit=' + FACT_PAGE_SIZE + '&offset=' + factOffset;
+      if (currentFactType) url += '&fact_type=' + encodeURIComponent(currentFactType);
+      if (currentFactStatus && currentFactStatus !== 'all') url += '&status=' + currentFactStatus;
+
+      var res = await fetch(url);
+      var data = await res.json();
+      factTotal = data.total;
+      var tbody = document.getElementById('tbody');
+
+      if (data.facts.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; padding: 40px; color: var(--text-muted);">No facts found</td></tr>';
+      } else {
+        tbody.innerHTML = data.facts.map(function(f) {
+          var statusClass = f.invalid_at ? 'fact-status-invalidated' : 'fact-status-active';
+          var statusLabel = f.invalid_at ? 'Invalidated' : 'Active';
+          var actions = '';
+          if (f.invalid_at) {
+            actions = '<button class="btn btn-sm btn-primary" onclick="restore(\'' + f.id + '\')">Restore</button> ';
+          }
+          actions += '<button class="btn btn-sm" onclick="deleteFact(\'' + f.id + '\')" style="color: var(--accent-rose);">Delete</button>';
+
+          return '<tr id="row-' + f.id + '">' +
+            '<td>' + escapeHtml(f.statement) + '</td>' +
+            '<td class="fact-entity">' + escapeHtml(f.subject_name || '—') + '<br><small style="color: var(--text-muted);">' + escapeHtml(f.subject_type || '') + '</small></td>' +
+            '<td><span class="fact-type-badge">' + escapeHtml(f.fact_type) + '</span></td>' +
+            '<td>' + (f.confidence != null ? Math.round(f.confidence * 100) + '%' : '—') + '</td>' +
+            '<td><span class="' + statusClass + '">' + statusLabel + '</span></td>' +
+            '<td style="white-space: nowrap;">' + formatDate(f.created_at) + '</td>' +
+            '<td style="white-space: nowrap;">' + actions + '</td></tr>';
+        }).join('');
+      }
+
+      updatePagination();
+    }
+
+    function updatePagination() {
+      var start = factTotal === 0 ? 0 : factOffset + 1;
+      var end = Math.min(factOffset + FACT_PAGE_SIZE, factTotal);
+      document.getElementById('page-info').textContent = start + '–' + end + ' of ' + factTotal;
+      document.getElementById('prev-btn').disabled = factOffset === 0;
+      document.getElementById('next-btn').disabled = factOffset + FACT_PAGE_SIZE >= factTotal;
+    }
+
+    function prevPage() {
+      factOffset = Math.max(0, factOffset - FACT_PAGE_SIZE);
+      loadFactsList();
+    }
+
+    function nextPage() {
+      factOffset += FACT_PAGE_SIZE;
+      loadFactsList();
+    }
+
+    // --- Actions ---
     async function restore(id) {
-      await fetch(`/admin/api/facts/${id}/restore`, { method: 'POST' });
-      document.getElementById(`row-${id}`).remove();
+      await fetch('/admin/api/facts/' + id + '/restore', { method: 'POST' });
+      document.getElementById('row-' + id).remove();
       loadStats();
     }
 
     async function deleteFact(id) {
       if (!confirm('Permanently delete this fact?')) return;
-      await fetch(`/admin/api/facts/${id}/delete`, { method: 'POST' });
-      document.getElementById(`row-${id}`).remove();
+      await fetch('/admin/api/facts/' + id + '/delete', { method: 'POST' });
+      document.getElementById('row-' + id).remove();
       loadStats();
     }
 
     async function restoreAll() {
       if (!confirm('Restore all invalidated facts?')) return;
-      const res = await fetch('/admin/api/facts/restore-all', { method: 'POST' });
-      const data = await res.json();
-      document.getElementById('action-status').textContent = `Restored ${data.restored} facts`;
+      var res = await fetch('/admin/api/facts/restore-all', { method: 'POST' });
+      var data = await res.json();
+      showFlash('Restored ' + data.restored + ' facts', 'success');
       loadStats();
       loadContradictions();
     }
 
+    // --- Init ---
     loadStats();
     loadContradictions();
   </script>

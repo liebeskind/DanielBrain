@@ -14,6 +14,9 @@ import { runTranscription, formatAsSrt, generateSummary, applySpeakerNames } fro
 import { createChildLogger } from '../logger.js';
 import { sanitizeError } from '../errors.js';
 import { logAudit } from '../audit.js';
+import { createHubSpotClient } from '../hubspot/client.js';
+import { syncHubSpot } from '../hubspot/sync.js';
+import type { HubSpotObjectType } from '../hubspot/types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const log = createChildLogger('admin');
@@ -59,6 +62,16 @@ const INTEGRATIONS: IntegrationDef[] = [
     can_pull: false,
     webhook_path: '/telegram/updates',
     isEnabled: (c) => !!(c.telegramBotToken && c.telegramWebhookSecret),
+  },
+  {
+    id: 'hubspot',
+    name: 'HubSpot',
+    description: 'CRM contacts, companies, deals, notes, and activities',
+    category: 'crm',
+    source: 'hubspot',
+    can_pull: true,
+    webhook_path: '/hubspot/events',
+    isEnabled: (c) => !!c.hubspotAccessToken,
   },
   {
     id: 'manual',
@@ -111,11 +124,14 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
             [def.source],
           );
 
-          // Count pending queue items for this source
+          // Queue stats: pending count + actual sync timestamps
           const { rows: [queueRow] } = await pool.query(
-            `SELECT COUNT(*) as pending_count
+            `SELECT
+              COUNT(*) FILTER (WHERE processed_at IS NULL) as pending_count,
+              MIN(created_at) as first_synced,
+              MAX(created_at) as last_synced
             FROM queue
-            WHERE source = $1 AND processed_at IS NULL`,
+            WHERE source = $1`,
             [def.source],
           );
 
@@ -133,8 +149,8 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
               people_count: parseInt(stats.people_count, 10),
               company_count: parseInt(stats.company_count, 10),
               action_item_count: parseInt(aiRow.action_item_count, 10),
-              first_pulled: stats.first_pulled,
-              last_pulled: stats.last_pulled,
+              first_pulled: queueRow.first_synced ?? stats.first_pulled,
+              last_pulled: queueRow.last_synced ?? stats.last_pulled,
               pending_count: parseInt(queueRow.pending_count, 10),
             },
           };
@@ -168,6 +184,24 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
       return;
     }
 
+    if (id === 'hubspot') {
+      if (!config.hubspotAccessToken) {
+        res.status(400).json({ error: 'HubSpot access token not configured' });
+        return;
+      }
+
+      try {
+        const client = createHubSpotClient(config.hubspotAccessToken);
+        const objectTypes = config.hubspotObjectTypes.split(',').map(s => s.trim()) as HubSpotObjectType[];
+        const result = await syncHubSpot(client, pool, objectTypes, { requireContactActivity: config.hubspotRequireContactActivity });
+        res.json({ ok: true, ...result });
+      } catch (err) {
+        log.error({ err }, 'HubSpot pull error');
+        res.status(500).json({ error: 'Pull failed' });
+      }
+      return;
+    }
+
     res.status(400).json({ error: `Integration '${id}' does not support pull` });
   });
 
@@ -182,6 +216,7 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
       const limit = Math.min(parseInt(req.query.limit as string, 10) || 30, 200);
       const offset = parseInt(req.query.offset as string, 10) || 0;
       const entityType = (req.query.entity_type as string) || '';
+      const search = ((req.query.search as string) || '').trim();
 
       const { rows: typeCounts } = await pool.query(
         `SELECT entity_type, COUNT(*) as count
@@ -199,6 +234,13 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
       if (entityType && VALID_ENTITY_TYPES.includes(entityType)) {
         conditions.push(`e.entity_type = $${paramIdx}`);
         params.push(entityType);
+        paramIdx++;
+      }
+
+      if (search) {
+        const searchEscaped = search.replace(/[%_]/g, '\\$&');
+        conditions.push(`e.name ILIKE $${paramIdx}`);
+        params.push(`%${searchEscaped}%`);
         paramIdx++;
       }
 
@@ -431,6 +473,62 @@ export function createAdminRoutes(pool: pg.Pool, config: Config): Router {
       res.json({ restored: rowCount });
     } catch (err) {
       log.error({ err }, 'Fact restore-all error');
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  router.get('/api/facts/list', async (req, res) => {
+    try {
+      const factType = (req.query.fact_type as string) || '';
+      const status = (req.query.status as string) || 'all';
+      const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 200);
+      const offset = parseInt(req.query.offset as string, 10) || 0;
+
+      const conditions: string[] = [];
+      const params: (string | number)[] = [];
+      let paramIdx = 1;
+
+      if (factType) {
+        conditions.push(`f.fact_type = $${paramIdx}`);
+        params.push(factType);
+        paramIdx++;
+      }
+
+      if (status === 'active') {
+        conditions.push(`f.invalid_at IS NULL`);
+      } else if (status === 'invalidated') {
+        conditions.push(`f.invalid_at IS NOT NULL`);
+      }
+
+      const whereClause = conditions.length > 0
+        ? 'WHERE ' + conditions.join(' AND ')
+        : '';
+
+      const { rows: facts } = await pool.query(
+        `SELECT f.id, f.statement, f.fact_type, f.confidence,
+                s.name as subject_name, s.entity_type as subject_type,
+                f.valid_at, f.invalid_at, f.created_at
+         FROM facts f
+         LEFT JOIN entities s ON s.id = f.subject_entity_id
+         ${whereClause}
+         ORDER BY f.created_at DESC
+         LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
+        [...params, limit, offset]
+      );
+
+      const { rows: [totalRow] } = await pool.query(
+        `SELECT COUNT(*) as total FROM facts f ${whereClause}`,
+        params
+      );
+
+      res.json({
+        facts,
+        total: parseInt(totalRow.total, 10),
+        limit,
+        offset,
+      });
+    } catch (err) {
+      log.error({ err }, 'Facts list error');
       res.status(500).json({ error: 'Internal error' });
     }
   });

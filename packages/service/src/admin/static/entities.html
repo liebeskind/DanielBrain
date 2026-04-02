@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Entities - TopiaBrain</title>
+  <title>Entities - TopiaMind</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -11,7 +11,7 @@
     <aside class="sidebar">
       <a href="index.html" class="sidebar-logo">
         <span class="logo-icon">T</span>
-        TopiaBrain
+        TopiaMind
       </a>
       <div class="sidebar-section">
         <div class="sidebar-section-label">Knowledge</div>
@@ -51,6 +51,9 @@
         <a href="examples.html" class="sidebar-link">
           <span class="link-icon">&#x1F4DD;</span> Examples
         </a>
+        <a href="facts.html" class="sidebar-link">
+          <span class="link-icon">&#x1F9E0;</span> Facts
+        </a>
         <a href="chat-traces.html" class="sidebar-link">
           <span class="link-icon">&#x1F50D;</span> Chat Traces
         </a>
@@ -65,6 +68,10 @@
       <div class="page-header">
         <h1>Entity Overview</h1>
         <p>People, companies, topics, and other entities in your knowledge graph</p>
+      </div>
+
+      <div class="search-box" style="margin-bottom: 16px;">
+        <input type="text" id="entity-search" placeholder="Search entities by name..." onkeydown="handleSearchKey(event)">
       </div>
 
       <div class="tabs" id="type-filter"></div>
@@ -126,6 +133,7 @@
     var PAGE_SIZE = 30;
     var totalEntities = 0;
     var currentTypeFilter = '';
+    var currentSearch = '';
     var isLoading = false;
     var typeCounts = [];
 
@@ -142,6 +150,17 @@
       inputs: 'Top Entities by Inputs',
       last_seen: 'Recently Active Entities'
     };
+
+    function handleSearchKey(e) {
+      if (e.key === 'Enter') {
+        currentSearch = e.target.value.trim();
+        resetAndLoad();
+      } else if (e.key === 'Escape') {
+        e.target.value = '';
+        currentSearch = '';
+        resetAndLoad();
+      }
+    }
 
     function appendEntities(entities) {
       var tbody = document.querySelector('#entities-table tbody');
@@ -237,6 +256,9 @@
         '&limit=' + PAGE_SIZE + '&offset=' + currentOffset;
       if (currentTypeFilter) {
         url += '&entity_type=' + encodeURIComponent(currentTypeFilter);
+      }
+      if (currentSearch) {
+        url += '&search=' + encodeURIComponent(currentSearch);
       }
 
       try {

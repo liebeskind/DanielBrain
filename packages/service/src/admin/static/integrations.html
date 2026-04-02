@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Integrations - TopiaBrain</title>
+  <title>Integrations - TopiaMind</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -11,7 +11,7 @@
     <aside class="sidebar">
       <a href="index.html" class="sidebar-logo">
         <span class="logo-icon">T</span>
-        TopiaBrain
+        TopiaMind
       </a>
       <div class="sidebar-section">
         <div class="sidebar-section-label">Knowledge</div>
@@ -50,6 +50,9 @@
         </a>
         <a href="examples.html" class="sidebar-link">
           <span class="link-icon">&#x1F4DD;</span> Examples
+        </a>
+        <a href="facts.html" class="sidebar-link">
+          <span class="link-icon">&#x1F9E0;</span> Facts
         </a>
         <a href="chat-traces.html" class="sidebar-link">
           <span class="link-icon">&#x1F50D;</span> Chat Traces
@@ -125,6 +128,11 @@
     .integration-icon-telegram {
       background: rgba(0, 136, 204, 0.2);
       color: #38bdf8;
+    }
+
+    .integration-icon-hubspot {
+      background: rgba(255, 122, 89, 0.2);
+      color: #ff7a59;
     }
 
     .integration-icon-manual {
@@ -242,15 +250,23 @@
       fathom: 'F',
       slack: 'S',
       telegram: 'T',
+      hubspot: 'H',
       manual: 'M',
     };
 
     function renderIntegration(item) {
       const iconClass = 'integration-icon-' + item.id;
       const letter = ICON_LETTERS[item.id] || item.name[0];
-      const statusBadge = item.enabled
-        ? '<span class="badge badge-connected">Connected</span>'
-        : '<span class="badge badge-disconnected">Not Configured</span>';
+      var statusBadge;
+      if (item.id === 'manual') {
+        statusBadge = '<span class="badge badge-disconnected">Always Available</span>';
+      } else if (item.enabled && item.stats.thought_count > 0) {
+        statusBadge = '<span class="badge badge-connected">Connected</span>';
+      } else if (item.enabled) {
+        statusBadge = '<span class="badge badge-disconnected">Configured</span>';
+      } else {
+        statusBadge = '<span class="badge badge-disconnected">Not Configured</span>';
+      }
 
       const s = item.stats;
       const hasData = s.thought_count > 0;
@@ -328,11 +344,22 @@
         }
 
         const parts = [];
-        if (data.queued > 0) parts.push(data.queued + ' new meeting(s) queued');
-        if (data.skipped > 0) parts.push(data.skipped + ' already imported');
-        if (data.errors > 0) parts.push(data.errors + ' error(s)');
+        if (data.queued !== undefined) {
+          // Fathom format
+          if (data.queued > 0) parts.push(data.queued + ' new meeting(s) queued');
+          if (data.skipped > 0) parts.push(data.skipped + ' already imported');
+          if (data.errors > 0) parts.push(data.errors + ' error(s)');
+        } else {
+          // HubSpot format
+          var types = ['contacts', 'companies', 'deals', 'notes', 'calls', 'emails', 'meetings', 'tasks'];
+          var synced = types.filter(function(t) { return data[t] > 0; }).map(function(t) { return data[t] + ' ' + t; });
+          if (synced.length > 0) parts.push(synced.join(', ') + ' synced');
+          if (data.fathomLinked > 0) parts.push(data.fathomLinked + ' linked to Fathom');
+          if (data.skipped > 0) parts.push(data.skipped + ' skipped');
+          if (data.errors > 0) parts.push(data.errors + ' error(s)');
+        }
 
-        showFlash(parts.length > 0 ? parts.join(', ') : 'No new meetings found', data.queued > 0 ? 'success' : 'success');
+        showFlash(parts.length > 0 ? parts.join(', ') : 'No new data found', 'success');
 
         // Reload stats
         loadIntegrations();
@@ -350,6 +377,7 @@
       try {
         const res = await fetch('/admin/api/integrations/stats');
         const integrations = await res.json();
+        integrations.sort(function(a, b) { return (b.stats.entity_count || 0) - (a.stats.entity_count || 0); });
         const container = document.getElementById('integrations-list');
         container.innerHTML = integrations.map(renderIntegration).join('');
 
