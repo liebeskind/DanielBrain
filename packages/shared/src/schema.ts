@@ -16,6 +16,18 @@ const resilientSentiment = z
     return null; // Unknown sentiment → null rather than crash
   });
 
+// Coerce LLM action-item status to valid enum or default to 'open'
+const statusValues = ['open', 'done'] as const;
+const resilientStatus = z
+  .unknown()
+  .transform((val) => {
+    if (val == null || val === 'null' || val === '') return null;
+    const lower = String(val).toLowerCase().trim().replace(/[_\s-]/g, '');
+    if (lower === 'done' || lower === 'completed' || lower === 'closed') return 'done' as const;
+    // Everything else (open, not_started, in_progress, pending, etc.) → open
+    return 'open' as const;
+  });
+
 // Filter dates_mentioned to only valid ISO dates (LLM often returns junk like "no dates mentioned")
 const resilientDates = z
   .array(z.unknown())
@@ -47,7 +59,7 @@ export const metadataSchema = z.object({
     action: z.string(),
     assignee: z.string().nullable().default(null),
     deadline: z.string().nullable().default(null),
-    status: z.enum(['open', 'done']).nullable().default(null),
+    status: resilientStatus,
   })).default([]),
 });
 

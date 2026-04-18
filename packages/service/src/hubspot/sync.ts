@@ -2,7 +2,7 @@ import type pg from 'pg';
 import type { Client } from '@hubspot/api-client';
 import { createContentHash } from '@danielbrain/shared';
 import { listObjects, searchModifiedSince, getAssociations, getObject, getOwnerName, preloadOwners } from './client.js';
-import { formatContact, formatCompany, formatDeal, formatNote, formatCall, formatEmail, formatMeeting, formatTask, stripHtml, classifyNote, extractFathomCallId, extractOtterUrl, extractUrls, MIN_NOTE_LENGTH } from './format.js';
+import { formatContact, formatCompany, formatDeal, formatNote, formatCall, formatEmail, formatMeeting, formatTask, stripHtml, classifyNote, classifyEmail, extractFathomCallId, extractOtterUrl, extractUrls, extractTopiaWorldUrl, extractAutomatedFieldChange, MIN_NOTE_LENGTH } from './format.js';
 import type { HubSpotObjectType, HubSpotRecord, HubSpotSyncState, SyncResult, FormattedRecord } from './types.js';
 import { createChildLogger } from '../logger.js';
 
@@ -323,6 +323,21 @@ async function syncObjectTypeFull(
                 summary: `Otter.ai meeting: ${noteContacts.join(', ') || 'unknown participants'}${otterUrl ? ` (${otterUrl})` : ''}`,
               };
             }
+            if (noteType === 'automated_field_change') {
+              const fieldChange = extractAutomatedFieldChange(stripped);
+              if (fieldChange) {
+                meta.automated_field = fieldChange.field;
+                meta.automated_value = fieldChange.value;
+              }
+              formatted.directMetadata = {
+                people: noteContacts,
+                companies: noteCompanies,
+                thought_type: 'crm_activity',
+                summary: fieldChange
+                  ? `Next step for ${noteContacts.join(', ') || 'unknown contact'}: ${fieldChange.value}`
+                  : stripped,
+              };
+            }
             break;
           }
           case 'calls': {
@@ -333,10 +348,29 @@ async function syncObjectTypeFull(
             break;
           }
           case 'emails': {
+            const emailSubject = record.properties.hs_email_subject?.trim() || '';
+            const emailType = classifyEmail(emailSubject);
+            if (emailType === 'transactional') {
+              skipped++;
+              continue;
+            }
             const emailContacts = await getContactNames(client, 'emails', record.id);
             const emailCompanies = await getCompanyNames(client, 'emails', record.id, companyCache);
             const emailOwner = await resolveOwnerName(client, record, ownerCache);
             formatted = formatEmail(record, emailContacts, emailCompanies, emailOwner);
+            if (emailType === 'world_activation') {
+              const emailBody = record.properties.hs_email_text || record.properties.hs_email_html || '';
+              const worldUrl = extractTopiaWorldUrl(emailBody);
+              const meta = formatted.sourceMeta as Record<string, unknown>;
+              meta.email_type = 'world_activation';
+              if (worldUrl) meta.topia_world_url = worldUrl;
+              formatted.directMetadata = {
+                people: emailContacts,
+                companies: emailCompanies,
+                thought_type: 'crm_activity',
+                summary: `Topia world approved for ${emailContacts.join(', ') || 'unknown contact'}${worldUrl ? `: ${worldUrl}` : ''}`,
+              };
+            }
             break;
           }
           case 'meetings': {
@@ -472,6 +506,21 @@ async function syncObjectTypeIncremental(
                 summary: `Otter.ai meeting: ${noteContacts.join(', ') || 'unknown participants'}${otterUrl ? ` (${otterUrl})` : ''}`,
               };
             }
+            if (noteType === 'automated_field_change') {
+              const fieldChange = extractAutomatedFieldChange(stripped);
+              if (fieldChange) {
+                meta.automated_field = fieldChange.field;
+                meta.automated_value = fieldChange.value;
+              }
+              formatted.directMetadata = {
+                people: noteContacts,
+                companies: noteCompanies,
+                thought_type: 'crm_activity',
+                summary: fieldChange
+                  ? `Next step for ${noteContacts.join(', ') || 'unknown contact'}: ${fieldChange.value}`
+                  : stripped,
+              };
+            }
             break;
           }
           case 'calls': {
@@ -482,10 +531,29 @@ async function syncObjectTypeIncremental(
             break;
           }
           case 'emails': {
+            const emailSubject = record.properties.hs_email_subject?.trim() || '';
+            const emailType = classifyEmail(emailSubject);
+            if (emailType === 'transactional') {
+              skipped++;
+              continue;
+            }
             const emailContacts = await getContactNames(client, 'emails', record.id);
             const emailCompanies = await getCompanyNames(client, 'emails', record.id, companyCache);
             const emailOwner = await resolveOwnerName(client, record, ownerCache);
             formatted = formatEmail(record, emailContacts, emailCompanies, emailOwner);
+            if (emailType === 'world_activation') {
+              const emailBody = record.properties.hs_email_text || record.properties.hs_email_html || '';
+              const worldUrl = extractTopiaWorldUrl(emailBody);
+              const meta = formatted.sourceMeta as Record<string, unknown>;
+              meta.email_type = 'world_activation';
+              if (worldUrl) meta.topia_world_url = worldUrl;
+              formatted.directMetadata = {
+                people: emailContacts,
+                companies: emailCompanies,
+                thought_type: 'crm_activity',
+                summary: `Topia world approved for ${emailContacts.join(', ') || 'unknown contact'}${worldUrl ? `: ${worldUrl}` : ''}`,
+              };
+            }
             break;
           }
           case 'meetings': {

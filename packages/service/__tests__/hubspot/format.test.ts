@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatContact, formatCompany, formatDeal, formatNote } from '../../src/hubspot/format.js';
+import { formatContact, formatCompany, formatDeal, formatNote, classifyEmail, classifyNote, extractTopiaWorldUrl, extractAutomatedFieldChange } from '../../src/hubspot/format.js';
 import type { HubSpotRecord } from '../../src/hubspot/types.js';
 
 const baseRecord: HubSpotRecord = {
@@ -230,5 +230,89 @@ describe('formatNote', () => {
     const result = formatNote(record);
     expect(result.content).toContain('(empty note)');
     expect(result.sourceMeta.owner_id).toBeNull();
+  });
+});
+
+describe('classifyEmail', () => {
+  it('detects transactional "unlock your world" emails', () => {
+    expect(classifyEmail('Almost there! One quick step to unlock your Topia world')).toBe('transactional');
+  });
+
+  it('detects transactional "welcome" emails', () => {
+    expect(classifyEmail('Welcome to Topia')).toBe('transactional');
+    expect(classifyEmail('Welcome to Topia!')).toBe('transactional');
+  });
+
+  it('detects world activation emails', () => {
+    expect(classifyEmail('Your Topia world has been approved and is ready to explore!')).toBe('world_activation');
+    expect(classifyEmail('Your Topia world is ready')).toBe('world_activation');
+  });
+
+  it('classifies personal emails as personal', () => {
+    expect(classifyEmail('Re: Partnership Discussion')).toBe('personal');
+    expect(classifyEmail('Follow up from our call')).toBe('personal');
+    expect(classifyEmail('')).toBe('personal');
+  });
+
+  it('is case insensitive', () => {
+    expect(classifyEmail('WELCOME TO TOPIA')).toBe('transactional');
+    expect(classifyEmail('your topia world has been approved')).toBe('world_activation');
+  });
+
+  it('treats replies to transactional emails as personal', () => {
+    expect(classifyEmail('Re: Almost there! One quick step to unlock your Topia world')).toBe('personal');
+    expect(classifyEmail('RE: Welcome to Topia')).toBe('personal');
+    expect(classifyEmail('Fwd: Your Topia world has been approved')).toBe('personal');
+    expect(classifyEmail('FW: Your Topia world is ready')).toBe('personal');
+  });
+});
+
+describe('extractTopiaWorldUrl', () => {
+  it('extracts topia.io world URL from email body', () => {
+    const body = 'Check it out: https://topia.io/girlsworld-demo-9ga1oitr2 - enjoy!';
+    expect(extractTopiaWorldUrl(body)).toBe('https://topia.io/girlsworld-demo-9ga1oitr2');
+  });
+
+  it('returns null when no topia URL present', () => {
+    expect(extractTopiaWorldUrl('Just a regular email body')).toBeNull();
+  });
+
+  it('returns null for empty body', () => {
+    expect(extractTopiaWorldUrl('')).toBeNull();
+  });
+
+  it('handles URLs with underscores and hyphens', () => {
+    const body = 'Visit https://topia.io/my_world-test_123';
+    expect(extractTopiaWorldUrl(body)).toBe('https://topia.io/my_world-test_123');
+  });
+});
+
+describe('classifyNote — automated field changes', () => {
+  it('detects automated field change notes', () => {
+    expect(classifyNote('Automated note - next_step was edited The next step was set to Send SDK email.')).toBe('automated_field_change');
+  });
+
+  it('is case insensitive on prefix', () => {
+    expect(classifyNote('automated note - next_step was edited The next step was set to Follow up.')).toBe('automated_field_change');
+  });
+
+  it('does not match normal notes containing "automated"', () => {
+    expect(classifyNote('We discussed the automated workflow system and next steps.')).not.toBe('automated_field_change');
+  });
+});
+
+describe('extractAutomatedFieldChange', () => {
+  it('extracts field name and value', () => {
+    const result = extractAutomatedFieldChange('Automated note - next_step was edited The next step was set to Send SDK email.');
+    expect(result).toEqual({ field: 'next_step', value: 'Send SDK email.' });
+  });
+
+  it('handles multi-line values', () => {
+    const result = extractAutomatedFieldChange('Automated note - next_step was edited The next step was set to Ben is interested but wants us to wait til June for next steps.');
+    expect(result).toEqual({ field: 'next_step', value: 'Ben is interested but wants us to wait til June for next steps.' });
+  });
+
+  it('returns null for non-matching notes', () => {
+    expect(extractAutomatedFieldChange('Regular note about a meeting')).toBeNull();
   });
 });

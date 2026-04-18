@@ -6,7 +6,40 @@ export function stripHtml(html: string): string {
   return html.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-export type NoteClassification = 'fathom_link' | 'otter_stub' | 'rich_note' | 'short_note' | 'email_followup';
+export type NoteClassification = 'fathom_link' | 'otter_stub' | 'automated_field_change' | 'rich_note' | 'short_note' | 'email_followup';
+
+export type EmailClassification = 'transactional' | 'world_activation' | 'personal';
+
+/** Pure boilerplate — skip entirely, no unique content */
+const TRANSACTIONAL_SKIP_PATTERNS: RegExp[] = [
+  /one quick step to unlock your topia world/i,
+  /welcome to topia/i,
+];
+
+/** Transactional but contains a Topia world URL worth extracting */
+const WORLD_ACTIVATION_PATTERNS: RegExp[] = [
+  /your topia world has been approved/i,
+  /your topia world is ready/i,
+];
+
+/** Classify an email by subject to detect transactional templates.
+ *  Replies (Re:/Fwd:) are always 'personal' — the reply content is unique. */
+export function classifyEmail(subject: string): EmailClassification {
+  if (/^(re|fwd|fw):/i.test(subject.trim())) return 'personal';
+  for (const pattern of TRANSACTIONAL_SKIP_PATTERNS) {
+    if (pattern.test(subject)) return 'transactional';
+  }
+  for (const pattern of WORLD_ACTIVATION_PATTERNS) {
+    if (pattern.test(subject)) return 'world_activation';
+  }
+  return 'personal';
+}
+
+/** Extract Topia world URL from email body (e.g. https://topia.io/girlsworld-demo-9ga1oitr2) */
+export function extractTopiaWorldUrl(body: string): string | null {
+  const match = body.match(/https?:\/\/topia\.io\/([a-zA-Z0-9_-]+)/);
+  return match ? match[0] : null;
+}
 
 /** Extract Fathom call ID from a note body, if present */
 export function extractFathomCallId(body: string): string | null {
@@ -87,6 +120,14 @@ export function extractUrls(rawHtml: string): UrlInventoryItem[] {
   return items;
 }
 
+/** Extract the field value from an automated field-change note.
+ *  e.g. "Automated note - next_step was edited The next step was set to Send SDK email."
+ *  → { field: 'next_step', value: 'Send SDK email.' } */
+export function extractAutomatedFieldChange(body: string): { field: string; value: string } | null {
+  const match = body.match(/Automated note - (\w+) was edited .+?was set to (.+)/s);
+  return match ? { field: match[1], value: match[2].trim() } : null;
+}
+
 /** Classify a note body to determine processing strategy */
 export function classifyNote(strippedBody: string): NoteClassification {
   const lower = strippedBody.toLowerCase();
@@ -99,6 +140,11 @@ export function classifyNote(strippedBody: string): NoteClassification {
   // Otter.ai stub — has URL but empty summary sections
   if (lower.includes('otter.ai/note/') && lower.includes('meeting summary: summary')) {
     return 'otter_stub';
+  }
+
+  // HubSpot workflow-generated field change logs
+  if (/^automated note - \w+ was edited/i.test(strippedBody.trim())) {
+    return 'automated_field_change';
   }
 
   // Email followup — starts with greeting patterns
